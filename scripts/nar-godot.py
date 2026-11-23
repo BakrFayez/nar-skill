@@ -151,6 +151,29 @@ def inspect_pck_bytes(data, label):
     return report
 
 
+def loose_project_files(names):
+    """Entries that make up a loose (no-.pck) Godot export.
+
+    The anchor is the compiled project file: exports ship
+    assets/project.binary (Godot 3.1+ and 4) or, in source form,
+    assets/project.godot. When the anchor is present, the whole
+    assets/ tree except the dexopt profiles IS the exported
+    project. Without an anchor, only the Godot-specific subtrees
+    count: .godot/ (editor data), .import/ (the import cache with
+    its .stex/.ctex resources), and stray project.godot files.
+    """
+    if any(n in ("assets/project.binary", "assets/project.godot")
+           for n in names):
+        return [n for n in names
+                if n.startswith("assets/")
+                and not n.startswith("assets/dexopt/")
+                and not n.endswith("/")]
+    return [n for n in names
+            if n.startswith("assets/.godot/")
+            or n.startswith("assets/.import/")
+            or n.endswith("project.godot")]
+
+
 def inspect(target):
     report = {"tool": "nar-godot", "target": os.path.abspath(target),
               "is_godot": False}
@@ -181,9 +204,7 @@ def inspect(target):
             "libgodot" in n for n in names)
         pcks = [n for n in names if n.lower().endswith(".pck")]
         report["embedded_pcks"] = pcks
-        loose = [n for n in names if n.startswith("assets/.godot/")
-                 or n == "assets/project.godot"
-                 or n.endswith("project.godot")]
+        loose = loose_project_files(names)
         report["loose_project_files"] = len(loose)
         report["is_godot"] = bool(report["has_godot_engine_lib"]
                                   or pcks or loose)

@@ -78,9 +78,13 @@ ENGINE_SIGNATURES = [
                                          "libreact_nativemodule_core.so",
                                          "libreact_render_core.so", "libreactnative.so"]),
     ("libGDX", ["libgdx.so", "libgdx-freetype.so", "libgdx-bullet.so"]),
-    # Adobe AIR: the descriptor is the strong marker; a bare .swf alone is
-    # weak (any app can bundle one). Confirm with the descriptor path.
-    ("Adobe AIR", ["META-INF/AIR/application.xml", ".swf"]),
+    # Adobe AIR: the descriptor is the ONLY reliable entry marker.
+    # A bare .swf is not one: unrelated apps bundle Flash files as
+    # web-content fallbacks (media-player / JS-library assets) and
+    # were misattributed to AIR by the old ".swf" substring pattern.
+    # Real AIR apps always ship the descriptor; the com/adobe/air
+    # DEX marker below corroborates.
+    ("Adobe AIR", ["META-INF/AIR/application.xml"]),
     # Xamarin / .NET for Android (incl. .NET MAUI): the Mono runtime
     # library, the app-model library, and the managed assemblies
     # directory at the zip root are the shipped fingerprints.
@@ -307,13 +311,27 @@ LICENSING_DEX_MARKERS = [
     ("Play License Verification (LVL)",
      [b"com/android/vending/licensing"],
      None),
-    # Widevine is identified by its MediaDrm scheme UUID, which DRM
-    # code carries as a string constant. A bare MediaDrm reference is
-    # generic Android API use and is not a marker.
-    ("Widevine DRM",
-     [b"edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"],
-     None),
+    # Widevine is handled separately below: its UUID reaches the DEX
+    # in compiled forms the plain string pattern cannot see.
 ]
+
+# Widevine's MediaDrm scheme UUID (edef8ba9-79d6-4ace-a3c8-27dcd51d21ed)
+# reaches a DEX in three forms:
+#   * the dashed string constant (resource / toString-style code),
+#   * the raw 16 UUID bytes (byte-array constants),
+#   * compiled code: `new UUID(msb, lsb)` stores the two 64-bit
+#     halves as little-endian long constants in the code stream.
+# All four byte patterns are counted like any other protection
+# pattern; the finding (section 5 of the protection scan) fires on
+# the string form, on the raw bytes, or on BOTH long halves in the
+# SAME dex — one half alone is not evidence. A bare MediaDrm
+# reference is generic Android API use and is never a marker.
+WIDEVINE_UUID_STRING = b"edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"
+WIDEVINE_UUID_RAW = bytes.fromhex("edef8ba979d64acea3c827dcd51d21ed")
+WIDEVINE_UUID_MSB_LE = struct.pack("<Q", 0xEDEF8BA979D64ACE)
+WIDEVINE_UUID_LSB_LE = struct.pack("<Q", 0xA3C827DCD51D21ED)
+WIDEVINE_DEX_PATTERNS = [WIDEVINE_UUID_STRING, WIDEVINE_UUID_RAW,
+                         WIDEVINE_UUID_MSB_LE, WIDEVINE_UUID_LSB_LE]
 
 # OkHttp pin constants and network-security-config pins share the
 # "sha256/<base64>" shape (43-44 base64 chars for a 32-byte digest).
@@ -1179,7 +1197,7 @@ def triage(apk_path):
         rasp_dex_patterns = [p for _, pats, _ in RASP_DEX_MARKERS
                              for p in pats]
         licensing_dex_patterns = [p for _, pats, _ in LICENSING_DEX_MARKERS
-                                  for p in pats]
+                                  for p in pats] + WIDEVINE_DEX_PATTERNS
         prot_dex_patterns = (packer_dex_patterns + rasp_dex_patterns
                              + licensing_dex_patterns)
         all_dex_patterns = list(dict.fromkeys(
@@ -1553,6 +1571,25 @@ def triage(apk_path):
             if ev:
                 add_protection("licensing_drm", finding_name, False,
                                ev, note)
+
+        # Widevine DRM: string form, raw-byte form, or both compiled
+        # UUID halves in the same DEX (see WIDEVINE_DEX_PATTERNS).
+        wv_ev = dex_evidence([WIDEVINE_UUID_STRING])
+        raw_hits = prot_hits.get(WIDEVINE_UUID_RAW) or {}
+        for dn in sorted(raw_hits):
+            wv_ev.append(f"DEX Widevine UUID raw bytes in {dn}"
+                         f" x{raw_hits[dn]}")
+        msb_hits = prot_hits.get(WIDEVINE_UUID_MSB_LE) or {}
+        lsb_hits = prot_hits.get(WIDEVINE_UUID_LSB_LE) or {}
+        for dn in sorted(set(msb_hits) & set(lsb_hits)):
+            wv_ev.append("DEX compiled Widevine UUID constants"
+                         f" (both 64-bit halves) in {dn}")
+        if wv_ev:
+            add_protection("licensing_drm", "Widevine DRM", False,
+                           wv_ev,
+                           note="Identified by its MediaDrm scheme"
+                                " UUID in string, raw-byte, or"
+                                " compiled-constant form.")
 
         # 6. Code / asset encryption.
         bad_dex = [d["name"] for d in dex if d["dex_version"] is None]

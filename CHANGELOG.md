@@ -1,5 +1,115 @@
 # Changelog
 
+## 2.0.0 (2026-11-23)
+
+NAR 2.0 — NIROUS ANDROID INTELLIGENCE. Everything from 1.x is
+preserved (same script CLIs, same report sections); 2.0 adds a
+platform layer underneath and around it.
+
+- Input layer (nar-input, narlib): magic + structure
+  identification for APK/APKS/XAPK/AAB/AAR/JAR/DEX/ODEX/VDEX/
+  OBB/ELF and engine containers, duplicate detection by hash,
+  and guarded extraction — traversal, absolute-path, symlink,
+  and archive-bomb entries are rejected per entry and
+  reported.
+- narlib: shared library with a full DEX parser (tables,
+  class data, bounded code scan), a full ELF parser (headers,
+  dynamic entries incl. a PT_DYNAMIC fallback for
+  section-less binaries, symbol tables), the evidence
+  envelope + §9.5 finding builder, a structural JSON-Schema
+  validator, and the capability-registry client.
+- Capability registry (scripts/registry.json): every
+  orchestrated tool declared with kind, requirements,
+  discovery order, and limitations; unavailable tools are
+  registered as unavailable, never faked.
+- nar-fingerprint: normalized identity where every property
+  carries provenance, confidence, and fact class.
+- nar-engines: multi-indicator engine fusion with scores
+  and stated ambiguities across 18 families; --deep confirms
+  verdicts through the matching deep-dive tool. New deep
+  dives: nar-unity (backend, editor-version evidence,
+  bundle inventory, optional UnityPy object census) and
+  nar-unreal (generation evidence, pak inventory/encryption,
+  IoStore inventory with its parsing limit stated).
+- nar-dex: class/method/field enumeration, call edges,
+  string-reference mapping, reflection and dynamic-loading
+  evidence, entry points, Kotlin inventory, and
+  version-checked jadx/baksmali adapters.
+- nar-native: ELF facts per library, JNI export map,
+  bundled-library dependency graph, readelf cross-check.
+- nar-network: classified static endpoint inventory
+  (confirmed/potential/third-party/unused-candidate/
+  sensitive/unverified), backend-service detection, and
+  network-security-config parsing. Nothing is contacted.
+- nar-security: structured findings (NAR-SEC-NNN) with
+  severity, confidence, evidence, impact, remediation, and
+  false-positive considerations, plus positive observations.
+- nar-assets: asset inventory with magic-first typing,
+  categories, image dimensions, and duplicate grouping.
+- nar-runtime: adb/Frida adapters, session plans, and the
+  timeline schema. Device-dependent parts are labeled
+  IMPLEMENTED_BUT_UNVERIFIED (no device in the build
+  environment).
+- nar-analyze is now the orchestrator: case workspace
+  (case.json), execution log, stage caching/resume keyed by
+  input hash, standardized companions (fingerprint, engines,
+  endpoints, security-findings, assets, dex, native), and an
+  offline single-file HTML dashboard via nar-report
+  (dark/light, filterable, zero external references).
+- nar-compare: extended comparison — class and endpoint
+  diffs, asset diffs, per-change severity with reasons, and
+  an entry-level similarity score. 1.x output unchanged.
+- nar.py: unified CLI over every module; each module script
+  keeps working standalone.
+- Schemas for all standardized outputs in schemas/;
+  pytest unit suite in tests/unit/ (synthetic DEX/ELF/format
+  builders, no binary fixtures); benchmark runner in
+  tests/benchmarks/; pyproject.toml; CI workflow authored
+  for GitHub Actions (not executed in the build
+  environment).
+- Fix carried from the audit: nar-analyze Markdown no longer
+  renders structured string hits as raw JSON blobs.
+- The five 1.1.1 wide-sweep fixes are included (they landed
+  during the 2.0 Phase 2 commit).
+
+## 1.1.1 (2026-11-23)
+
+Fixes from a wide real-world sweep: sixteen additional free apps
+and games across engines, frameworks, and eras, each run through
+the full nar-analyze workup, with every misdetection fixed and
+re-proven on the target that exposed it.
+
+- nar-rn: `*.bundle` assets are content-validated before any
+  React Native claim. Unity Addressables bundles (UnityFS magic)
+  are rejected and named as Unity asset bundles instead of being
+  reported as a JSC bundle, and a bundle at the contract path
+  that is neither Hermes bytecode nor JavaScript text reports an
+  unknown binary format instead of a guessed engine.
+  nar-analyze's React Native routing flag and report rendering
+  follow the same rule.
+- nar-triage: Adobe AIR is attributed only on its descriptor
+  (`META-INF/AIR/application.xml`). The bare `.swf` substring
+  pattern misattributed apps that bundle Flash files as
+  web-content fallbacks; it is removed.
+- nar-triage: Widevine DRM is also identified in compiled form —
+  the scheme UUID as raw bytes, or as the pair of 64-bit long
+  constants a `new UUID(msb, lsb)` compiles to in the same DEX —
+  not only as a dashed string constant.
+- nar-godot: loose exports (no `.pck`) are counted properly.
+  The counter anchors on `project.binary` / `project.godot` and
+  covers the exported assets tree (dexopt profiles excluded)
+  instead of reporting 0 project files for real loose-layout
+  games; `.import/` subtrees also count without an anchor.
+- nar-analyze: the Markdown report prints the form factors
+  triage already collects (for example Android TV), and renders
+  absent `android:debuggable` / `android:allowBackup` with the
+  platform defaults nar-perms reports instead of "unknown".
+  String hits in the report render as clean one-line values
+  instead of raw JSON blobs.
+- Test harness: four new end-to-end cases (loose Godot layout,
+  compiled-UUID Widevine, `.swf` content without AIR, Unity
+  Addressables rejection) over local fixtures; 38 cases total.
+
 ## 1.1.0 (2026-11-23)
 
 The automation update: one-command analysis, engine deep-dive

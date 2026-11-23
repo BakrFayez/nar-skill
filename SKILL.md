@@ -2,7 +2,7 @@
 name: nar
 description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis.
 metadata:
-  version: "1.1.0"
+  version: "2.0.0"
 ---
 
 # NAR: Nirous Android Reversing
@@ -70,7 +70,17 @@ investigation with triage unless the question already names a deeper target.
 | Question | First step | Guide |
 |---|---|---|
 | What is this APK? Package, version, size, DEX/.so inventory | `python3 scripts/nar-triage.py app.apk` | [triage and inventory](references/triage-and-inventory.md) |
-| Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (triage + perms + strings + protections + engine deep dives → report.md / report.json) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md) |
+| Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (1.x workup + 2.0 stages → case dir with report.md / report.json / report.html + companions, case.json, execution-log.json; stage results are cached per input hash) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
+| One command for everything? | `python3 scripts/nar.py <command> …` — unified CLI over every module (`nar analyze`, `nar dex`, `nar security`, …); each module script also works standalone | [architecture](references/architecture.md) |
+| What file is this really? Is extraction safe? | `python3 scripts/nar-input.py identify file` / `extract` / `duplicates` (magic-based identification, zip-slip/bomb-guarded extraction) | [architecture](references/architecture.md) |
+| A fingerprint I can diff/track, with provenance | `python3 scripts/nar-fingerprint.py app.apk` (every property carries source tool + confidence) | [output schema](references/output-schema.md) |
+| Engine verdict with a confidence score | `python3 scripts/nar-engines.py game.apk [--deep]` (multi-indicator fusion; --deep confirms with the engine's own deep-dive tool) | [triage and inventory](references/triage-and-inventory.md) |
+| Deep DEX facts: classes, call edges, reflection, dynamic loading | `python3 scripts/nar-dex.py app.apk` (own DEX parser; `--jadx` / `--baksmali` adapters) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
+| Deep native facts: dependencies, JNI exports, hardening | `python3 scripts/nar-native.py app.apk` (own ELF parser, readelf cross-check with `--work`) | [native libs and JNI](references/native-libs-and-jni.md) |
+| Which endpoints does it talk to (statically)? | `python3 scripts/nar-network.py app.apk` (classified endpoint inventory, services, network security config) | [network traffic](references/network-traffic.md) |
+| Security review with severities and fixes | `python3 scripts/nar-security.py app.apk [--deep]` (findings in the NAR-SEC schema: evidence, impact, remediation) | [output schema](references/output-schema.md), [safety and authorization](references/safety-and-authorization.md) |
+| Full asset inventory (types, sizes, duplicates) | `python3 scripts/nar-assets.py app.apk` | [manifest and resources](references/manifest-and-resources.md) |
+| Runtime observation on my own device | `python3 scripts/nar-runtime.py status` / `plan app.apk` (adb + Frida adapters, session plans, timeline schema) | [dynamic analysis](references/dynamic-analysis.md) |
 | What engine is this game? Unity / Unreal / Godot? | Triage engine hints, then confirm markers | [triage](references/triage-and-inventory.md), [native libs and JNI](references/native-libs-and-jni.md) |
 | Is this app protected? Which packer / protector? | Triage Protection systems section (named packers, obfuscation, RASP, pinning, DRM, encryption, native hardening) | [triage and inventory](references/triage-and-inventory.md) |
 | Permissions, components, intent filters, SDK levels | `apktool d` or `aapt2 dump xmltree` | [manifest and resources](references/manifest-and-resources.md) |
@@ -193,17 +203,32 @@ investigation as complete while required questions remain open.
 - Evidence ledger, report template, confidence levels:
   [references/evidence-workflows.md](references/evidence-workflows.md)
 
-Helper scripts (run with `--help`): `scripts/nar-analyze.py`
-(one-command full workup → report.md + report.json),
+Helper scripts (run with `--help`): `scripts/nar.py` (unified CLI
+over all modules), `scripts/nar-analyze.py`
+(one-command full workup → case dir: report.md + report.json +
+report.html + companions + case.json + execution-log.json),
 `scripts/nar-triage.py` (first-5-minutes triage),
 `scripts/nar-strings.py` (ranked strings), `scripts/nar-compare.py`
-(two-version diff), `scripts/nar-perms.py` (permission and component
+(two-version diff, extended in 2.0 with class/endpoint/asset
+diffs, severity, similarity), `scripts/nar-perms.py` (permission and component
 audit), `scripts/nar-pak.py` (Unreal .pak lister/extractor),
 `scripts/nar-il2cpp.py` (Unity IL2CPP locator + dumper summary),
 `scripts/nar-flutter.py` (Flutter/Dart fingerprint),
 `scripts/nar-godot.py` (Godot .pck inspector), `scripts/nar-rn.py`
-(React Native bundle inspector), and the Frida observation scripts
-in `scripts/frida/` (see the Frida guide).
+(React Native bundle inspector), the 2.0 modules
+`scripts/nar-input.py` (format identification + safe extraction),
+`scripts/nar-fingerprint.py`, `scripts/nar-engines.py`,
+`scripts/nar-unity.py`, `scripts/nar-unreal.py`,
+`scripts/nar-dex.py`, `scripts/nar-native.py`,
+`scripts/nar-network.py`, `scripts/nar-security.py`,
+`scripts/nar-assets.py`, `scripts/nar-runtime.py`,
+`scripts/nar-report.py`, the shared library in `scripts/narlib/`,
+the capability registry in `scripts/registry.json`, the output
+schemas in `schemas/`, and the Frida observation scripts
+in `scripts/frida/` (see the Frida guide). Architecture:
+[references/architecture.md](references/architecture.md);
+tool registry: [references/tool-registry.md](references/tool-registry.md);
+troubleshooting: [references/troubleshooting.md](references/troubleshooting.md).
 
 ## Finish the task
 

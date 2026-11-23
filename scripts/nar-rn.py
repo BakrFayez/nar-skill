@@ -12,6 +12,12 @@ engine that compiled it:
 - JSC / plain JS: no Hermes magic; the bundle ships as JavaScript
   text and that is what gets reported.
 
+A *.bundle extension alone is NOT React Native evidence: Unity
+Addressables asset bundles share the extension. Candidates found
+by extension are therefore content-validated (Hermes magic or
+JavaScript text) before anything is claimed, and UnityFS-magic
+files are rejected as Unity asset bundles by name.
+
 Usage:
     python3 nar-rn.py app.apk [--json] [--work DIR]
 
@@ -30,17 +36,42 @@ import tempfile
 import zipfile
 
 HERMES_MAGIC = struct.pack("<Q", 0x1F1903C103BC1FC6)
+UNITYFS_MAGIC = b"UnityFS"
 BUNDLE_CANDIDATES = ("assets/index.android.bundle",)
 
 
-def find_bundle(names):
-    for cand in BUNDLE_CANDIDATES:
-        if cand in names:
-            return cand
-    others = [n for n in names
-              if n.startswith("assets/")
-              and (n.endswith(".bundle") or n.endswith(".jsbundle"))]
-    return others[0] if others else None
+def find_bundle_candidates(names):
+    """Split bundle-looking entries into (contract, fallbacks).
+
+    The contract entry is React Native's own asset name; its mere
+    presence is RN evidence. Fallbacks are any other *.bundle /
+    *.jsbundle under assets/ — an extension Unity Addressables
+    shares — so they are claims only after content validation.
+    """
+    contract = next((c for c in BUNDLE_CANDIDATES if c in names), None)
+    fallbacks = [n for n in names
+                 if n.startswith("assets/") and n != contract
+                 and (n.endswith(".bundle") or n.endswith(".jsbundle"))]
+    return contract, fallbacks
+
+
+def classify_bundle_head(head):
+    """Classify a bundle from its first bytes.
+
+    Returns "hermes", "unityfs", "js" (JavaScript text), or
+    "binary" (anything else). Only the first two and "js" are
+    decisive; "binary" means the bytes prove nothing either way.
+    """
+    if head[:8] == HERMES_MAGIC:
+        return "hermes"
+    if head[:len(UNITYFS_MAGIC)] == UNITYFS_MAGIC:
+        return "unityfs"
+    sample = head[:4096]
+    if sample:
+        printable = sum(1 for b in sample if 9 <= b <= 126)
+        if printable / len(sample) > 0.95:
+            return "js"
+    return "binary"
 
 
 def parse_hermes_header(data):
@@ -105,23 +136,55 @@ def inspect(apk_path, work_dir):
         report["error"] = "not a ZIP/APK file"
         return report
     with zipfile.ZipFile(apk_path) as zf:
-        entry = find_bundle(zf.namelist())
+        contract, fallbacks = find_bundle_candidates(zf.namelist())
+        entry = None
+        data = None
+        rejected = []
+        if contract is not None:
+            entry = contract
+            data = zf.read(entry)
+        else:
+            for cand in fallbacks:
+                with zf.open(cand) as fh:
+                    kind = classify_bundle_head(fh.read(8192))
+                if kind in ("hermes", "js"):
+                    entry = cand
+                    data = zf.read(cand)
+                    report["bundle_match"] = ("content-validated"
+                                              " fallback asset")
+                    break
+                rejected.append({
+                    "entry": cand,
+                    "kind": ("Unity asset bundle (UnityFS)"
+                             if kind == "unityfs" else
+                             "binary, not Hermes or JavaScript text"),
+                })
         if entry is None:
-            report["note"] = ("no JS bundle asset (index.android.bundle"
-                               " or *.jsbundle) found: not a React"
-                               " Native build, or the bundle ships"
-                               " elsewhere")
+            if rejected:
+                report["rejected_bundles"] = rejected
+                report["note"] = (
+                    "found *.bundle assets but none is a React Native"
+                    " JS bundle ("
+                    + "; ".join(f"{r['entry']}: {r['kind']}"
+                                for r in rejected[:3])
+                    + "): not a React Native build")
+            else:
+                report["note"] = ("no JS bundle asset"
+                                  " (index.android.bundle or"
+                                  " *.jsbundle) found: not a React"
+                                  " Native build, or the bundle ships"
+                                  " elsewhere")
             return report
         report["is_react_native"] = True
         report["bundle_entry"] = entry
-        data = zf.read(entry)
     os.makedirs(work_dir, exist_ok=True)
     out_path = os.path.join(work_dir, os.path.basename(entry))
     with open(out_path, "wb") as fh:
         fh.write(data)
     report["bundle_path"] = os.path.abspath(out_path)
     report["bundle_size_bytes"] = len(data)
-    if data[:8] == HERMES_MAGIC:
+    kind = classify_bundle_head(data[:8192])
+    if kind == "hermes":
         report["engine"] = "Hermes"
         report["is_hermes"] = True
         header = parse_hermes_header(data)
@@ -133,14 +196,22 @@ def inspect(apk_path, work_dir):
             report["cross_check_agrees"] = (
                 info.get("function_count") == header["function_count"]
                 and info.get("version") == header["bytecode_version"])
-    else:
+    elif kind == "js":
         report["engine"] = "JSC / plain JavaScript"
         report["is_hermes"] = False
-        sample = data[:4096]
-        printable = sum(1 for b in sample if 9 <= b <= 126)
-        report["looks_like_text_js"] = bool(sample) and \
-            printable / max(len(sample), 1) > 0.95
+        report["looks_like_text_js"] = True
         report["first_bytes_hex"] = data[:16].hex()
+    else:
+        # At the contract path a non-Hermes, non-text bundle is a
+        # binary bundle format (e.g. a legacy RAM bundle): report
+        # the shape, never a guessed engine.
+        report["engine"] = "unknown binary bundle format"
+        report["is_hermes"] = False
+        report["looks_like_text_js"] = False
+        report["first_bytes_hex"] = data[:16].hex()
+        report["note"] = ("bundle is neither Hermes bytecode nor"
+                          " plain JavaScript text; engine not"
+                          " determined from content")
     return report
 
 

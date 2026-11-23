@@ -1,6 +1,13 @@
 # NAR Skill: Nirous Android Reversing
 
-Version 1.1.0
+# NAR 2.0 — NIROUS ANDROID INTELLIGENCE
+
+**Understand Every Layer. Follow Every Evidence.**
+
+Developed by Nirous Labs.
+Created by Bakr Fayez.
+
+Version 2.0.0
 
 Research by Bakr Fayez
 
@@ -38,6 +45,59 @@ cd nar-skill
 bash scripts/nar-doctor.sh
 python3 scripts/nar-triage.py app.apk
 ```
+
+One command for the full 2.0 workup (case directory with
+report.md + report.json + offline report.html, companion
+evidence files, execution log, and a resumable stage cache):
+
+```bash
+python3 scripts/nar.py analyze app.apk --out case/
+```
+
+Every module also runs through the unified CLI
+(`python3 scripts/nar.py dex|native|network|security|engines …`)
+or standalone, exactly as in 1.x.
+
+## What's new in 2.0
+
+- **Universal input layer**: magic + structure identification
+  for every container NAR meets, and guarded extraction
+  (zip-slip, symlink, and archive-bomb entries rejected and
+  reported).
+- **Fingerprint with provenance**: every identity property
+  carries the tool that produced it, a confidence, and a
+  fact class (observed / derived / inferred).
+- **Engine verdicts with confidence**: multi-indicator fusion
+  across 18 engine/framework families, with optional deep-dive
+  confirmation (`nar-engines.py --deep`), plus dedicated
+  Unity (`nar-unity.py`, optional UnityPy census) and Unreal
+  (`nar-unreal.py`, IoStore inventory) deep dives.
+- **DEX and native intelligence**: a built-in DEX parser
+  (classes, methods, fields, call edges, reflection and
+  dynamic-loading evidence, Kotlin inventory, jadx/baksmali
+  adapters) and a built-in ELF parser (dependencies, JNI
+  exports, hardening, dependency graph, readelf cross-check).
+- **Static network intelligence**: classified endpoint
+  inventory (confirmed / potential / third-party /
+  unused-candidate / sensitive / unverified), backend
+  services, and network-security-config parsing.
+- **Structured security findings**: the NAR-SEC schema —
+  severity, confidence, evidence, impact, remediation, and
+  false-positive notes for every finding.
+- **Asset inventory**: types, categories, image dimensions,
+  duplicate detection, engine-container cross-reference.
+- **Orchestrated cases**: `nar-analyze` is now a case
+  workspace (case.json, execution-log.json, stage caching
+  and resume) with standardized companion documents
+  (schemas in `schemas/`) and a single-file offline HTML
+  dashboard (dark/light, filterable, zero external requests).
+- **Runtime subsystem**: adb/Frida adapters, session plans,
+  and a timeline schema — device-dependent parts labeled
+  IMPLEMENTED_BUT_UNVERIFIED until a device proves them.
+- **Capability registry**: every orchestrated tool declared
+  in `scripts/registry.json` with availability probing and
+  honest limitations; unavailable tools are registered as
+  unavailable, never faked.
 
 `nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-analyze.py` runs the whole static workup in one command and writes a single evidence report (`report.md` + `report.json`). `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists and extracts Unreal `.pak` archives. `nar-il2cpp.py`, `nar-flutter.py`, `nar-godot.py`, and `nar-rn.py` handle the Unity IL2CPP, Flutter/Dart, Godot, and React Native deep dives.
 

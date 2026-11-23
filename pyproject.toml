@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nar-skill"
+version = "2.0.0"
+description = "NAR 2.0 — NIROUS ANDROID INTELLIGENCE: AI-agent skill for Android APK reverse engineering (apps and games)"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Bakr Fayez" }]
+requires-python = ">=3.10"
+keywords = ["android", "reverse-engineering", "apk", "jadx",
+            "apktool", "ai-agents", "security"]
+# The core is stdlib-only by design: every scripts/*.py module
+# runs on a bare python3. The dependencies below are OPTIONAL
+# accelerators, probed at runtime through the capability
+# registry and never required.
+dependencies = []
+
+[project.optional-dependencies]
+unity = ["UnityPy>=1.10"]
+analysis = ["androguard>=4"]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]

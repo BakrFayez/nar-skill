@@ -20,6 +20,13 @@
 #   FIX_UNITY       Unity IL2CPP game APK
 #   FIX_FLUTTER     Flutter app APK
 #   FIX_GODOT_PCK   Godot .pck pack
+#   FIX_GODOT_LOOSE Godot APK with a loose (no-.pck) export layout
+#   FIX_WIDEVINE_COMPILED app whose Widevine UUID ships only as
+#                   compiled DEX constants (no dashed string)
+#   FIX_SWF_CONTENT app bundling .swf web content but no AIR
+#                   descriptor (must NOT be attributed to Adobe AIR)
+#   FIX_UNITY_BUNDLES Unity game whose assets/**.bundle files are
+#                   Addressables bundles (must NOT read as React Native)
 #   FIX_RN          React Native app APK
 #   FIX_APP         app APK for the nar-analyze case
 #   FIX_GAME        game APK for the nar-analyze case
@@ -103,6 +110,32 @@ sys.exit(0 if not hits else 1)"; then
   elif [ "$CLEAN_OK" -eq 1 ]; then ok "triage: zero named packers on clean set ($CHECKED files)"
   else bad "triage-clean-set" "attributed packer on a clean fixture"; fi
 else skip "triage-clean-set" "FIX_CLEAN_SET unset"; fi
+
+# Widevine whose UUID ships only as compiled DEX constants (the
+# dashed string never appears) must still be identified.
+if need triage-widevine-compiled "${FIX_WIDEVINE_COMPILED:-}"; then
+  $PY "$SCRIPTS/nar-triage.py" --json "${FIX_WIDEVINE_COMPILED}" > "$TMP/triage-widevine.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/triage-widevine.json'))
+hits=[p for p in d.get('protections',[]) if p.get('name')=='Widevine DRM' and any('compiled' in e for e in p.get('evidence',[]))]
+sys.exit(0 if hits else 1)"; then
+    ok "triage: Widevine via compiled UUID constants"
+  else bad "triage-widevine-compiled" "no compiled-UUID Widevine finding"; fi
+else skip "triage-widevine-compiled" "FIX_WIDEVINE_COMPILED unset or absent"; fi
+
+# Bundled .swf web content without the AIR descriptor must NOT be
+# attributed to Adobe AIR.
+if need triage-no-air "${FIX_SWF_CONTENT:-}"; then
+  $PY "$SCRIPTS/nar-triage.py" --json "${FIX_SWF_CONTENT}" > "$TMP/triage-noair.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/triage-noair.json'))
+hits=[h for h in d.get('engine_hints',[]) if 'Adobe AIR' in h.get('engine','')]
+sys.exit(0 if not hits else 1)"; then
+    ok "triage: .swf web content not attributed to Adobe AIR"
+  else bad "triage-no-air" "Adobe AIR hint on swf-content fixture"; fi
+else skip "triage-no-air" "FIX_SWF_CONTENT unset or absent"; fi
 
 if need triage-kotlin "${FIX_COMPOSE:-}"; then
   $PY "$SCRIPTS/nar-triage.py" --json "$FIX_COMPOSE" > "$TMP/triage-kotlin.json" 2>/dev/null
@@ -274,6 +307,18 @@ if need godot "${FIX_GODOT_PCK:-}"; then
   else bad "godot" "listing or encryption line missing"; fi
 else skip "godot" "FIX_GODOT_PCK unset or absent"; fi
 
+# A loose Godot export (project ships under assets/ anchored by
+# project.binary, no .pck) must be counted, not reported as 0 files.
+if need godot-loose "${FIX_GODOT_LOOSE:-}"; then
+  $PY "$SCRIPTS/nar-godot.py" --json "${FIX_GODOT_LOOSE}" > "$TMP/godot-loose.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/godot-loose.json'))
+sys.exit(0 if d.get('is_godot') and (d.get('loose_project_files') or 0) > 100 else 1)"; then
+    ok "godot: loose export project files counted"
+  else bad "godot-loose" "loose_project_files not >100 on loose-export fixture"; fi
+else skip "godot-loose" "FIX_GODOT_LOOSE unset or absent"; fi
+
 # ---------------------------------------------------------------- rn
 if need rn-pos "${FIX_RN:-}"; then
   $PY "$SCRIPTS/nar-rn.py" "$FIX_RN" > "$TMP/rn.log" 2>&1
@@ -289,6 +334,17 @@ if need rn-neg "$DEMO"; then
     ok "rn: clean negative on demo"
   else bad "rn-negative" "NOT REACT NATIVE verdict missing"; fi
 else skip "rn-negative" "demo fixture absent"; fi
+
+# Unity Addressables *.bundle files share the extension with RN
+# bundles; content validation must reject them as UnityFS, never
+# claim a React Native engine.
+if need rn-unity "${FIX_UNITY_BUNDLES:-}"; then
+  $PY "$SCRIPTS/nar-rn.py" "${FIX_UNITY_BUNDLES}" > "$TMP/rn-unity.log" 2>&1
+  if contains "$TMP/rn-unity.log" "NOT REACT NATIVE" \
+     && contains "$TMP/rn-unity.log" "Unity asset bundle"; then
+    ok "rn: Unity Addressables bundles rejected as UnityFS"
+  else bad "rn-unity-bundles" "Unity bundles not rejected with UnityFS note"; fi
+else skip "rn-unity-bundles" "FIX_UNITY_BUNDLES unset or absent"; fi
 
 # ---------------------------------------------------------------- frameworks
 # Doctored demo copies under $NAR_FIXTURES/frameworks/, one planted
@@ -379,6 +435,53 @@ if need analyze-app "${FIX_APP:-}"; then analyze_case app "$FIX_APP"
 else skip "analyze-app" "FIX_APP unset or absent"; fi
 if need analyze-game "${FIX_GAME:-}"; then analyze_case game "$FIX_GAME"
 else skip "analyze-game" "FIX_GAME unset or absent"; fi
+
+# ---------------------------------------------------------------- input (2.0)
+# Synthetic inputs are built by the harness itself: no binary
+# fixtures ship in the repo for these cases.
+$PY - "$TMP" <<'PYEOF'
+import os, struct, sys, zipfile
+tmp = sys.argv[1]
+with zipfile.ZipFile(os.path.join(tmp, "synth.apk"), "w") as zf:
+    zf.writestr("AndroidManifest.xml", b"\x03\x00\x08\x00")
+    zf.writestr("classes.dex", b"dex\n039\x00" + b"\x00" * 120)
+with zipfile.ZipFile(os.path.join(tmp, "evil.zip"), "w") as zf:
+    zf.writestr("../evil.txt", b"x")
+    zf.writestr("ok.txt", b"y")
+with open(os.path.join(tmp, "bare.dex"), "wb") as fh:
+    fh.write(b"dex\n039\x00" + b"\x00" * 120)
+with open(os.path.join(tmp, "plain.bin"), "wb") as fh:
+    fh.write(b"no signature here")
+PYEOF
+input_ok=1
+$PY "$SCRIPTS/nar-input.py" identify --json "$TMP/synth.apk" > "$TMP/input-apk.json" 2>/dev/null || input_ok=0
+$PY "$SCRIPTS/nar-input.py" identify --json "$TMP/bare.dex" > "$TMP/input-dex.json" 2>/dev/null || input_ok=0
+$PY "$SCRIPTS/nar-input.py" identify --json "$TMP/plain.bin" > "$TMP/input-unknown.json" 2>/dev/null || input_ok=0
+if [ "$input_ok" -eq 1 ] && $PY - "$TMP" <<'PYEOF'
+import json, sys
+tmp = sys.argv[1]
+a = json.load(open(f"{tmp}/input-apk.json"))
+d = json.load(open(f"{tmp}/input-dex.json"))
+u = json.load(open(f"{tmp}/input-unknown.json"))
+sys.exit(0 if (a["format"] == "apk" and d["format"] == "dex"
+               and u["format"] == "unknown") else 1)
+PYEOF
+then ok "input: signature identification (apk/dex/unknown)"
+else bad "input-identify" "a synthetic format verdict was wrong"; fi
+
+$PY "$SCRIPTS/nar-input.py" extract "$TMP/evil.zip" --out "$TMP/evil-out" > "$TMP/input-extract.log" 2>&1
+if contains "$TMP/input-extract.log" "REJECTED ../evil.txt" \
+   && [ ! -e "$TMP/evil.txt" ] && [ -f "$TMP/evil-out/ok.txt" ]; then
+  ok "input: traversal entry rejected and reported on extract"
+else bad "input-extract-safety" "traversal entry not handled safely"; fi
+
+if need input-duplicates "$DEMO"; then
+  cp "$DEMO" "$TMP/demo-copy.apk"
+  $PY "$SCRIPTS/nar-input.py" duplicates "$DEMO" "$TMP/demo-copy.apk" > "$TMP/input-dup.log" 2>&1
+  if contains "$TMP/input-dup.log" "1 duplicate group"; then
+    ok "input: duplicate detection by hash"
+  else bad "input-duplicates" "identical copies not grouped"; fi
+else skip "input-duplicates" "demo fixture absent"; fi
 
 # ---------------------------------------------------------------- frida
 if command -v node >/dev/null 2>&1; then

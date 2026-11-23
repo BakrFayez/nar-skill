@@ -36,10 +36,20 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL_TIMEOUT = 1800
+sys.path.insert(0, HERE)
+try:
+    from narlib import __version__ as NAR_VERSION
+except Exception:  # narlib missing: keep the tool usable
+    NAR_VERSION = "2.0.0"
+
+# One entry per bundled-tool run, in execution order. main()
+# turns this into execution-log.json (2.0 orchestrator record).
+EXEC_LOG = []
 
 
 def run_json_tool(script, args, timeout=TOOL_TIMEOUT):
@@ -48,16 +58,34 @@ def run_json_tool(script, args, timeout=TOOL_TIMEOUT):
     if not os.path.isfile(path):
         return None, f"{script} is missing from the skill"
     cmd = [sys.executable, path] + args + ["--json"]
+    started = time.time()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout)
     except subprocess.TimeoutExpired:
+        EXEC_LOG.append({"stage": script, "module": script,
+                         "tool": script, "tool_version": None,
+                         "status": "failed",
+                         "duration_s": round(time.time() - started, 3)})
         return None, f"{script} did not finish within {timeout}s"
     except OSError as e:
+        EXEC_LOG.append({"stage": script, "module": script,
+                         "tool": script, "tool_version": None,
+                         "status": "failed",
+                         "duration_s": round(time.time() - started, 3)})
         return None, f"{script} could not start: {e}"
     try:
-        return json.loads(proc.stdout), None
+        data = json.loads(proc.stdout)
+        EXEC_LOG.append({"stage": script, "module": script,
+                         "tool": script, "tool_version": None,
+                         "status": "ok",
+                         "duration_s": round(time.time() - started, 3)})
+        return data, None
     except ValueError:
+        EXEC_LOG.append({"stage": script, "module": script,
+                         "tool": script, "tool_version": None,
+                         "status": "failed",
+                         "duration_s": round(time.time() - started, 3)})
         tail = (proc.stderr or proc.stdout or "").strip()[-300:]
         return None, f"{script} produced no JSON (exit {proc.returncode})" \
                      + (f": {tail}" if tail else "")
@@ -125,7 +153,16 @@ def zip_entry_flags(names):
                       for n in names),
         "flutter": any(n.endswith("/libflutter.so")
                        or n.endswith("/libapp.so") for n in names),
-        "rn_bundle": any(n.endswith(".bundle") or n.endswith(".jsbundle")
+        # React Native routing: the contract asset name, any
+        # *.jsbundle, or a top-level assets/*.bundle. Deep assets/**.bundle
+        # files are Unity Addressables territory; nar-rn content-
+        # validates whatever it is handed either way.
+        "rn_bundle": any(n.endswith(".jsbundle")
+                         or n.rsplit("/", 1)[-1]
+                         in ("index.android.bundle",)
+                         or (n.startswith("assets/")
+                             and n.count("/") == 1
+                             and n.endswith(".bundle"))
                          for n in names),
         "godot": any(n.lower().endswith(".pck")
                      or "libgodot" in n
@@ -147,7 +184,23 @@ def summarize_strings(data):
             hits, count = [], 0
         top = []
         for hit in hits[:5]:
-            text = hit if isinstance(hit, str) else json.dumps(hit)
+            if isinstance(hit, str):
+                text = hit
+            elif isinstance(hit, dict):
+                value = hit.get("value") or hit.get("string") or ""
+                sources = hit.get("sources") or []
+                text = str(value)
+                if sources:
+                    text += " [" + ", ".join(
+                        str(s) for s in sources[:2]) + "]"
+                if not text.strip():
+                    text = json.dumps(hit, sort_keys=True)
+            else:
+                text = str(hit)
+            # One clean line per hit: collapse whitespace and
+            # neutralize Markdown code-span backticks so a
+            # structured hit can never leak as a raw JSON blob.
+            text = " ".join(text.split()).replace("`", "'")
             top.append(text[:200])
         groups[name] = {"count": count, "top": top}
     return {"total_raw_strings": data.get("total_raw_strings"),
@@ -174,11 +227,150 @@ def summarize_perms(data):
         "exported_count": data.get("exported_count"),
         "debuggable": app.get("debuggable"),
         "allow_backup": app.get("allow_backup"),
+        "target_sdk": data.get("target_sdk"),
+        "is_split": bool(data.get("split_name")),
     }
 
 
-def analyze(target, work_dir):
-    report = {"tool": "nar-analyze", "version": "1.1.0",
+def _stage_cache_path(out_dir, stage):
+    return os.path.join(out_dir, "cache", f"{stage}.json")
+
+
+def run_cached_stage(stage, script, args, cache_key, out_dir):
+    """Run one 2.0 stage with case-workspace caching.
+
+    The cache key binds the input hash + stage + NAR version;
+    a hit returns the stored document with status "cached"
+    instead of re-running the tool (resume semantics)."""
+    cache_path = _stage_cache_path(out_dir, stage)
+    key_path = cache_path + ".key"
+    if os.path.isfile(cache_path) and os.path.isfile(key_path):
+        with open(key_path, encoding="utf-8") as fh:
+            if fh.read().strip() == cache_key:
+                with open(cache_path, encoding="utf-8") as fh:
+                    EXEC_LOG.append({
+                        "stage": stage, "module": script,
+                        "tool": script, "tool_version": NAR_VERSION,
+                        "status": "cached", "duration_s": 0.0})
+                    return json.load(fh), None, True
+    data, err = run_json_tool(script, args)
+    if data is not None and out_dir:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        with open(key_path, "w", encoding="utf-8") as fh:
+            fh.write(cache_key)
+    return data, err, False
+
+
+def run_2_0_stages(report, apk_path, out_dir, work_dir):
+    """The 2.0 module stages: fingerprint, engine fusion, DEX,
+    native, network, security, assets. Each writes its
+    standardized companion document into the case directory
+    and a summary into the report. Failures degrade to a
+    limitation line, never to a fabricated result."""
+    companions = {}
+    report["companions"] = companions
+    if not out_dir:
+        report["limitations"].append(
+            "2.0 module stages skipped: no case output directory")
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    cache_key_base = sha256_of(apk_path) + "|" + NAR_VERSION
+
+    def stage(stage_name, script, args, companion_file, summarize):
+        key = hashlib.sha256(
+            f"{cache_key_base}|{stage_name}".encode()).hexdigest()
+        data, err, cached = run_cached_stage(
+            stage_name, script, args, key, out_dir)
+        if data is None:
+            report["limitations"].append(
+                f"2.0 stage {stage_name} degraded: {err}")
+            return None
+        with open(os.path.join(out_dir, companion_file),
+                  "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=1)
+        companions[stage_name] = {"file": companion_file,
+                                  "cached": cached}
+        summarize(data)
+        return data
+
+    def sum_fingerprint(data):
+        report["fingerprint_summary"] = {
+            "properties": sorted((data.get("properties") or {}).keys())}
+
+    def sum_engines(data):
+        report["engine_verdicts"] = [
+            {"engine": v["engine"], "detected": v["detected"],
+             "confidence": v["confidence"], "score": v["score"],
+             "version": v.get("version")}
+            for v in data.get("verdicts", [])]
+        report["engine_ambiguities"] = data.get("ambiguities", [])
+
+    def sum_dex(data):
+        report["dex_summary"] = {
+            "totals": data.get("totals"),
+            "dex_files": [{"name": d.get("name"),
+                           "class_count": d.get("class_count"),
+                           "kotlin": d.get("kotlin")}
+                          for d in data.get("dex_files", [])
+                          if "error" not in d]}
+
+    def sum_native(data):
+        report["native_summary"] = {
+            "libraries": len(data.get("libraries", [])),
+            "jni_libraries": len(data.get("jni_map", {})),
+            "dependency_edges": sum(
+                len(v) for v in
+                (data.get("dependency_graph") or {}).values())}
+
+    def sum_network(data):
+        report["network_summary"] = {
+            "endpoint_count": len(data.get("endpoints", [])),
+            "hosts": len(data.get("hosts", [])),
+            "api_hosts": data.get("api_hosts", []),
+            "classification_counts": data.get(
+                "classification_counts"),
+            "services": [s["service"]
+                         for s in data.get("services", [])],
+            "network_security_config": data.get(
+                "network_security_config")}
+
+    def sum_security(data):
+        report["security_summary"] = {
+            "severity_counts": data.get("severity_counts"),
+            "findings": len(data.get("findings", [])),
+            "positive_observations": data.get(
+                "positive_observations", [])}
+
+    def sum_assets(data):
+        report["assets_summary"] = {
+            "total_assets": data.get("total_assets"),
+            "total_bytes": data.get("total_bytes"),
+            "by_category": data.get("by_category"),
+            "duplicate_groups": len(data.get("duplicates", []))}
+
+    stage("fingerprint", "nar-fingerprint.py", [apk_path],
+          "fingerprint.json", sum_fingerprint)
+    stage("engines", "nar-engines.py", [apk_path],
+          "engines.json", sum_engines)
+    dex_dir = os.path.join(out_dir, "dex")
+    stage("dex", "nar-dex.py", [apk_path, "--out", dex_dir],
+          "dex.json", sum_dex)
+    stage("native", "nar-native.py", [apk_path],
+          "native.json", sum_native)
+    stage("network", "nar-network.py",
+          [apk_path, "--work", os.path.join(work_dir, "network")],
+          "endpoints.json", sum_network)
+    stage("security", "nar-security.py", [apk_path],
+          "security-findings.json", sum_security)
+    stage("assets", "nar-assets.py", [apk_path],
+          "assets.json", sum_assets)
+
+
+def analyze(target, work_dir, out_dir=None):
+    report = {"tool": "nar-analyze", "version": NAR_VERSION,
+              "nar_version": NAR_VERSION,
               "target": os.path.abspath(target),
               "target_name": os.path.basename(target),
               "limitations": []}
@@ -216,6 +408,7 @@ def analyze(target, work_dir):
         "min_sdk": badging.get("min_sdk") or manifest.get("min_sdk"),
         "target_sdk": badging.get("target_sdk")
                       or manifest.get("target_sdk"),
+        "form_factors": badging.get("form_factors") or [],
         "signature_schemes": triage.get("signature_schemes"),
         "kind": ("xapk/apkm container" if triage.get("is_container")
                  else "aab" if triage.get("is_aab")
@@ -328,6 +521,11 @@ def analyze(target, work_dir):
             engines["unreal_pak"] = pak_reports
     report["engines"] = engines
 
+    # 2.0 module stages (fingerprint / engine fusion / DEX /
+    # native / network / security / assets) with case caching.
+    if apk_for_steps and not triage.get("is_obb"):
+        run_2_0_stages(report, apk_for_steps, out_dir, work_dir)
+
     # Limitations and unknowns: the honest tail of every report.
     lim = report["limitations"]
     lim.append("Static analysis only: nothing was executed, so no"
@@ -361,6 +559,32 @@ def _fmt(value):
     return "unknown" if value in (None, "") else str(value)
 
 
+def _flag_text(value, perms):
+    """Render android:debuggable the way nar-perms does: an absent
+    attribute is not "unknown" — the platform default is false.
+    A split stub carries no value of its own."""
+    if value is not None:
+        return str(value)
+    if perms.get("is_split"):
+        return "unknown (split stub; value lives in the base APK)"
+    return "false (platform default; attribute absent)"
+
+
+def _backup_text(value, perms):
+    """Render android:allowBackup the way nar-perms does: absent
+    defaults to true below target 31, and to cloud-backup-off at
+    target 31+ (device-to-device transfer still allowed)."""
+    if value is not None:
+        return str(value)
+    if perms.get("is_split"):
+        return "unknown (split stub; value lives in the base APK)"
+    target = perms.get("target_sdk")
+    if target is not None and target >= 31:
+        return ("false for cloud backup (platform default for "
+                "target 31+; attribute absent)")
+    return "true (platform default; attribute absent)"
+
+
 def render_md(report):
     t = report.get("triage") or {}
     ident = report.get("identity") or {}
@@ -369,7 +593,7 @@ def render_md(report):
     lines.append(f"- SHA-256: `{report.get('target_sha256')}`")
     lines.append(f"- Size: {report.get('target_size_bytes', 0):,} bytes")
     lines.append(f"- Kind: {ident.get('kind')}")
-    lines.append("- Produced by: nar-analyze.py (NAR 1.1.0), reusing"
+    lines.append("- Produced by: nar-analyze.py (NAR 1.1.1), reusing"
                  " nar-doctor, nar-triage, nar-perms, nar-strings and"
                  " the engine scripts. Static analysis only.")
     env = report.get("environment") or {}
@@ -390,6 +614,9 @@ def render_md(report):
     lines.append(f"- Label: {_fmt(ident.get('app_label'))}")
     lines.append(f"- SDK: min {_fmt(ident.get('min_sdk'))},"
                  f" target {_fmt(ident.get('target_sdk'))}")
+    if ident.get("form_factors"):
+        lines.append("- Form factors: "
+                     + ", ".join(ident["form_factors"]))
     sig = ident.get("signature_schemes") or {}
     if sig:
         lines.append(f"- Signing: verifies={sig.get('verifies')},"
@@ -442,8 +669,8 @@ def render_md(report):
         lines.append(f"- By group: {json.dumps(perms.get('permissions_by_group'))}")
         lines.append(f"- Components: {json.dumps(perms.get('component_counts'))};"
                      f" exported: {perms.get('exported_count')}")
-        lines.append(f"- debuggable: {_fmt(perms.get('debuggable'))};"
-                     f" allowBackup: {_fmt(perms.get('allow_backup'))}")
+        lines.append(f"- debuggable: {_flag_text(perms.get('debuggable'), perms)};"
+                     f" allowBackup: {_backup_text(perms.get('allow_backup'), perms)}")
     lines += ["", "## Strings scan", ""]
     strings = report.get("strings") or {}
     if strings.get("error"):
@@ -498,21 +725,26 @@ def render_md(report):
                          f" ABIs: {', '.join(section.get('abis') or [])};"
                          f" {section.get('build_mode')}")
         elif name == "react_native":
-            lines.append(f"- Engine: {section.get('engine')};"
-                         f" bundle: {section.get('bundle_entry')}"
-                         f" ({section.get('bundle_size_bytes')} bytes)")
-            hermes = section.get("hermes") or {}
-            if hermes:
-                lines.append(f"- Hermes bytecode v"
-                             f"{hermes.get('bytecode_version')},"
-                             f" {hermes.get('function_count')} functions,"
-                             f" {hermes.get('string_count')} strings")
+            if section.get("is_react_native") is False:
+                lines.append(f"- Not React Native:"
+                             f" {section.get('note') or 'no JS bundle'}")
+            else:
+                lines.append(f"- Engine: {section.get('engine')};"
+                             f" bundle: {section.get('bundle_entry')}"
+                             f" ({section.get('bundle_size_bytes')} bytes)")
+                hermes = section.get("hermes") or {}
+                if hermes:
+                    lines.append(f"- Hermes bytecode v"
+                                 f"{hermes.get('bytecode_version')},"
+                                 f" {hermes.get('function_count')} functions,"
+                                 f" {hermes.get('string_count')} strings")
         elif name == "godot":
             pck = section.get("pck") or {}
-            lines.append(f"- Pack: format {pck.get('format_version')},"
-                         f" engine {pck.get('engine_version')},"
-                         f" files: {pck.get('file_count')},"
-                         f" encrypted: {pck.get('encrypted')}")
+            if pck:
+                lines.append(f"- Pack: format {pck.get('format_version')},"
+                             f" engine {pck.get('engine_version')},"
+                             f" files: {pck.get('file_count')},"
+                             f" encrypted: {pck.get('encrypted')}")
             if section.get("note"):
                 lines.append(f"- {section['note']}")
         else:
@@ -537,13 +769,21 @@ def main(argv=None):
                         " (default: temp dir)")
     p.add_argument("--json", action="store_true",
                    help="also print the JSON report to stdout")
+    p.add_argument("--no-html", action="store_true",
+                   help="skip the offline HTML dashboard")
+    p.add_argument("--no-cache", action="store_true",
+                   help="ignore the case stage cache and re-run "
+                        "every 2.0 stage")
     args = p.parse_args(argv)
     stem = os.path.splitext(os.path.basename(args.target))[0] or "target"
     out_dir = args.out or os.path.join(os.getcwd(), f"nar-analyze-{stem}")
     work_dir = args.work or os.path.join(
         tempfile.gettempdir(), f"nar-analyze-work-{stem}")
+    if args.no_cache and os.path.isdir(os.path.join(out_dir, "cache")):
+        import shutil
+        shutil.rmtree(os.path.join(out_dir, "cache"))
     try:
-        report = analyze(args.target, work_dir)
+        report = analyze(args.target, work_dir, out_dir)
     except FileNotFoundError as e:
         print(f"nar-analyze: {e}", file=sys.stderr)
         return 2
@@ -554,6 +794,50 @@ def main(argv=None):
         json.dump(report, fh, indent=2)
     with open(md_path, "w", encoding="utf-8") as fh:
         fh.write(render_md(report))
+    # Case workspace record + execution log (2.0).
+    case_id = "nar-" + report.get("target_sha256", "unknown")[:12]
+    report["case_id"] = case_id
+    stages = {}
+    for entry in EXEC_LOG:
+        stages[entry["stage"]] = {
+            "status": entry["status"],
+            "duration_s": entry["duration_s"]}
+    case_doc = {
+        "case_id": case_id, "nar_version": NAR_VERSION,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                 time.gmtime()),
+        "input": {"path": report.get("target"),
+                  "sha256": report.get("target_sha256"),
+                  "size_bytes": report.get("target_size_bytes")},
+        "config": {"profile": "full"},
+        "tool_versions": {"nar": NAR_VERSION,
+                          "python": sys.version.split()[0]},
+        "stages": stages,
+    }
+    with open(os.path.join(out_dir, "case.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump(case_doc, fh, indent=2)
+    exec_doc = {"tool": "nar-analyze", "case_id": case_id,
+                "input_sha256": report.get("target_sha256"),
+                "entries": EXEC_LOG}
+    with open(os.path.join(out_dir, "execution-log.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump(exec_doc, fh, indent=2)
+    with open(json_path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+    if not args.no_html:
+        try:
+            proc = subprocess.run(
+                [sys.executable,
+                 os.path.join(HERE, "nar-report.py"), out_dir],
+                capture_output=True, text=True, timeout=300)
+            if proc.returncode != 0:
+                print(f"nar-analyze: HTML dashboard degraded: "
+                      f"{proc.stderr.strip()[-200:]}",
+                      file=sys.stderr)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"nar-analyze: HTML dashboard skipped: {e}",
+                  file=sys.stderr)
     if args.json:
         print(json.dumps(report, indent=2))
     else:

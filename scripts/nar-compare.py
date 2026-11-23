@@ -338,7 +338,182 @@ def compare(old_path, new_path):
             "changed_count": len(ent_changed),
         },
     }
+    try:
+        report["extended"] = extended_compare(old_path, new_path,
+                                              report)
+    except Exception as e:  # extended diff must never break 1.x
+        report["extended"] = {"notes": [f"extended comparison "
+                                         f"failed: {e}"]}
     return report
+
+
+def _run_json_tool(script, args, timeout=1800):
+    here = os.path.dirname(os.path.abspath(__file__))
+    cmd = [sys.executable, os.path.join(here, script)] + args + ["--json"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout)
+        return json.loads(proc.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+DANGEROUS_PERMISSIONS = {
+    "android.permission.SEND_SMS", "android.permission.READ_SMS",
+    "android.permission.RECEIVE_SMS", "android.permission.CALL_PHONE",
+    "android.permission.RECORD_AUDIO",
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.READ_CONTACTS",
+    "android.permission.WRITE_CONTACTS",
+    "android.permission.READ_CALL_LOG",
+    "android.permission.BODY_SENSORS",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.BIND_ACCESSIBILITY_SERVICE",
+    "android.permission.BIND_DEVICE_ADMIN",
+}
+
+
+def extended_compare(old_path, new_path, report):
+    """Brief section 13: semantic diffs + severity + similarity.
+
+    Runs the DEX/strings/triage tools as subprocesses (the 1.x
+    standalone pattern) and degrades to a note when a tool
+    cannot run, instead of failing the whole comparison."""
+    ext = {"notes": []}
+    old_h = report["old"].get("entry_hashes") or {}
+    new_h = report["new"].get("entry_hashes") or {}
+    union = set(old_h) | set(new_h)
+    same = sum(1 for k in set(old_h) & set(new_h)
+               if old_h[k]["sha256"] == new_h[k]["sha256"])
+    ext["similarity"] = {
+        "entry_jaccard_identical": (round(same / len(union), 4)
+                                    if union else 1.0),
+        "identical_entries": same, "total_entries_union": len(union)}
+    asset_old = {k: v for k, v in old_h.items()
+                 if "/assets/" in k or k.startswith("assets/")}
+    asset_new = {k: v for k, v in new_h.items()
+                 if "/assets/" in k or k.startswith("assets/")}
+    a_add, a_rem, a_chg = _diff_hashes(asset_old, asset_new)
+    ext["assets"] = {"added": a_add[:50], "removed": a_rem[:50],
+                     "changed": a_chg[:50],
+                     "added_count": len(a_add),
+                     "removed_count": len(a_rem),
+                     "changed_count": len(a_chg)}
+
+    def class_set(path):
+        data = _run_json_tool("nar-dex.py", [path])
+        if not data:
+            return None
+        out = set()
+        for d in data.get("dex_files", []):
+            for c in d.get("classes", []):
+                out.add(c["class"])
+        return out
+
+    old_classes, new_classes = class_set(old_path), class_set(new_path)
+    if old_classes is not None and new_classes is not None:
+        ext["classes"] = {
+            "added_count": len(new_classes - old_classes),
+            "removed_count": len(old_classes - new_classes),
+            "added_sample": sorted(new_classes - old_classes)[:25],
+            "removed_sample": sorted(old_classes - new_classes)[:25]}
+    else:
+        ext["notes"].append("class diff unavailable (nar-dex "
+                            "could not run on one side)")
+
+    def endpoint_set(path):
+        data = _run_json_tool("nar-strings.py", [path])
+        if not data:
+            return None
+        out = set()
+        for group in ("urls", "endpoints"):
+            for hit in data.get("groups", {}).get(group, []):
+                out.add(hit.get("value") if isinstance(hit, dict)
+                        else hit)
+        return out
+
+    old_eps, new_eps = endpoint_set(old_path), endpoint_set(new_path)
+    if old_eps is not None and new_eps is not None:
+        ext["endpoints"] = {
+            "added": sorted(new_eps - old_eps)[:50],
+            "removed": sorted(old_eps - new_eps)[:50],
+            "added_count": len(new_eps - old_eps),
+            "removed_count": len(old_eps - new_eps)}
+    else:
+        ext["notes"].append("endpoint diff unavailable "
+                            "(nar-strings could not run)")
+
+    def engine_versions(path):
+        data = _run_json_tool("nar-triage.py", [path])
+        if not data:
+            return None
+        return data.get("engine_versions") or {}
+
+    old_ev, new_ev = engine_versions(old_path), engine_versions(new_path)
+    if old_ev is not None and new_ev is not None:
+        ext["engine_versions"] = {"old": old_ev, "new": new_ev,
+                                  "changed": old_ev != new_ev}
+
+    # Severity classification (brief 13: assign a severity to
+    # significant changes, with the reason kept next to it).
+    sev = []
+    d = report["diff"]
+    old_b = report["old"].get("badging") or {}
+    new_b = report["new"].get("badging") or {}
+    if old_b.get("package") != new_b.get("package"):
+        sev.append({"level": "high", "change": "package name changed",
+                    "reason": "different application identity"})
+    if d["signing_files"]["changed"] or d["signing_files"]["added"] \
+            or d["signing_files"]["removed"]:
+        sev.append({"level": "high",
+                    "change": "signing files changed",
+                    "reason": "possible re-sign or certificate "
+                              "rotation; verify continuity before "
+                              "treating as an update"})
+    for perm in d["permissions_added"]:
+        if perm in DANGEROUS_PERMISSIONS:
+            sev.append({"level": "high",
+                        "change": f"dangerous permission added: "
+                                  f"{perm}",
+                        "reason": "expands sensitive capability"})
+        else:
+            sev.append({"level": "medium",
+                        "change": f"permission added: {perm}",
+                        "reason": "capability surface grew"})
+    if old_b.get("target_sdk") != new_b.get("target_sdk") or \
+            old_b.get("min_sdk") != new_b.get("min_sdk"):
+        sev.append({"level": "medium", "change": "SDK levels changed",
+                    "reason": f"min {old_b.get('min_sdk')} -> "
+                              f"{new_b.get('min_sdk')}, target "
+                              f"{old_b.get('target_sdk')} -> "
+                              f"{new_b.get('target_sdk')}"})
+    nl = d["native_libs"]
+    if nl["added"] or nl["removed"] or nl["changed"]:
+        sev.append({"level": "medium",
+                    "change": "native libraries changed",
+                    "reason": f"+{len(nl['added'])} "
+                              f"-{len(nl['removed'])} "
+                              f"~{len(nl['changed'])}"})
+    if ext.get("endpoints", {}).get("added_count") or \
+            ext.get("endpoints", {}).get("removed_count"):
+        sev.append({"level": "medium",
+                    "change": "network endpoints changed",
+                    "reason": f"+{ext['endpoints']['added_count']} "
+                              f"-{ext['endpoints']['removed_count']}"})
+    if ext["assets"]["changed_count"] or ext["assets"]["added_count"]:
+        sev.append({"level": "low", "change": "assets changed",
+                    "reason": f"+{ext['assets']['added_count']} "
+                              f"~{ext['assets']['changed_count']}"})
+    ext["severity"] = sev
+    ext["overall_severity"] = (
+        "high" if any(s["level"] == "high" for s in sev) else
+        "medium" if any(s["level"] == "medium" for s in sev) else
+        "low" if sev else "none")
+    return ext
 
 
 def _fmt_delta(n, unit=""):
@@ -458,6 +633,37 @@ def human(report):
     _show_names(lines, "added", ent["added"])
     _show_names(lines, "removed", ent["removed"])
     _show_names(lines, "changed", ent["changed"])
+
+    ext = report.get("extended") or {}
+    if ext:
+        lines.append("\nExtended comparison (2.0):")
+        sim = ext.get("similarity") or {}
+        if sim:
+            lines.append(f"  Similarity: {sim['identical_entries']}/"
+                         f"{sim['total_entries_union']} entries "
+                         f"byte-identical "
+                         f"({sim['entry_jaccard_identical']:.0%})")
+        if "classes" in ext:
+            lines.append(f"  Classes: +{ext['classes']['added_count']}"
+                         f" -{ext['classes']['removed_count']}")
+        if "endpoints" in ext:
+            lines.append(f"  Endpoints: "
+                         f"+{ext['endpoints']['added_count']} "
+                         f"-{ext['endpoints']['removed_count']}")
+        lines.append(f"  Assets: +{ext['assets']['added_count']} "
+                     f"-{ext['assets']['removed_count']} "
+                     f"~{ext['assets']['changed_count']}")
+        if ext.get("engine_versions", {}).get("changed"):
+            lines.append(f"  Engine versions changed: "
+                         f"{ext['engine_versions']['old']} -> "
+                         f"{ext['engine_versions']['new']}")
+        lines.append(f"  Overall severity: "
+                     f"{ext.get('overall_severity', 'n/a')}")
+        for s in ext.get("severity", []):
+            lines.append(f"    [{s['level']}] {s['change']} — "
+                         f"{s['reason']}")
+        for note in ext.get("notes", []):
+            lines.append(f"  note: {note}")
     return "\n".join(lines)
 
 
