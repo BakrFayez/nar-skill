@@ -68,7 +68,7 @@ def analyze_elf(name, data, cross_check_path=None):
 
 
 def analyze(target, only_lib=None, work_dir=None):
-    report = {"tool": "nar-native", "version": "2.3.0",
+    report = {"tool": "nar-native", "version": "2.4.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     libs = []  # (display_name, data, temp_path_for_crosscheck)
@@ -103,23 +103,35 @@ def analyze(target, only_lib=None, work_dir=None):
             continue
         facts["display_name"] = display
         report["libraries"].append(facts)
-    # Native dependency graph among bundled libraries.
+    # Native dependency graph among bundled libraries. Entries
+    # that failed ELF parsing carry {"name", "error"} instead of
+    # the facts dict (no display_name/soname/needed): they take
+    # no part in the graph and must not crash its construction
+    # (regression: an app bundling ZIP payloads named *.zip.so
+    # crashed the whole stage with KeyError: 'display_name').
+    def lib_name(lib):
+        return lib.get("display_name") or lib.get("name")
+
     by_soname = {}
     for lib in report["libraries"]:
+        name = lib_name(lib)
+        if not name:
+            continue
         if lib.get("soname"):
-            by_soname[lib["soname"]] = lib["display_name"]
-        by_soname.setdefault(
-            os.path.basename(lib["display_name"]),
-            lib["display_name"])
+            by_soname[lib["soname"]] = name
+        by_soname.setdefault(os.path.basename(name), name)
     graph = {}
     for lib in report["libraries"]:
+        name = lib_name(lib)
+        if not name:
+            continue
         edges = [by_soname[n] for n in lib.get("needed", [])
                  if n in by_soname]
         if edges:
-            graph[lib["display_name"]] = sorted(edges)
+            graph[name] = sorted(edges)
     report["dependency_graph"] = graph
     report["jni_map"] = {
-        lib["display_name"]: lib["jni_exports"]
+        lib_name(lib): lib["jni_exports"]
         for lib in report["libraries"] if lib.get("jni_exports")}
     return report
 

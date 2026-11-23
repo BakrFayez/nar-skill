@@ -2,6 +2,111 @@
 
 ## Unreleased
 
+## 2.4.0 (2026-11-24)
+
+- Unreal Zen packages: Zen (IoStore-native) package
+  chunks are now parsed, not just identified — the Zen
+  header (current, pre-5.3 and Early Access legacy
+  layouts, accepted only when every section validates),
+  versioning info when the writer recorded it, the
+  per-package name map, the bulk data map, imported
+  public export hashes, the import/export maps and the
+  export bundle entries, with names and references
+  resolved through the package's own name map. Sections
+  no public reader decodes (dependency bundles,
+  imported package names) are located and measured,
+  and export property streams follow the same honesty
+  rules as classic packages. Verified on byte-exact
+  synthetic fixtures with regression tests and on
+  the real Zen set inventoried earlier: all 684
+  stored chunks parse in full (the sweep found one
+  forward-export-reference defect, since fixed; an
+  independent byte-walk oracle agrees 45/45 on one
+  real package — see NAR_TEST_MATRIX.md).
+- Runtime completion (emulator scope): the two Frida
+  scripts that had never executed live (jni-trace,
+  java-api-trace) have now run against a live process —
+  hooks installed in attach mode and, for jni-trace, in
+  a Frida-spawned process via the resume-first recipe.
+  Event accounting stays honest: one REPL-triggered
+  call/return pair for java-api-trace; no RegisterNatives
+  events, because the demo fixture binds its native
+  method statically (the event path remains labeled
+  unverified).
+- Compiled-artifact support: narlib now parses OAT
+  (header + key-value store), VDEX (fields + byte-exact
+  DEX carving), Dalvik ODEX, and ART image headers, and
+  nar-dex accepts .vdex/.odex/.oat/.cdex as first-class
+  targets. Verified on real API 26 artifacts pulled
+  from a device (OAT 124, VDEX 006, ART 043), including
+  full parsing of the DEX carried by a real VDEX.
+  Dalvik ODEX and CDEX remain synthetic-fixture level;
+  compact-DEX payloads are identified, not decoded.
+- Mega sweep fixes (full pipeline over 75 local
+  targets): native-stage crash on ZIP payloads named
+  as libraries; IL2CPP split-pair reporting and a
+  silent split-base skip in the case workflow; legacy
+  versioned Cordova/PhoneGap runtimes now detected;
+  Ren'Py / RPG Maker unique payloads now reach the
+  detection threshold; bundletool .apks sets are
+  classified as containers and routed to the canonical
+  base split instead of producing hollow reports.
+- Godot: encrypted-pack detection verified on a real
+  engine-written encrypted pack (reported as encrypted,
+  listing honestly unavailable, no decryption added);
+  format 3 (Godot 4.5+) directory-at-end parsing fixed
+  (previously reported "Files: 0"); format 4 headers
+  report facts with the listing marked unsupported;
+  individually encrypted entries are marked in listings.
+- Unreal IoStore: the directory index parser now also
+  reads the pooled name-index layout written by current
+  (UE 5.3-era) packagers — fixed-size rows over a shared
+  string pool — after a real UE5 game's full container
+  set showed its index being silently dropped; a layout
+  is accepted only on exact buffer consumption plus a
+  complete tree walk. IoStore container reports now
+  identify Zen-format package chunks (the IoStore-
+  native package format, magic as trailer) as such
+  instead of misreporting them as corrupt classic
+  packages. The same real set verified TOC parsing,
+  directory naming, and stored-chunk extraction end to
+  end at full-game scale; Oodle chunks remain refused
+  by name.
+- Unreal IoStore (TOC v8): containers of the newest
+  TOC generation ship the pooled directory-index
+  layout unchanged, but their trees are wider — the
+  directory-index flattening walk counted sibling
+  hops against its depth bound and dropped a real
+  v8 container's index (674 directories, 13,494
+  files) as unreadable. Sibling chains are now
+  walked iteratively and the bound applies to true
+  nesting depth only; the v8 index flattens
+  completely, verified path-for-path against an
+  independent byte-walk oracle, and the UE 5.3 set's
+  flattened map is unchanged.
+- Unreal Zen packages (newer writers): a second real
+  Zen corpus — an indie UE5 horror title of the
+  newest engine generation (TOC v8 containers,
+  unsealed) — showed a writer variant the parser had
+  never seen: a count-prefixed byte array serialized
+  between the name batch and the bulk data map,
+  which made all 525 of the title's stored packages
+  fail to parse. The variant is now accepted under
+  the same rule as every other layout (the classic
+  map behind the array must land exactly on the
+  imported-public-export-hashes section), the array
+  itself is reported located-and-measured rather
+  than decoded, and the corpus parses 525/525 with
+  regression tests; an independent byte-walk oracle
+  agrees with the parser on 20/20 field checks on
+  one real package. The same title's classic pak
+  (index unencrypted, SHA-verified) holds no
+  packages at all, and none of its packages records
+  versioning info — the hunt for a real
+  classic-format UE5 package with a recorded
+  FileVersionUE5 remains open (see
+  NAR_TEST_MATRIX.md).
+
 ## 2.3.0 (2026-11-23)
 
 - Real-UE5 verification rung executed on an unsealed

@@ -109,6 +109,17 @@ Notes:
 - Godot 3 and Godot 4 share the `libgodot` name. The `.pck` header
   decides: pack format 1 is Godot 3.x, 2 is Godot 4.0-4.4, 3 is
   Godot 4.5 and later.
+- Godot pack format 3 (Godot 4.5+) moves the pack directory to
+  the end of the file: the header carries a directory offset,
+  and entry offsets are relative to the pack's file base.
+  `nar-godot.py` reads the directory from the recorded offset
+  for format 3, from directly after the header for formats 1-2,
+  and reports format 4 headers (including the encryption flag)
+  with the listing marked unsupported rather than guessed.
+  Per-file encryption is reported per entry: a pack whose
+  directory is readable can still hold individual encrypted
+  files, and those entries are marked `[encrypted]` in the
+  listing.
 - React Native new-architecture libraries can ship in an APK whose
   new-arch flag is off. The deciding check is
   `IS_NEW_ARCHITECTURE_ENABLED` in `BuildConfig.smali` (apktool
@@ -247,7 +258,7 @@ NAR does not bypass protections.
 | Anti-tamper / RASP | RootBeer library, su / Magisk / Superuser markers, emulator markers, debugger markers, Frida / Xposed / Substrate markers, SafetyNet (legacy), Play Integrity API | DEX string fingerprints of the check code |
 | Network protection | SSL pinning | `sha256/<base64>` pin constants in code (the OkHttp CertificatePinner form); pin-sets in a `res/xml` network security config |
 | Licensing / DRM | Play License Verification (LVL), Play license check, Widevine DRM | LVL classes (`com/android/vending/licensing`), the `CHECK_LICENSE` permission, the Widevine MediaDrm scheme UUID string |
-| Code / asset encryption | DEX without a valid header, shell / stub DEX pattern, unreadable IL2CPP metadata, encrypted Godot pack, encrypted Unreal pak index | DEX header magic, DEX-vs-payload size shape, `global-metadata.dat` magic, the PCK header encryption flag, the pak footer index-encryption flag |
+| Code / asset encryption | DEX without a valid header, shell / stub DEX pattern, unreadable IL2CPP metadata, encrypted Godot pack, encrypted Unreal pak index | DEX header magic, DEX-vs-payload size shape, `global-metadata.dat` magic, the PCK header encryption flag (bit 0 of the format 2+ header; in format 3+ the flag keeps the same position even though the directory moves), the pak footer index-encryption flag |
 | Native hardening | Hardening posture per library | ELF headers: `ET_DYN` (position-independent), `PT_GNU_RELRO`, `BIND_NOW`, `SHT_SYMTAB` absence (stripped), and LOAD-segment alignment (the 16 KB page-size check: every `PT_LOAD` `p_align` ≥ 16384) |
 
 Reading the section:

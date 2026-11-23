@@ -94,7 +94,15 @@ ENGINE_SIGNATURES = [
     # strong marker; Capacitor ships its config + plugin registry and
     # serves the app from assets/public/. Ionic is a UI layer on top
     # of one of these two, so it is attributed to its container.
-    ("Cordova (hybrid)", ["assets/www/cordova.js"]),
+    # Legacy Cordova / PhoneGap (pre-3.0) shipped the runtime
+    # under a versioned name (cordova-2.5.0.js, phonegap-1.4.js);
+    # the exact-name marker alone misses those builds entirely
+    # even when the org/apache/cordova DEX marker is present.
+    ("Cordova (hybrid)", ["assets/www/cordova.js",
+                          "assets/www/cordova-1.",
+                          "assets/www/cordova-2.",
+                          "assets/www/phonegap.js",
+                          "assets/www/phonegap-"]),
     ("Capacitor (hybrid)", ["capacitor.config.json",
                             "capacitor.plugins.json", "assets/public/"]),
     # Qt for Android: every Qt deployment ships the Core library for
@@ -1142,6 +1150,7 @@ def triage(apk_path):
         "is_obb": apk_path.lower().endswith(".obb"),
         "is_xapk": apk_path.lower().endswith(".xapk"),
         "is_apkm": apk_path.lower().endswith(".apkm"),
+        "is_apks": apk_path.lower().endswith(".apks"),
         "obb_kind": obb_match.group(1) if obb_match else None,
         "obb_version_code": obb_match.group(2) if obb_match else None,
         "obb_package": obb_match.group(3) if obb_match else None,
@@ -1322,7 +1331,8 @@ def triage(apk_path):
             "has_manifest": has_manifest,
             "has_resources_arsc": has_arsc,
             "aab_modules": modules if result["is_aab"] else [],
-            "is_container": result["is_xapk"] or result["is_apkm"],
+            "is_container": (result["is_xapk"] or result["is_apkm"]
+                             or result["is_apks"]),
             "container_manifest": container_manifest_of(zf)
             if (result["is_xapk"] or result["is_apkm"]) else None,
             "contained_apks": sorted(
@@ -1776,10 +1786,12 @@ def human(report):
     if report.get("is_aab"):
         lines.append("NOTE: .aab bundle (ZIP container like an APK; needs bundletool to install).")
     if report.get("is_container"):
-        kind = "XAPK" if report.get("is_xapk") else "APKM"
-        lines.append(f"NOTE: {kind} container (a ZIP of APKs plus a manifest.json)."
-                     " Identity below is from the container manifest;"
-                     " triage each contained APK for code-level detail.")
+        kind = ("XAPK" if report.get("is_xapk")
+                else "APKS" if report.get("is_apks") else "APKM")
+        lines.append(f"NOTE: {kind} container (a ZIP of APKs)."
+                     " Identity below is from the container manifest"
+                     " when one is present; triage each contained APK"
+                     " for code-level detail.")
         for a in report.get("contained_apks", []):
             lines.append(f"  - contains APK: {a['name']}  ({a['size_bytes']:,} bytes)")
         for o in report.get("contained_obbs", []):

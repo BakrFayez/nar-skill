@@ -45,7 +45,7 @@ sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as NAR_VERSION
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.3.0"
+    NAR_VERSION = "2.4.0"
 
 # One entry per bundled-tool run, in execution order. main()
 # turns this into execution-log.json (2.0 orchestrator record).
@@ -122,7 +122,9 @@ def sha256_of(path):
 
 def pick_base_apk(triage, names):
     """Choose the base APK inside a container: the one named after
-    the package when known, else the largest."""
+    the package when known, else a canonical base name
+    (base-master.apk / base.apk, the bundletool .apks layout),
+    else the largest."""
     contained = triage.get("contained_apks") or []
     if not contained:
         return None
@@ -133,6 +135,10 @@ def pick_base_apk(triage, names):
     contained = [c for c in contained if c["name"] in names]
     if not contained:
         return None
+    for item in contained:
+        if os.path.basename(item["name"]) in ("base-master.apk",
+                                              "base.apk"):
+            return item["name"]
     return max(contained, key=lambda c: c.get("size_bytes", 0))["name"]
 
 
@@ -413,7 +419,7 @@ def analyze(target, work_dir, out_dir=None):
                       or manifest.get("target_sdk"),
         "form_factors": badging.get("form_factors") or [],
         "signature_schemes": triage.get("signature_schemes"),
-        "kind": ("xapk/apkm container" if triage.get("is_container")
+        "kind": ("xapk/apkm/apks container" if triage.get("is_container")
                  else "aab" if triage.get("is_aab")
                  else "obb" if triage.get("is_obb") else "apk"),
     }
@@ -448,6 +454,29 @@ def analyze(target, work_dir, out_dir=None):
         step_notes.append("target is an OBB: it carries no manifest,"
                           " so the permission audit was skipped")
     report["step_notes"] = step_notes
+
+    # A container without a manifest (e.g. a bundletool .apks set)
+    # leaves the identity empty even though the steps run on a
+    # real base APK: take the identity from that base instead of
+    # reporting an unnamed target.
+    if (triage.get("is_container") and apk_for_steps
+            and not report["identity"].get("package")):
+        base_triage, base_err = run_json_tool(
+            "nar-triage.py", [apk_for_steps])
+        if base_triage:
+            bb = base_triage.get("badging") or {}
+            ident = report["identity"]
+            for key in ("package", "version_name", "version_code",
+                        "app_label", "min_sdk", "target_sdk"):
+                if not ident.get(key) and bb.get(key):
+                    ident[key] = bb[key]
+            if not ident.get("form_factors") and bb.get("form_factors"):
+                ident["form_factors"] = bb["form_factors"]
+            if ident.get("package"):
+                step_notes.append(
+                    "container has no manifest identity; identity"
+                    " taken from the contained base APK")
+                report["step_notes"] = step_notes
 
     if apk_for_steps and not triage.get("is_obb"):
         perms, err = run_json_tool("nar-perms.py", [apk_for_steps])
@@ -490,6 +519,26 @@ def analyze(target, work_dir, out_dir=None):
                 "nar-il2cpp.py",
                 [scan_path, "--out", os.path.join(work_dir, "il2cpp")])
             engines["unity_il2cpp"] = data or {"error": err}
+        else:
+            # Metadata without the native library: the IL2CPP pair
+            # is split across APKs and the dive cannot run on this
+            # file alone. Say so explicitly instead of silently
+            # omitting the section.
+            hints = triage.get("engine_hints") or []
+            meta_hint = bool(
+                (triage.get("engine_versions") or {}).get(
+                    "unity_metadata_version")) or any(
+                        "global-metadata.dat" in marker
+                        for hint in hints
+                        for marker in (hint.get("markers") or []))
+            if meta_hint:
+                step_notes.append(
+                    "Unity IL2CPP metadata present but no"
+                    " libil2cpp.so in this file; the IL2CPP deep"
+                    " dive was skipped (the native pair likely"
+                    " lives in a split APK — see triage"
+                    " split_native_suspected)")
+                report["step_notes"] = step_notes
         if flags["flutter"]:
             data, err = run_json_tool("nar-flutter.py", [scan_path])
             engines["flutter"] = data or {"error": err}

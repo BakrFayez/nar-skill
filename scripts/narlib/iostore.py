@@ -16,6 +16,12 @@ eras found in the wild:
   flags; 24-byte records at TOC v8+: 20-byte hash +
   flags + padding). A TOC v6 container flagged OnDemand
   carries two extra hash arrays after the meta.
+- directory index in two layouts: the classic inline-
+  FString tables, and the pooled name-index tables
+  written by UE 5.3-era packagers (fixed-size rows
+  referencing a shared string pool). A layout is
+  accepted only when it consumes the index buffer
+  exactly and its tree walk covers every entry.
 - legacy (UE4.26/4.27 experimental IoStore): header
   without the TocHeaderSize field (140 bytes of fields),
   8-byte little-endian packed offset/length records
@@ -94,6 +100,10 @@ CHUNK_TYPES_LEGACY = {
 }
 
 INVALID_INDEX = 0xFFFFFFFF
+# Stack-safety cap on directory-index nesting depth. It
+# bounds true tree depth only; sibling chains are walked
+# iteratively and never count against it.
+MAX_DIRECTORY_DEPTH = 256
 CHUNK_ID_SIZE = 12
 BLOCK_ENTRY_SIZE = 12
 
@@ -228,64 +238,98 @@ def _fstring(r):
     return raw.decode("utf-16-le", "replace").rstrip("\x00")
 
 
-def parse_directory_index(buf):
-    """Parse the directory index buffer: mount point plus
-    the directory/file tables, flattened to full paths."""
+def _flatten_directory_index(mount, dir_rows, file_rows):
+    """Flatten one directory-index tree to TOC-indexed
+    paths. dir_rows are (name, first_child, first_file,
+    next_sibling); file_rows are (name, next_file,
+    toc_entry_index). Raises IoStoreError unless the
+    child/sibling/file chains visit every row exactly
+    once — a partial or cyclic tree is not guessed at.
+
+    Sibling chains are walked iteratively and only child
+    links add nesting depth. The earlier form recursed
+    into siblings with the same depth counter, so it
+    measured the longest child+sibling hop chain rather
+    than the tree's depth and rejected wide trees: a
+    real TOC v8 container whose deepest nesting is 9
+    levels chains 87 hops through one directory's many
+    subdirectories and was dropped as unreadable.
+    Cycles cannot loop regardless of the depth cap:
+    every row is marked on entry and a revisit raises,
+    so the walk always terminates."""
+    paths = {}
+    visited_dirs = set()
+    visited_files = set()
+
+    def walk(dir_idx, prefix, depth):
+        while dir_idx != INVALID_INDEX:
+            if dir_idx >= len(dir_rows) \
+                    or dir_idx in visited_dirs \
+                    or depth > MAX_DIRECTORY_DEPTH:
+                raise IoStoreError(
+                    "directory index tree walk failed")
+            visited_dirs.add(dir_idx)
+            name, first_child, first_file, next_sibling = \
+                dir_rows[dir_idx]
+            here = prefix + (name + "/" if name else "")
+            f = first_file
+            steps = 0
+            while f != INVALID_INDEX:
+                if f >= len(file_rows) \
+                        or f in visited_files \
+                        or steps > len(file_rows):
+                    raise IoStoreError(
+                        "directory index file chain failed")
+                visited_files.add(f)
+                fname, next_file, toc_idx = file_rows[f]
+                if toc_idx in paths:
+                    raise IoStoreError(
+                        "directory index names two files "
+                        "for one TOC entry")
+                paths[toc_idx] = mount + here + fname
+                f = next_file
+                steps += 1
+            walk(first_child, here, depth + 1)
+            dir_idx = next_sibling
+
+    if dir_rows:
+        walk(0, "", 0)
+    if len(visited_dirs) != len(dir_rows) \
+            or len(visited_files) != len(file_rows):
+        raise IoStoreError(
+            "directory index chains do not cover every "
+            "directory and file entry")
+    return paths
+
+
+def _parse_directory_index_classic(buf):
+    """Classic layout: names inline as FStrings in both
+    tables (the layout the original IoStore writers and
+    the open-source readers document)."""
     r = _Reader(buf)
     mount = _fstring(r)
     dir_count = r.u32()
-    dirs = []
+    dir_rows = []
     for _ in range(dir_count):
         name = _fstring(r)
-        dirs.append({
-            "name": name,
-            "first_child_index": r.u32(),
-            "first_file_index": r.u32(),
-            "next_sibling_index": r.u32(),
-        })
+        first_child = r.u32()
+        first_file = r.u32()
+        next_sibling = r.u32()
+        dir_rows.append((name, first_child, first_file,
+                         next_sibling))
     file_count = r.u32()
-    files = []
+    file_rows = []
     for _ in range(file_count):
         name = _fstring(r)
-        files.append({
-            "name": name,
-            "next_file_index": r.u32(),
-            "toc_entry_index": r.u32(),
-        })
-
-    def dir_path(idx, guard=0):
-        if idx == INVALID_INDEX or idx >= len(dirs) or guard > 64:
-            return None
-        # A directory's path is built from its parent chain,
-        # which the table only exposes via child links from
-        # the root; resolve by searching for the parent.
-        return dirs[idx]["name"]
-
-    paths = {}
-    if dirs:
-        # Walk from the root (directory 0) through
-        # child/sibling links, accumulating path prefixes.
-        def walk(dir_idx, prefix, seen):
-            if dir_idx == INVALID_INDEX or dir_idx >= len(dirs):
-                return
-            if dir_idx in seen:
-                return
-            seen = seen | {dir_idx}
-            d = dirs[dir_idx]
-            here = prefix + (d["name"] + "/" if d["name"] else "")
-            f = d["first_file_index"]
-            steps = 0
-            while f != INVALID_INDEX and f < len(files) \
-                    and steps <= len(files):
-                entry = files[f]
-                paths[entry["toc_entry_index"]] = \
-                    mount + here + entry["name"]
-                f = entry["next_file_index"]
-                steps += 1
-            walk(d["first_child_index"], here, seen)
-            walk(d["next_sibling_index"], prefix, seen)
-
-        walk(0, "", set())
+        next_file = r.u32()
+        toc_idx = r.u32()
+        file_rows.append((name, next_file, toc_idx))
+    if r.pos != len(buf):
+        raise IoStoreError(
+            "classic directory index does not consume "
+            "its buffer exactly")
+    paths = _flatten_directory_index(mount, dir_rows,
+                                     file_rows)
     return {
         "mount_point": mount,
         "directory_count": dir_count,
@@ -293,6 +337,106 @@ def parse_directory_index(buf):
         "files_named": len(paths),
         "paths": paths,
     }
+
+
+def _parse_directory_index_pooled(buf):
+    """Pooled layout (UE 5.3-era writers; TOC v8
+    writers ship the same layout unchanged): both tables
+    carry name indices into a shared FString pool that
+    follows the tables, and a directory row is (name
+    index, first child, next sibling, first file) — the
+    first-file field sits last, after the sibling link.
+    Validated by exact consumption, index ranges, and a
+    complete tree walk."""
+    r = _Reader(buf)
+    mount = _fstring(r)
+    dir_count = r.u32()
+    raw_dirs = []
+    for _ in range(dir_count):
+        raw_dirs.append((r.u32(), r.u32(), r.u32(),
+                         r.u32()))
+    file_count = r.u32()
+    raw_files = []
+    for _ in range(file_count):
+        raw_files.append((r.u32(), r.u32(), r.u32()))
+    string_count = r.u32()
+    strings = [_fstring(r) for _ in range(string_count)]
+    if r.pos != len(buf):
+        raise IoStoreError(
+            "pooled directory index does not consume "
+            "its buffer exactly")
+
+    def pooled_name(idx, allow_invalid=False):
+        if idx == INVALID_INDEX and allow_invalid:
+            return ""
+        if idx >= len(strings):
+            raise IoStoreError(
+                "pooled directory index name index out "
+                "of range")
+        return strings[idx]
+
+    dir_rows = []
+    for name_idx, first_child, next_sibling, first_file \
+            in raw_dirs:
+        for link in (first_child, next_sibling):
+            if link != INVALID_INDEX and link >= dir_count:
+                raise IoStoreError(
+                    "pooled directory index directory "
+                    "link out of range")
+        if first_file != INVALID_INDEX \
+                and first_file >= file_count:
+            raise IoStoreError(
+                "pooled directory index first-file "
+                "link out of range")
+        dir_rows.append((pooled_name(name_idx, True),
+                         first_child, first_file,
+                         next_sibling))
+    file_rows = []
+    for name_idx, next_file, toc_idx in raw_files:
+        if next_file != INVALID_INDEX \
+                and next_file >= file_count:
+            raise IoStoreError(
+                "pooled directory index file link out "
+                "of range")
+        file_rows.append((pooled_name(name_idx),
+                          next_file, toc_idx))
+    paths = _flatten_directory_index(mount, dir_rows,
+                                     file_rows)
+    return {
+        "mount_point": mount,
+        "directory_count": dir_count,
+        "file_count": file_count,
+        "files_named": len(paths),
+        "paths": paths,
+    }
+
+
+def parse_directory_index(buf):
+    """Parse the directory index buffer: mount point plus
+    the directory/file tables, flattened to full paths.
+
+    Two layouts exist in the wild: the classic inline-
+    name layout and the pooled name-index layout written
+    by UE 5.3-era packagers and kept by TOC v8 writers.
+    Each candidate is accepted
+    only when it consumes the buffer exactly and its
+    tree walk covers every entry; anything else raises
+    IoStoreError."""
+    errors = []
+    for layout, fn in (("classic",
+                        _parse_directory_index_classic),
+                       ("pooled",
+                        _parse_directory_index_pooled)):
+        try:
+            parsed = fn(buf)
+            parsed["layout"] = layout
+            return parsed
+        except (IoStoreError, struct.error, IndexError) \
+                as e:
+            errors.append(f"{layout}: {e}")
+    raise IoStoreError(
+        "directory index matches no known layout (" +
+        "; ".join(errors) + ")")
 
 
 def _parse_block(raw):

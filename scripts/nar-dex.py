@@ -2,7 +2,15 @@
 """nar-dex.py: deep DEX intelligence (brief section 4).
 
 Parses every DEX in an APK (or a bare .dex) with the narlib
-DEX parser and reports:
+DEX parser. Compiled artifacts are valid targets too: a
+.vdex yields the DEX files it carries, a Dalvik .odex yields
+its embedded DEX (quickened opcodes, labeled in the report),
+an ART .oat/.odex yields any DEX still embedded in it (the
+Android 8.0+ layout keeps the DEX in the companion .vdex
+instead, and the report says so), and a bare .cdex is
+reported as unparseable by the DEX parser rather than
+misread. The parsed artifact header rides in the report as
+compiled_artifact. The module reports:
 
 - header truth: string/type/proto/field/method/class counts,
 - class enumeration with hierarchy (superclass, interfaces),
@@ -60,6 +68,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import registry as reg_mod  # noqa: E402
 from narlib import dexdis  # noqa: E402
+from narlib import oat as oat_mod  # noqa: E402
 from narlib.dex import Dex, DexError  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 
@@ -91,7 +100,39 @@ MAX_STRING_CLASSES = 5000
 
 def load_dexes(target):
     """Yield (name, bytes) for every DEX in the target."""
-    if target.lower().endswith(".dex"):
+    lower = target.lower()
+    if lower.endswith(".dex"):
+        with open(target, "rb") as fh:
+            yield os.path.basename(target), fh.read()
+        return
+    if lower.endswith(".vdex"):
+        with open(target, "rb") as fh:
+            data = fh.read()
+        for entry_name, blob, _kind in \
+                oat_mod.extract_dex_from_vdex(data):
+            yield entry_name, blob
+        return
+    if lower.endswith(".odex") or lower.endswith(".oat"):
+        with open(target, "rb") as fh:
+            data = fh.read()
+        if data.startswith(oat_mod.ODEX_MAGIC):
+            info = oat_mod.parse_odex_dalvik(
+                data, os.path.basename(target))
+            yield os.path.basename(target) + ":embedded.dex", \
+                info["dex"]
+            return
+        # ART OAT (including the Android 8.0+ *.odex form):
+        # carve any DEX still embedded in the file. From
+        # Android 8.0 the DEX lives in the companion .vdex
+        # instead, so an empty yield here is the honest
+        # result; analyze() labels it via compiled_artifact.
+        for hit in oat_mod.scan_embedded_dex(data):
+            if hit["kind"] == "dex":
+                yield (f"embedded@{hit['offset']}.dex",
+                       data[hit["offset"]:
+                            hit["offset"] + hit["file_size"]])
+        return
+    if lower.endswith(".cdex"):
         with open(target, "rb") as fh:
             yield os.path.basename(target), fh.read()
         return
@@ -99,6 +140,47 @@ def load_dexes(target):
         for name in sorted(zf.namelist()):
             if DEX_NAME_RE.match(name):
                 yield name, zf.read(name)
+
+
+def compiled_artifact_info(target):
+    """Parsed header of a compiled-artifact target, or None.
+
+    For .vdex/.odex/.oat/.art targets the header facts are
+    themselves report evidence (versions, dex counts, where
+    the DEX lives), independent of whether any DEX could be
+    carved out of the file."""
+    lower = target.lower()
+    if not lower.endswith((".vdex", ".odex", ".oat", ".art")):
+        return None
+    with open(target, "rb") as fh:
+        data = fh.read()
+    name = os.path.basename(target)
+    try:
+        if lower.endswith(".vdex"):
+            return {"kind": "vdex",
+                    **oat_mod.parse_vdex(data, name)}
+        if lower.endswith(".art"):
+            return {"kind": "art",
+                    **oat_mod.parse_art_image(data, name)}
+        if data.startswith(oat_mod.ODEX_MAGIC):
+            info = oat_mod.parse_odex_dalvik(data, name)
+            info.pop("dex", None)
+            return {"kind": "odex-dalvik", **info}
+        info = oat_mod.parse_oat(data, name)
+        companion = None
+        vdex_path = os.path.splitext(target)[0] + ".vdex"
+        if os.path.isfile(vdex_path):
+            companion = vdex_path
+        return {"kind": "oat", **info,
+                "companion_vdex": companion,
+                "note": ("DEX bytes live in the companion .vdex "
+                         "on Android 8.0+" if companion else
+                         "no companion .vdex found beside this "
+                         "file; on Android 8.0+ the DEX lives "
+                         "in the companion .vdex, not in the "
+                         "OAT file itself")}
+    except oat_mod.OatError as e:
+        return {"kind": "unparseable", "error": str(e)}
 
 
 def analyze_dex(name, data, disasm=None):
@@ -306,9 +388,12 @@ def baksmali_index(dex_bytes_path, out_dir):
 
 def analyze(target, out_dir=None, use_jadx=False,
             use_baksmali=False, disasm=None):
-    report = {"tool": "nar-dex", "version": "2.3.0",
+    report = {"tool": "nar-dex", "version": "2.4.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
+    artifact = compiled_artifact_info(target)
+    if artifact is not None:
+        report["compiled_artifact"] = artifact
     totals = {"classes": 0, "methods": 0, "fields": 0,
               "call_edges": 0, "native_methods": 0}
     first_dex_path = None
@@ -346,6 +431,32 @@ def human(report):
     print(f"NAR DEX intelligence: "
           f"{os.path.basename(report['target'])}")
     print("=" * 60)
+    artifact = report.get("compiled_artifact")
+    if artifact:
+        kind = artifact.get("kind")
+        if kind == "vdex":
+            print(f"Compiled artifact: VDEX "
+                  f"{artifact.get('vdex_version')}, "
+                  f"{artifact.get('number_of_dex_files')} "
+                  "dex file(s) declared")
+        elif kind == "oat":
+            print(f"Compiled artifact: OAT "
+                  f"{artifact.get('oat_version')} "
+                  f"({artifact.get('instruction_set_name')}), "
+                  f"{artifact.get('dex_file_count')} dex "
+                  "file(s) declared")
+            if artifact.get("note"):
+                print(f"    {artifact['note']}")
+        elif kind == "odex-dalvik":
+            print(f"Compiled artifact: Dalvik ODEX "
+                  f"{artifact.get('odex_version')} (embedded "
+                  "DEX carries quickened opcodes)")
+        elif kind == "art":
+            print(f"Compiled artifact: ART image "
+                  f"{artifact.get('art_version')}")
+        elif kind == "unparseable":
+            print(f"Compiled artifact: unparseable "
+                  f"({artifact.get('error')})")
     for d in report["dex_files"]:
         if d.get("error"):
             print(f"- {d['name']}: ERROR {d['error']}")
@@ -403,7 +514,9 @@ def main(argv=None):
                     "edges, reflection/dynamic evidence, Kotlin "
                     "inventory, targeted bytecode disassembly, "
                     "optional jadx/baksmali adapters.")
-    p.add_argument("target", help="path to an .apk or .dex file")
+    p.add_argument("target", help="path to an .apk, .dex, "
+                                  ".vdex, .odex, .oat, or "
+                                  ".cdex file")
     p.add_argument("--json", action="store_true")
     p.add_argument("--out", metavar="DIR",
                    help="write classes/methods companion JSON here")

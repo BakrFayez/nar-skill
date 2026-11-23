@@ -7,8 +7,8 @@ evidence, and a mismatch between name and content is itself
 reported). Supported verdicts:
 
     apk, apks, xapk (incl. APKM), aab, aar, jar, dex, odex,
-    vdex, zip, obb, elf, unity-assetbundle, unreal-pak,
-    unreal-iostore, godot-pck, unknown
+    vdex, oat, cdex, art, zip, obb, elf, unity-assetbundle,
+    unreal-pak, unreal-iostore, godot-pck, unknown
 
 Every verdict carries the evidence that produced it and a
 confidence. Structural validation notes (bad entries, CRC
@@ -19,6 +19,7 @@ import re
 import struct
 import zipfile
 
+from . import oat as _oat
 from .hashing import sha256_of
 
 _HEAD_BYTES = 4096
@@ -111,6 +112,40 @@ def _zip_verdict(path, ext):
                 "details": details}
 
 
+_OAT_SCAN_BYTES = 16 * 1024 * 1024
+
+
+def _oat_verdict(path, size):
+    """OAT verdict for an ELF file, or None when the file
+    carries no OatHeader. An ART OAT file is an ELF whose
+    .rodata holds the header; on Android 8.0+ the same bytes
+    are what a file named *.odex under oat/<abi>/ contains,
+    so the .odex extension is an expected name for this
+    format. The scan is bounded: the header of a real OAT
+    file sits in its first megabytes."""
+    with open(path, "rb") as fh:
+        blob = fh.read(min(size, _OAT_SCAN_BYTES))
+    try:
+        info = _oat.parse_oat(blob, os.path.basename(path))
+    except _oat.OatError:
+        return None
+    evidence = ["ELF magic",
+                f"OatHeader version {info['oat_version']} at "
+                f"offset {info['oat_header_offset']}"]
+    details = {
+        "oat_version": info["oat_version"],
+        "oat_header_offset": info["oat_header_offset"],
+        "instruction_set": info["instruction_set_name"],
+        "dex_file_count": info["dex_file_count"],
+        "key_value_store": info["key_value_store"],
+        "dex_locations": info["dex_locations"],
+    }
+    if size > _OAT_SCAN_BYTES:
+        details["oat_scan_truncated"] = True
+    return {"format": "oat", "confidence": "high",
+            "evidence": evidence, "details": details}
+
+
 def identify(path):
     """Identify one file. Returns a verdict dict:
 
@@ -131,18 +166,43 @@ def identify(path):
         verdict = {"format": "dex", "confidence": "high",
                    "evidence": [f"DEX magic, format version {version}"],
                    "details": {"dex_version": version}}
+    elif head.startswith(b"cdex"):
+        version = head[4:7].decode("ascii", "replace")
+        verdict = {"format": "cdex", "confidence": "high",
+                   "evidence": [f"CDEX magic, format version {version}"],
+                   "details": {"cdex_version": version}}
     elif head.startswith(b"dey\n"):
+        version = head[4:7].decode("ascii", "replace")
         verdict = {"format": "odex", "confidence": "high",
-                   "evidence": ["ODEX magic (dey)"], "details": {}}
+                   "evidence": [f"ODEX magic (dey), version {version}"],
+                   "details": {"odex_version": version}}
     elif head.startswith(b"vdex"):
+        version = head[4:7].decode("ascii", "replace")
+        details = {"vdex_version": version}
+        if version == "006" and len(head) >= 24:
+            (details["number_of_dex_files"], details["dex_size"],
+             details["verifier_deps_size"],
+             details["quickening_info_size"]) = \
+                struct.unpack_from("<IIII", head, 8)
         verdict = {"format": "vdex", "confidence": "high",
-                   "evidence": ["VDEX magic"], "details": {}}
+                   "evidence": [f"VDEX magic, version {version}"],
+                   "details": details}
+    elif head.startswith(b"art\n"):
+        version = head[4:7].decode("ascii", "replace")
+        verdict = {"format": "art", "confidence": "high",
+                   "evidence": [f"ART image magic, version {version}"],
+                   "details": {"art_version": version}}
     elif head.startswith(b"\x7fELF"):
         elf_class = {1: "ELF32", 2: "ELF64"}.get(
             head[4] if len(head) > 4 else 0, "ELF?")
-        verdict = {"format": "elf", "confidence": "high",
-                   "evidence": [f"ELF magic, {elf_class}"],
-                   "details": {"elf_class": elf_class}}
+        oat_info = _oat_verdict(path, size)
+        if oat_info is not None:
+            verdict = oat_info
+            verdict["details"]["elf_class"] = elf_class
+        else:
+            verdict = {"format": "elf", "confidence": "high",
+                       "evidence": [f"ELF magic, {elf_class}"],
+                       "details": {"elf_class": elf_class}}
     elif head.startswith(b"GDPC"):
         verdict = {"format": "godot-pck", "confidence": "high",
                    "evidence": ["GDPC pack magic"], "details": {}}
@@ -187,6 +247,8 @@ def identify(path):
         "apk": {".apk"}, "aab": {".aab"}, "aar": {".aar"},
         "jar": {".jar"}, "dex": {".dex"}, "odex": {".odex"},
         "vdex": {".vdex"}, "obb": {".obb"}, "elf": {".so"},
+        "oat": {".oat", ".odex"}, "cdex": {".cdex"},
+        "art": {".art"},
         "godot-pck": {".pck"}, "unreal-pak": {".pak"},
         "unreal-iostore": {".utoc", ".ucas"},
         "unity-assetbundle": {".bundle", ".unity3d", ""},
@@ -236,6 +298,70 @@ def validate_structure(path, verdict=None):
             header = fh.read(64)
         if len(header) < 16:
             notes.append("ELF header truncated")
+    elif fmt == "oat":
+        with open(path, "rb") as fh:
+            blob = fh.read(min(os.path.getsize(path),
+                               _OAT_SCAN_BYTES))
+        try:
+            info = _oat.parse_oat(blob)
+            if info["dex_file_count"] > 1024:
+                notes.append(
+                    f"OAT dex_file_count {info['dex_file_count']} "
+                    "is implausibly large")
+        except _oat.OatError as e:
+            notes.append(f"OAT header unreadable: {e}")
+    elif fmt == "vdex":
+        with open(path, "rb") as fh:
+            blob = fh.read()
+        try:
+            info = _oat.parse_vdex(blob)
+            if info["dex_size"] is not None \
+                    and info["dex_size"] > len(blob):
+                notes.append(
+                    f"VDEX dex_size {info['dex_size']} exceeds "
+                    f"file size {len(blob)}")
+            if info["number_of_dex_files"] is not None \
+                    and len(info["embedded"]) \
+                    != info["number_of_dex_files"]:
+                notes.append(
+                    f"VDEX header declares "
+                    f"{info['number_of_dex_files']} dex file(s) "
+                    f"but {len(info['embedded'])} embedded "
+                    "DEX/CDEX header(s) were found")
+            if not info["embedded"]:
+                notes.append("VDEX carries no embedded DEX/CDEX")
+        except _oat.OatError as e:
+            notes.append(f"VDEX header unreadable: {e}")
+    elif fmt == "odex":
+        with open(path, "rb") as fh:
+            blob = fh.read()
+        try:
+            info = _oat.parse_odex_dalvik(blob)
+            if not info["dex"].startswith(b"dex\n"):
+                notes.append("ODEX embedded payload does not "
+                             "start with DEX magic")
+        except _oat.OatError as e:
+            notes.append(f"ODEX header unreadable: {e}")
+    elif fmt == "cdex":
+        if os.path.getsize(path) < 112:
+            notes.append("CDEX file truncated (<112 bytes)")
+    elif fmt == "art":
+        with open(path, "rb") as fh:
+            blob = fh.read()
+        try:
+            info = _oat.parse_art_image(blob)
+            # image_size is the size of the image data, not
+            # of the file: a real boot image's file is larger
+            # (verified on a pulled API 26 boot image, where
+            # image_size < file size). Only an image_size
+            # beyond the file is impossible.
+            if info["image_size"] \
+                    and info["image_size"] > len(blob):
+                notes.append(
+                    f"ART image_size {info['image_size']} "
+                    f"exceeds file size {len(blob)}")
+        except _oat.OatError as e:
+            notes.append(f"ART image header unreadable: {e}")
     if verdict.get("extension_mismatch"):
         notes.append(
             f"extension {verdict['extension']} does not match the "

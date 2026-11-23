@@ -126,3 +126,13 @@ the script with `frida -U -p <spawned pid> -l <script>`;
 both bundled observation scripts were verified live in
 Frida-spawned processes this way (see
 references/frida-scripts.md).
+
+## frida-ps fails with a PackageManagerInternal NPE
+
+If frida-server was started before the system finished
+booting and settling, `frida-ps -U` can fail with a
+PackageManagerInternal NPE even though the server is
+running and the device is healthy. Restart frida-server
+after `sys.boot_completed=1` and a settle period; process
+enumeration then works normally. Observed on the API 26
+emulator target during the verified runtime sessions.

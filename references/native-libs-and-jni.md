@@ -146,6 +146,24 @@ inventing entries. Listing is inventory only:
 names and sizes answer content questions, and entries can be matched
 against the classes and assets the code references.
 
+UE5 IoStore containers hold their cooked packages as
+Zen-format chunks (the package magic appears as a
+4-byte trailer, not a header). nar-unreal parses those
+too, through narlib.zen: the Zen header, versioning
+info when the writer recorded it (most Zen headers
+record no UE4/UE5 object version — the report says so
+rather than inventing one), the per-package name map,
+the import/export maps with references resolved to
+readable names, and the export bundle entries. The
+dependency-bundle and imported-package-name sections
+are located and measured, not decoded, and export
+property streams follow the same rules as classic
+packages (unversioned properties need a .usmap). A
+Zen chunk whose header does not validate for a full
+parse is still identified and inventoried, with the
+reason in its note — never misreported as a corrupt
+classic package.
+
 ### Godot
 
 Detect: `libgodot_android.so` (name varies by export template).

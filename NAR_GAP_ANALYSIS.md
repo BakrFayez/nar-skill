@@ -347,3 +347,141 @@ the matching NAR_TEST_MATRIX.md addenda.
   UE4-era corpus, including independent manual spec
   accounting on one small package — see
   NAR_TEST_MATRIX.md (unreleased addendum).
+
+### Close-all-gaps addendum (2026-11-23)
+
+- Runtime rows (§8/§16): all four bundled Frida scripts
+  have now executed live (emulator scope) — jni-trace.js
+  and java-api-trace.js joined network-observe.js and
+  file-io-observe.js. jni-trace installed its
+  RegisterNatives hook in both attach mode and a
+  Frida-spawned process (resume-first recipe); no
+  registration/entry events were recorded because the
+  demo fixture's native library binds its method
+  statically, so the RegisterNatives event path remains
+  the one runtime sub-path without a live event, and it
+  is labeled as such. java-api-trace installed both
+  URL.openConnection hooks and captured one genuine
+  call/return pair, recorded honestly as REPL-triggered
+  (the fixture's own code never calls the traced
+  method). Physical-device rows remain
+  IMPLEMENTED_BUT_UNVERIFIED.
+- Compiled artifacts (§1 bare-container row): OAT, VDEX,
+  ODEX, CDEX, and ART identification and parsing are now
+  implemented in narlib (OatHeader + key-value store,
+  VDEX field parse and byte-exact DEX carving, Dalvik
+  ODEX parse/carve, ART image header) and nar-dex takes
+  compiled artifacts as first-class targets. Verified on
+  real API 26 files (app .odex = OAT 124, companion
+  .vdex = VDEX 006 with its DEX 037 fully parsed, boot
+  .oat/.art). Still labeled synthetic-only: Dalvik-era
+  ODEX on a real file, CDEX on a real file (compact-DEX
+  decoding remains unimplemented and is reported
+  honestly), VDEX versions beyond 006 field parsing,
+  and OAT from other releases/instruction sets.
+- Godot encrypted packs: CLOSED at REAL level. An
+  encrypted pack written by a real engine pack writer
+  with a 256-bit key is detected and reported as
+  encrypted with the listing honestly unavailable
+  (detection only — no decryption capability exists
+  anywhere in the skill). The same cycle fixed format 3
+  (Godot 4.5+) directory-at-end parsing, which had
+  silently reported "Files: 0", and made format 4
+  headers report facts + encryption flag with the
+  listing marked unsupported. Regression coverage in
+  tests/unit/test_godot.py.
+- Mega sweep (close-all-gaps): the full pipeline ran
+  over 75 local targets; six defects were found and
+  fixed in-cycle (native-stage crash on ZIP payloads
+  named as libraries, IL2CPP split-pair reporting and
+  a silent split-base skip, legacy versioned Cordova
+  runtime detection, Ren'Py/RPG Maker scoring, .apks
+  container routing). Engine-detection rows for
+  Cordova/PhoneGap and Ren'Py/RPG Maker move from
+  partial to implemented-and-tested at the fixture +
+  real-target level recorded in NAR_TEST_MATRIX.md.
+  Wear OS / APEX / instant-app rows are unchanged: no
+  sample was obtainable, and they stay labeled
+  unexercised rather than claimed.
+- Unreal IoStore (§3.1): now IMPLEMENTED_AND_TESTED at
+  real-set level — a complete, unsealed UE 5.3 game's
+  container set (global container + one chunk container,
+  TOC v5, 7,171 chunks) parses end to end: TOC,
+  directory index, stored-chunk extraction, and the
+  nar-unreal / nar-analyze routes. The rung found and
+  fixed a real defect: the directory index exists in a
+  second, pooled name-index layout (UE 5.3-era
+  packagers) that the parser silently dropped; both
+  layouts are now read under exact-consumption +
+  complete-walk validation, with an independent
+  byte-walk oracle agreeing on all 6,743 named files.
+  A second real set, from a TOC v8 container (the
+  newest TOC generation, 14,867 chunks), is now also
+  parsed end to end including its directory index
+  (674 directories, 13,494 files): the v8 writers
+  kept the pooled layout unchanged, but the
+  flattening walk itself had to be fixed — it
+  counted sibling hops against its depth bound and
+  dropped wide trees as unreadable. Sibling chains
+  are now walked iteratively with the bound on true
+  nesting depth only; the v8 result is verified
+  path-for-path against an independent oracle, and
+  the UE 5.3 set's flattened map is unchanged.
+- Unreal packages (§13): the same set's cooked
+  packages are Zen-format (the IoStore-native package
+  format), not classic FPackageFileSummary packages —
+  identified and inventoried as such (684 of 684
+  stored package chunks carry the Zen trailer trait).
+  Zen package parsing is now IMPLEMENTED (narlib.zen):
+  the Zen header in its current, pre-5.3 and Early
+  Access legacy layouts, versioning info when the
+  writer recorded it, the per-package name map, the
+  bulk data map, imported public export hashes, the
+  import/export maps and the export bundle entries,
+  with references resolved through the package's own
+  name map; sections no public reader decodes are
+  located and measured, and export payloads are
+  located and measured under the same honesty rules
+  as classic packages. Verification status: the
+  parser is verified on byte-exact synthetic
+  fixtures with regression tests
+  (tests/unit/test_zen.py) AND on the real set —
+  the sweep over all 684 stored chunks (run with
+  the owner's explicit go-ahead after an
+  execution-risk flag had stopped corpus processing
+  in the implementing session) parses 684/684 in
+  full, and an independent byte-walk oracle on one
+  real package agrees on 45/45 field checks. The
+  sweep found and fixed one defect the fixtures had
+  hidden (a forward export reference crashed the
+  reference pass with a raw KeyError; the export
+  parse is now two-pass, with a regression test).
+  All 684 chunks use the current header layout and
+  record no versioning info, so the pre-5.3 and
+  Early Access layouts and recorded versioning info
+  remain synthetic-verified only. Zen headers record no
+  UE4/UE5 object version unless versioning info was
+  recorded, so the one remaining Unreal row is
+  unchanged in substance and sharper in definition: a
+  real classic-format UE5 package whose summary
+  records FileVersionUE5 1000+ is still unproven —
+  every real UE5 title examined so far ships either
+  sealed containers or Zen packages.
+  A second real Zen corpus (a 2025-era indie UE5
+  horror title, TOC v8 containers) has since been
+  swept: all 525 stored package chunks are Zen, the
+  title's classic pak holds no packages at all, and
+  the sweep exposed a newer-writer Zen variant the
+  parser had never seen — a count-prefixed byte array
+  ahead of the bulk data map — which had made every
+  one of the 525 fail; it is now parsed under the
+  same exact-landing acceptance rule, with the array
+  located and measured, and the corpus parses
+  525/525 with an independent byte-walk oracle
+  agreeing 20/20 on one real package (full record
+  in NAR_TEST_MATRIX.md). The versioned-classic row
+  stands exactly as defined above: across five real
+  UE5 titles examined in this program — one sealed,
+  one classic-but-version-stripped, three Zen-native
+  — no shipped title has yet provided a classic
+  package with a recorded FileVersionUE5.

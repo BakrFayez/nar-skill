@@ -807,3 +807,473 @@ executed:
   by the reviewer: pytest 76/76, end-to-end harness 46
   passed / 0 failed / 0 skipped, nar-doctor core toolchain
   READY, py_compile clean.
+
+## Addendum (2026-11-23) — close-all-gaps: runtime scripts + compiled artifacts
+
+- jni-trace.js and java-api-trace.js have now executed
+  live on the same emulator target (API 26, TCG,
+  frida-server 17.27.4), in attach mode via the CLI load
+  path, against the live demo process. jni-trace.js
+  installed its RegisterNatives hook in attach mode and
+  in a Frida-spawned process (resume-first recipe);
+  neither session recorded a registration or entry
+  event — the demo's native library binds its one
+  native method statically (name-mangled export,
+  resolved by symbol lookup, never via RegisterNatives),
+  and in attach mode the library is loaded before the
+  hook exists. The [jni-register]/[jni-entry] event
+  paths remain unverified live; script execution and
+  hook installation are verified in both modes.
+  java-api-trace.js installed both URL.openConnection
+  hooks and captured one genuine [call]/[return] pair,
+  recorded as REPL-triggered (the demo's own code never
+  calls the traced method). nar-runtime status against
+  the live device reported verified-live; plan and
+  timeline-template ran clean. All four bundled Frida
+  scripts have now executed live (emulator scope);
+  physical-device rows remain IMPLEMENTED_BUT_UNVERIFIED.
+- Compiled artifacts verified on real files pulled from
+  the same target (demo force-compiled, speed filter):
+  the app .odex parses as OAT 124 (x86_64, key-value
+  store recovered incl. the dex2oat command line); the
+  companion .vdex parses as VDEX 006 and nar-dex
+  extracted and fully parsed its carried DEX 037
+  (7 classes, 13 methods, 36 call edges — matching the
+  fixture's known contents); boot.oat reads as OAT 124
+  and boot.art as ART 043. Baseline defects fixed in
+  the same cycle: compiled artifacts were misidentified
+  (OAT as plain ELF, VDEX magic-only, no CDEX/ART
+  verdicts) and nar-dex refused them outright.
+  Regression coverage: tests/unit/test_oat.py (20
+  tests) + one e2e case; branch battery pytest 96/96,
+  e2e 47/47 before merge.
+
+## Addendum (2026-11-23) — close-all-gaps: Godot encrypted packs
+
+- Encrypted-pack detection verified at REAL level: a
+  pack written by a real engine pack writer with a
+  256-bit key is reported by nar-godot as encrypted
+  (header flag) with the listing honestly unavailable
+  and no decryption attempted; an independent pack tool
+  refuses the same file as encrypted, and the producing
+  tool re-opens it only with the key. A plain control
+  pack lists correctly. The same cycle fixed Godot
+  format 3 (directory at end of file, relative entry
+  offsets), which had silently reported "Files: 0" on a
+  valid pack, and format 4 headers now report facts +
+  encryption flag with the listing marked unsupported.
+  Regression coverage: tests/unit/test_godot.py (10
+  tests); branch battery pytest 86/86, e2e 46/46 before
+  merge.
+
+## Addendum (2026-11-23) — close-all-gaps: invoke-custom wide scan
+
+- The invoke-custom evidence was widened from the
+  earlier 59-package scan to every package on the local
+  corpora: 125 package files, 233 DEX occurrences (108
+  unique), 6,235,951 code-bearing methods walked
+  instruction-by-instruction — 0 invoke-custom /
+  invoke-custom-range instructions, 0 call_site_ids
+  tables, 0 method_handle_ids tables. All unique DEX
+  at version 038+ were independently cross-checked with
+  full baksmali disassembly and dexdump renders (0
+  hits). A hand-built DEX 039 positive control carrying
+  real invoke-custom instructions was detected by the
+  scanner, and the disassembler rendered them textually
+  identical to baksmali (3/3 methods). Conclusion
+  stands: the decoder path is proven against a control
+  and an independent renderer; shipped apps in the
+  local corpora simply do not carry the instruction
+  (build-time desugaring). One 2.8 GB package exceeded
+  the scan size cap and its members were not examined;
+  recorded here rather than silently skipped.
+
+## Addendum (2026-11-23) — close-all-gaps: mega sweep
+
+- The full tool was run over every target in the local
+  corpora: 75 targets (real apps and games incl. split
+  sets and each split member, engine samples for Unity
+  IL2CPP / Flutter / Godot / React Native, bundle and
+  .apks sets, protection fixtures, the sealed and
+  unsealed Unreal titles, loose pak/pck/DEX files, and
+  the existing scenario case, whose re-run reproduced
+  its recorded identity and IL2CPP numbers exactly).
+  Every analysis stage ran ok on every target except
+  three designed degradations (a non-ZIP synthetic, a
+  fake pak, both reported with exact diagnostics) and
+  one genuine defect, fixed and re-run green.
+- Six defects were found and fixed in the same cycle,
+  each with regression tests and a real-target proof:
+  a native-stage crash on APKs bundling ZIP payloads
+  under a .so name; IL2CPP split-pair reporting (a
+  member holding one half of the pair claimed neither
+  half was found); a silent IL2CPP skip in the case
+  workflow for a metadata-without-library split base
+  (now an explicit step note); missed detection of
+  legacy versioned Cordova/PhoneGap runtimes; engine
+  scoring that left Ren'Py / RPG Maker unique payloads
+  below the detection threshold; and hollow reports
+  for bundletool .apks sets (now classified as
+  containers and routed to the canonical base split).
+  No defects were observed in the runtime, Godot, or
+  Unreal modules during the sweep. The local results
+  matrix (target x stage x verdict) is retained with
+  the sweep evidence outside the repo.
+- Wear OS / APEX / instant-app samples: none exists in
+  any local corpus and one time-boxed attempt to fetch
+  a free Wear sample failed (404); those rows remain
+  unexercised and labeled as such. TV form factors are
+  covered by two TV targets in the sweep.
+
+## Addendum (2026-11-23) — merged close-all-gaps tree battery
+
+- All close-all-gaps workstreams merged (runtime +
+  compiled artifacts, Godot packs, mega sweep) plus
+  the coordinator's doc updates. On the merged tree,
+  re-run end to end by the coordinator: pytest 122/122
+  (76 base + 20 compiled-artifact + 10 Godot + 16
+  sweep), end-to-end harness 47 passed / 0 failed /
+  0 skipped, nar-doctor core toolchain READY,
+  py_compile clean. Banned-identifier and
+  forbidden-credit greps over the full branch diff:
+  clean.
+
+## Addendum (2026-11-24) — close-all-gaps stream E:
+## real IoStore UE5 set
+
+A complete, unsealed UE5 title (engine 5.3, confirmed
+from the title's own engine build string) supplied the
+real IoStore set the earlier rungs lacked: a global
+container (1 chunk) plus one chunk container (TOC v5,
+7,171 chunks: 5,645 ExportBundleData, 1,096 BulkData,
+427 ShaderCode, 2 ShaderCodeLibrary, 1 ContainerHeader;
+compression methods None + Oodle) and a companion
+classic pak (v11, 1,564 entries). Seal evidence: both
+TOCs carry only the Compressed and Indexed flags, a
+zero encryption-key GUID, encryption method 0 and an
+IV count of 0; the pak footer records an unencrypted
+index with a zero key GUID.
+
+### Target 1 — real IoStore set end to end: CLOSED
+
+- narlib.iostore parses the full set (header, chunk
+  tables, block table, directory index, chunk-hash
+  meta) with zero trailing bytes; the classic pak
+  parses through narlib.pak / nar-unreal with matching
+  accounting.
+- DEFECT FOUND AND FIXED in-cycle: the directory
+  index of this set uses the pooled name-index layout
+  written by UE 5.3-era packagers (fixed-size rows —
+  directory: name index, first child, next sibling,
+  first file; file: name index, next file, TOC entry —
+  over a shared FString pool). narlib implemented only
+  the classic inline-FString layout and silently
+  reported the index as absent. The parser now tries
+  both layouts and accepts one only on exact buffer
+  consumption plus a complete tree walk; an index
+  matching neither is reported absent, never guessed.
+  Regression coverage: byte-exact pooled fixture,
+  classic-layout assertion, truncated-index drop test.
+- Independent oracle (throwaway byte-walk, no narlib
+  code) on the chunk container's directory index:
+  489 directories, 6,743 files, 7,049 pool strings,
+  buffer consumed exactly, complete walk, and 6,743 of
+  6,743 file-extension <-> chunk-type agreements. After
+  the fix, narlib's flattened path map equals the
+  oracle's on all 6,743 files. Pak-level accounting
+  (footer/index walk) likewise agrees with narlib
+  exactly (1,564 entries, 39,612-byte index).
+- Extraction through narlib: all 684 stored (method
+  None) package chunks byte-exact (aggregate length
+  equal to the TOC accounting), plus the global
+  container's single ScriptObjects chunk (2,290,013
+  bytes). Oodle stays refused by name: 4,926
+  Oodle-only and 35 mixed-method package chunks are
+  named in the report, never decoded.
+- Routes: nar-unreal on the .utoc reports the
+  container with the directory index populated
+  (489 directories / 6,743 files named); its package
+  route classifies all 5,645 named package chunks —
+  684 Zen records (below) and 4,961 honest Oodle
+  extraction refusals.
+
+### The set's packages are Zen-format — Target 2
+### stays open, with the blocker now precise
+
+All 684 extractable package chunks are UE5
+IoStore-native (Zen) packages, not classic
+FPackageFileSummary packages: 0 of 684 carry the
+package magic at the head; 684 of 684 carry it as a
+4-byte trailer, and the Zen header-size field is in
+range in 684 of 684. A partial manual header decode
+confirms the layout: word 0 is zero, word 1 is the
+header size, the FName at +8 resolves through the
+chunk's own name map to the package's asset name on
+sampled chunks, and the flags word matches the Zen
+package-flags shape. nar-unreal now identifies such
+chunks as "zen-package" records (with header size)
+instead of misreporting them as corrupt classic
+packages; regression coverage in
+tests/unit/test_unreal.py.
+
+Zen package summaries record no FileVersionUE4 /
+FileVersionUE5 at all — versioning is a property of
+the engine build, not of the package — so this title
+cannot satisfy the versioned-classic-package target,
+and neither can any Zen-native title. Target 2 remains
+open with a sharpened definition: a real title that
+ships classic-format packages (loose or in classic
+paks) cooked by a UE5 build with version recording
+enabled. A full Zen package parser (name / import /
+export maps in the Zen layout) is a separate format
+implementation and is NOT claimed here: Zen chunks
+are identified and inventoried only. The companion
+classic pak in this title holds no packages at all
+(registry, configs, fonts, ICU data only).
+
+### Zen package parser addendum
+
+The Zen parser the section above deferred is now
+implemented (narlib.zen, wired into nar-unreal's
+package routes — bare package, loose-in-APK, IoStore
+and pak packages all dispatch on the Zen trailer
+trait). Coverage, from the publicly documented Zen
+layout: the FZenPackageSummary in its current
+(UE 5.3+) layout, its pre-5.3 layout, and the UE5
+Early Access legacy layout, each accepted only when
+every section it implies validates end to end; the
+optional versioning info (the only place a Zen
+header records UE4/UE5 object versions — absent
+headers say so per field); the optional Verse cell
+offsets; the per-package name batch (UTF-8 and
+UTF-16 names, accepted only when the decoded names
+total exactly the recorded string byte count); the
+bulk data map; the imported public export hashes;
+the import map (export / script-import /
+package-import / null object indices, with package
+imports resolved to their public export hashes);
+the 72-byte export map entries (object names
+resolved through the package's own name map,
+outer/class/super/template references rendered
+readably, export data located at header size +
+cooked serial offset); the export bundle entries;
+and the pre-5.3 graph data (imported package ids).
+Located and measured, not decoded, by design: the
+dependency-bundle sections and the imported
+package names section (no public reader decodes
+them), Verse cell map contents, and export property
+streams (unversioned Zen packages report the .usmap
+rule, exactly as classic packages do).
+
+Verification, synthetic level: tests/unit/
+test_zen.py builds Zen packages byte-exact from the
+documented layout (full current-layout parse
+asserted field by field, a versioning-info variant,
+a UTF-16 name batch, the pre-5.3 graph-data layout,
+an out-of-range summary name downgraded to a note,
+and five refusal cases — classic-magic head, bad
+trailer, name-batch byte count mismatch, a
+non-whole export-map span, a truncated chunk), plus
+nar-unreal integration tests (a parseable Zen
+package reported as a real parse with generation
+evidence; an unvalidatable Zen-shaped chunk keeping
+its identification record with the parse reason in
+the note, never an error verdict).
+
+The real-corpus runs deferred in the first Zen
+round have now been executed, with the owner's
+explicit go-ahead after an execution-risk flag had
+stopped corpus processing in the implementing
+session. The sweep ran the parser over all 684
+stored package chunks of the real UE 5.3 IoStore
+set inventoried above: 684/684 parse in full, 0
+failures. Every chunk takes the current (UE 5.3+)
+header layout, and none records versioning info —
+per-package counts: names 2–13 (total 3,263),
+imports 3–15 (total 3,007), exports 1–3 (total
+704), imported public export hashes 0–6 (total
+446), bulk-data entries 0–11 (total 399), export
+bundle entries 2–6 (total 1,408). The sweep caught
+one real defect the fixtures had hidden: four
+chunks whose first export references a later export
+(a class or outer defined further down the map)
+crashed the parser with a raw KeyError, because
+export names were assigned in the same pass that
+resolved references. The export parse is now
+two-pass (all object names first, references
+second), with a regression test; the sweep is clean
+after the fix. Anchor cross-check against the
+container directory index: the resolved package
+name's leaf equals the directory file's base name
+in 683/684 chunks — the one exception is case-only
+(a lowercase file name for a capitalized package
+name); the base name appears among the package's
+export object names in 676/684, and all 8 exceptions
+are accounted for: seven Blueprint-class packages
+whose exports are the generated class, its default
+object, and subobjects (the asset name is the
+package name, not an export), plus the same
+case-only file. An independent byte-walk oracle
+(no parser code) on one real package agreed with
+the parser on 45/45 field checks: the header fields
+and section offsets, the full name batch, bulk-map
+and hash counts and values, import kinds, every
+export field, and the bundle entries. Unit battery
+after this round: 138/138 (125 baseline + 13 Zen).
+Still not exercised on real data: the pre-5.3 and
+Early Access header layouts and recorded versioning
+info (this corpus's writer used neither) — those
+rest on the synthetic fixtures.
+
+### Second Zen corpus addendum (newer writer)
+
+A second real title was evaluated as the last
+candidate for the versioned-classic-package target:
+an indie UE5 horror title (2025 build) shipping
+unsealed TOC v8 IoStore containers (encryption key
+GUID zero, method 0, no IVs) inside a disguised OBB,
+plus one classic pak. Seal and inventory results:
+the classic pak (v11) has an unencrypted index that
+SHA-verifies and holds 1,598 entries — engine
+support files only (configs, fonts, ICU data,
+plugin descriptors); it contains zero packages. No
+loose package files exist anywhere in the bundle.
+The IoStore main container holds 1,765
+ExportBundleData chunks: 525 stored, 1,199
+Oodle-only, and 41 mixed whose header blocks are
+Oodle (the stored blocks sit at the tail), so 1,240
+chunks have compressed headers and are refused by
+name under the Oodle rule.
+
+Package-format distribution over every readable
+package: 525/525 Zen format (magic as trailer),
+0 classic. Before the fix below, the shipped parser
+failed all 525 — root-caused by an independent
+byte-walk to a writer variant no earlier corpus had
+shown: between the name batch and the bulk data map,
+this writer serializes a count-prefixed byte array
+(an int64 element count, 0–7 across the corpus,
+followed by that many bytes — 1,820 bytes in total
+across all 525 packages, every one zero). The
+classic map behind the array lands exactly on the
+imported-public-export-hashes section in 525/525
+chunks under that reading. narlib.zen now accepts
+the variant under the same discipline as every
+other layout (classic reading first; the prefixed
+reading only when the map behind the array lands
+exactly, with all downstream sections still
+required to validate end to end), and reports the
+array as a located-and-measured section, contents
+not decoded. After the fix the corpus parses
+525/525 in full: totals across the 525 — names
+2,085, imports 2,459, exports 568, imported public
+export hashes 374, bulk-data entries 246, export
+bundle entries 1,136; every package takes the
+current header layout, every one uses the prefix
+variant, and none records versioning info. An
+independent byte-walk oracle (no parser code) on
+one real package agreed with the parser on 20/20
+field checks (header fields and offsets, the full
+name batch, the prefix count and its all-zero
+bytes, bulk-map and hash sections, the export
+entry, the bundle entries, the trailer). Three
+regression tests cover the variant (with a map,
+with an empty map, and a misaligned prefix that
+must stay refused).
+
+Target verdict, stated plainly: this title cannot
+satisfy the versioned-classic target either — it
+is Zen-native, and its classic pak carries no
+packages. Across the five real UE5 titles examined
+in this program (one AES-sealed, one
+classic-but-version-stripped, three Zen-native) no
+shipped title has provided a classic-format package
+with a recorded FileVersionUE5 (1000+); every
+version-gated classic structure (soft-object-path
+entries, payload-TOC contents, data-resource table
+contents, saved hash, metadata offset, Verse cells,
+import type hierarchies) remains unexercised on
+real classic data, and the target stays open on
+exactly those terms.
+
+### DEX scan addendum (stream C residual)
+
+This title's two DEX files (038) were scanned with the
+narlib disassembler for the one opcode class the wide
+scan tracks: 84,263 methods with code, 1,217,458
+instructions decoded, 0 decode failures, 0
+invoke-custom / invoke-custom-range hits — consistent
+with the wide scan's zero-hit result over 125 packages.
+
+### Battery after stream E
+
+pytest 125/125 (baseline 122 + pooled-index,
+dropped-index, and Zen-identification tests), e2e
+47/47 PASS, py_compile clean, nar-doctor READY — all
+on branch close-all-gaps.
+
+## Addendum (2026-11-24) — close-all-gaps: TOC v8
+## directory index
+
+A second unsealed UE5 title (indie horror; UE5
+generation proven from the title's own data — TOC v8
+IoStore containers and IoStoreOnDemand engine
+strings; no plaintext engine build string survives)
+supplied a container of the newest TOC generation:
+TOC v8 (ReplaceIoChunkHashWithIoHash), 14,867 chunks,
+a 583,290-byte directory index, a global container
+(1 chunk), and a companion classic pak (v12) whose
+index is AES-sealed — footer encryption flag set,
+footer index SHA-1 mismatch against the stored index
+region, index entropy ~8.00 bits/byte — discarded
+unread under the analysis-only boundary. Both TOCs
+are unsealed: zero encryption-key GUID, encryption
+method 0, IV count 0, flags Compressed|Indexed only.
+
+- DEFECT FOUND AND FIXED in-cycle: narlib returned
+  no directory index for this container. The root
+  cause was NOT a new layout. An independent
+  byte-walk oracle (no narlib code) proves the v8
+  writers ship the pooled name-index layout
+  unchanged: 674 directories, 13,494 files, 13,845
+  pool strings, buffer consumed exactly, complete
+  tree walk. The failure sat in narlib's flattening
+  walk, which recursed into sibling links with the
+  same counter it used for nesting depth: this
+  tree's true depth is 9, but its longest
+  child+sibling hop chain is 87 — past the walk's
+  bound of 64 — so the whole index was rejected as
+  matching no layout. The walk now traverses
+  sibling chains iteratively and bounds true
+  nesting depth only (stack-safety cap of 256;
+  cycles remain impossible because every row is
+  marked on entry and a revisit raises).
+- Oracle agreement: the oracle's flattened path map
+  equals narlib's on all 13,494 files, and the
+  file-extension <-> chunk-type agreement is
+  13,494 of 13,494. A swapped child/sibling reading
+  also consumes the buffer exactly and completes a
+  walk, but produces visibly concatenated nonsense
+  paths and the wrong root set; the extension
+  agreement and the root children (the project
+  directory and Engine) discriminate the two.
+- Regression: the UE 5.3 (TOC v5) set re-parsed
+  after the fix — its flattened path map is
+  bit-identical to the pre-fix map (489 directories,
+  6,743 files). Unit coverage in
+  tests/unit/test_iostore.py: a byte-exact pooled
+  fixture with a 100-wide sibling chain (verified
+  refused by the pre-fix code with the same error
+  signature), a cyclic index refused outright, and
+  a 300-deep index refused at the depth cap.
+- The title's readable packages are again
+  Zen-format (1,435 of 1,435 stored package
+  chunks), so Target 2 (versioned classic UE5
+  packages) is untouched by this addendum.
+
+### Battery after the TOC v8 fix
+
+pytest 128/128 (baseline 125 + wide-sibling-chain,
+cycle-refusal, and depth-cap tests), e2e 47/47 PASS,
+py_compile clean, nar-doctor READY — all on branch
+close-all-gaps.

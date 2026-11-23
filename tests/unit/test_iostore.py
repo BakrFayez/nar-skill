@@ -25,7 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]
                        / "scripts"))
 
 from narlib.iostore import (IoStoreError, chunk_sha1_ok,  # noqa: E402
-                            extract_chunk, parse_utoc)
+                            extract_chunk, parse_directory_index,
+                            parse_utoc)
 
 BLOCK_SIZE = 4096
 CHUNK_A = b"NAR synthetic chunk A payload. " * 6          # 186
@@ -62,15 +63,40 @@ def _dir_index():
     ])
 
 
-def _blocks_and_ucas():
+def _dir_index_pooled():
+    """The same tree as _dir_index() in the pooled
+    name-index layout written by UE 5.3-era packagers:
+    fixed-size rows (directory: name index, first child,
+    next sibling, first file; file: name index, next
+    file, TOC entry index) followed by a shared FString
+    pool."""
+    pool = ["Content", "ChunkA.uasset", "ChunkB.ubulk",
+            "global_names.bin"]
+    out = bytearray()
+    out += _fstring("../../../SyntheticGame/")
+    out += struct.pack("<I", 2)                      # directories
+    out += struct.pack("<IIII", INVALID, 1, INVALID, 2)
+    out += struct.pack("<IIII", 0, INVALID, INVALID, 0)
+    out += struct.pack("<I", 3)                      # files
+    out += struct.pack("<III", 1, 1, 0)
+    out += struct.pack("<III", 2, INVALID, 1)
+    out += struct.pack("<III", 3, INVALID, 2)
+    out += struct.pack("<I", len(pool))
+    for s in pool:
+        out += _fstring(s)
+    return bytes(out)
+
+
+def _blocks_and_ucas(chunk_a=None):
+    a = CHUNK_A if chunk_a is None else chunk_a
     z_b = zlib.compress(CHUNK_B)
     blocks = [
-        _block_entry(0, len(CHUNK_A), len(CHUNK_A), 0),
-        _block_entry(len(CHUNK_A), len(z_b), len(CHUNK_B), 1),
-        _block_entry(len(CHUNK_A) + len(z_b), 4096, 4096, 0),
-        _block_entry(len(CHUNK_A) + len(z_b) + 4096, 1024, 1024, 0),
+        _block_entry(0, len(a), len(a), 0),
+        _block_entry(len(a), len(z_b), len(CHUNK_B), 1),
+        _block_entry(len(a) + len(z_b), 4096, 4096, 0),
+        _block_entry(len(a) + len(z_b) + 4096, 1024, 1024, 0),
     ]
-    return blocks, CHUNK_A + z_b + CHUNK_C
+    return blocks, a + z_b + CHUNK_C
 
 
 def _chunk_ids():
@@ -83,10 +109,13 @@ def _chunk_ids():
     ])
 
 
-def build_current(method_name=b"Zlib"):
+def build_current(method_name=b"Zlib", dir_index=None,
+                  chunk_a=None):
     """TOC v6, current layout. Returns (utoc, ucas)."""
-    blocks, ucas = _blocks_and_ucas()
-    dir_index = _dir_index()
+    a = CHUNK_A if chunk_a is None else chunk_a
+    blocks, ucas = _blocks_and_ucas(a)
+    if dir_index is None:
+        dir_index = _dir_index()
     header = b"".join([
         b"-==--==--==--==-",
         bytes([6, 0]), struct.pack("<H", 0),       # version, reserved
@@ -116,7 +145,7 @@ def build_current(method_name=b"Zlib"):
 
     sections = b"".join([
         _chunk_ids(),
-        offlen(0, len(CHUNK_A)),
+        offlen(0, len(a)),
         offlen(BLOCK_SIZE, len(CHUNK_B)),
         offlen(2 * BLOCK_SIZE, len(CHUNK_C)),
         struct.pack("<ii", 111, -222),             # hash seeds
@@ -125,7 +154,7 @@ def build_current(method_name=b"Zlib"):
         method_name.ljust(32, b"\x00"),
         dir_index,
         b"".join(hashlib.sha256(c).digest() + b"\x00"
-                 for c in (CHUNK_A, CHUNK_B, CHUNK_C)),
+                 for c in (a, CHUNK_B, CHUNK_C)),
     ])
     return header + sections, ucas
 
@@ -232,6 +261,7 @@ def test_current_inventory_and_paths():
     parsed = parse_utoc(utoc)
     _check_inventory(parsed)
     _check_paths(parsed)
+    assert parsed["directory_index"]["layout"] == "classic"
     assert parsed["entries"][0]["chunk_hash"] == \
         hashlib.sha256(CHUNK_A).hexdigest()
 
@@ -289,3 +319,116 @@ def test_unsupported_method_named_not_decoded():
         raise AssertionError("expected IoStoreError for Oodle chunk")
     # The stored chunk still extracts fine.
     assert extract_chunk(parsed, ucas, 0) == CHUNK_A
+
+
+def test_current_pooled_directory_index():
+    # The UE 5.3-era pooled name-index layout flattens to
+    # exactly the same tree as the classic layout.
+    utoc, ucas = build_current(dir_index=_dir_index_pooled())
+    parsed = parse_utoc(utoc)
+    _check_inventory(parsed)
+    _check_paths(parsed)
+    assert parsed["directory_index"]["layout"] == "pooled"
+    assert extract_chunk(parsed, ucas, 0) == CHUNK_A
+    assert extract_chunk(parsed, ucas, 2) == CHUNK_C
+
+
+def test_unreadable_directory_index_is_dropped():
+    # A truncated pooled index matches no known layout:
+    # the container still parses and the index is reported
+    # absent rather than guessed at.
+    utoc, _ = build_current(dir_index=_dir_index_pooled()[:-10])
+    parsed = parse_utoc(utoc)
+    assert parsed["directory_index"] is None
+    assert parsed["entry_count"] == 3
+
+
+def _pooled_buffer(mount, dir_rows, file_rows, pool):
+    out = bytearray()
+    out += _fstring(mount)
+    out += struct.pack("<I", len(dir_rows))
+    for row in dir_rows:
+        out += struct.pack("<IIII", *row)
+    out += struct.pack("<I", len(file_rows))
+    for row in file_rows:
+        out += struct.pack("<III", *row)
+    out += struct.pack("<I", len(pool))
+    for s in pool:
+        out += _fstring(s)
+    return bytes(out)
+
+
+def _dir_index_pooled_wide():
+    """Pooled layout shaped like a real TOC v8 index:
+    a mount point with no trailing path element, an
+    unnamed root, and one directory holding 100
+    subdirectories — a sibling chain far longer than
+    the tree's nesting depth. Each subdirectory holds
+    one file; the root holds one file of its own."""
+    width = 100
+    pool = ([f"Sub{i:03d}" for i in range(width)]
+            + [f"f{i:03d}.uasset" for i in range(width)]
+            + ["root.uasset"])
+    dir_rows = [(INVALID, 1, INVALID, width)]
+    for i in range(1, width + 1):
+        nxt = i + 1 if i < width else INVALID
+        dir_rows.append((i - 1, INVALID, nxt, i - 1))
+    file_rows = [(width + i, INVALID, i) for i in range(width)]
+    file_rows.append((2 * width, INVALID, width))
+    return _pooled_buffer("../../../", dir_rows, file_rows,
+                          pool)
+
+
+def test_pooled_directory_index_wide_sibling_chain():
+    # Regression: the flatten walk used to recurse into
+    # siblings with the same counter it used for nesting
+    # depth, so a directory with more than 64
+    # subdirectories made the whole index unreadable.
+    # A real TOC v8 container (674 directories, deepest
+    # nesting 9) chains 87 child+sibling hops and was
+    # dropped as unreadable before this fix.
+    parsed = parse_directory_index(_dir_index_pooled_wide())
+    assert parsed["layout"] == "pooled"
+    assert parsed["directory_count"] == 101
+    assert parsed["file_count"] == 101
+    assert parsed["files_named"] == 101
+    assert parsed["paths"][0] == "../../../Sub000/f000.uasset"
+    assert parsed["paths"][99] == "../../../Sub099/f099.uasset"
+    assert parsed["paths"][100] == "../../../root.uasset"
+
+
+def test_directory_index_cycle_is_refused():
+    # Two directories that are each other's child form
+    # no readable tree: the index must be refused
+    # outright, never partially flattened.
+    buf = _pooled_buffer(
+        "../../../",
+        [(INVALID, 1, INVALID, INVALID),
+         (0, 0, INVALID, INVALID)],
+        [],
+        ["Loop"])
+    try:
+        parse_directory_index(buf)
+    except IoStoreError:
+        return
+    raise AssertionError("expected IoStoreError")
+
+
+def test_directory_index_excessive_depth_is_refused():
+    # Nesting past the stack-safety depth cap is refused
+    # rather than flattened (cycles are caught separately
+    # by the visited-row checks).
+    depth = 300
+    dir_rows = []
+    for i in range(depth):
+        child = i + 1 if i + 1 < depth else INVALID
+        first_file = 0 if i == depth - 1 else INVALID
+        name = INVALID if i == 0 else 0
+        dir_rows.append((name, child, INVALID, first_file))
+    buf = _pooled_buffer("../../../", dir_rows,
+                         [(1, INVALID, 0)], ["Deep", "leaf.uasset"])
+    try:
+        parse_directory_index(buf)
+    except IoStoreError:
+        return
+    raise AssertionError("expected IoStoreError")

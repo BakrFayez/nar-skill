@@ -3,11 +3,14 @@
 
 Parses the PCK header and file directory directly, stdlib only:
 magic GDPC, pack format version, engine version, the pack-level
-encryption flag (format 2), and the contained file list with sizes.
-When the stdlib parse cannot read the directory (an encrypted pack
-encrypts its directory too), GodotPckTool is used as a fallback when
-installed; if neither works, the header facts are reported and the
-listing is honestly marked unavailable.
+encryption flag (format 2+), and the contained file list with sizes.
+Format 3 (Godot 4.5+) moves the directory to the end of the pack:
+the header gains a directory-offset field and entry offsets are
+relative to the file base. When the stdlib parse cannot read the
+directory (an encrypted pack encrypts its directory too),
+GodotPckTool is used as a fallback when installed; if neither
+works, the header facts are reported and the listing is honestly
+marked unavailable.
 
 For an APK: embedded *.pck files are listed; an APK with the Godot
 engine library but no .pck ships its project files loose under
@@ -32,6 +35,7 @@ import zipfile
 
 PCK_MAGIC = b"GDPC"
 FLAG_ENCRYPTED = 0x1
+FLAG_RELATIVE_BASE = 0x2
 
 
 class PckError(Exception):
@@ -51,12 +55,27 @@ def parse_pck(data):
         flags, file_base = struct.unpack_from("<IQ", data, 20)
         report["pack_flags"] = flags
         report["encrypted"] = bool(flags & FLAG_ENCRYPTED)
-        dir_offset = 96  # header + 16 reserved uint32
+        # Entry offsets are stored relative to the file base in
+        # format 3 (always) and in format 2 when the relative-base
+        # flag is set; in plain format 2 they are absolute.
+        base = file_base if (fmt >= 3
+                             or flags & FLAG_RELATIVE_BASE) else 0
+        if fmt == 2:
+            dir_offset = 96  # header + 16 reserved uint32
+        elif fmt == 3:
+            # Format 3 header is 104 bytes and the directory sits
+            # at the recorded offset (the end of the pack), not
+            # right after the header.
+            dir_offset = struct.unpack_from("<Q", data, 32)[0]
+            report["directory_offset"] = dir_offset
+        else:
+            dir_offset = None  # newer layout this reader does not know
     elif fmt == 1:
         file_base = struct.unpack_from("<Q", data, 20)[0]
         report["pack_flags"] = None
         report["encrypted"] = None  # v1 header carries no flag field
         dir_offset = 92
+        base = 0
     else:
         raise PckError(f"unknown pack format version {fmt}")
     report["file_base"] = file_base
@@ -67,6 +86,16 @@ def parse_pck(data):
             "pack is flagged encrypted; the directory is encrypted"
             " too and cannot be listed without the key")
         return report
+    if dir_offset is None:
+        report["files"] = []
+        report["file_count"] = None
+        report["listing_error"] = (
+            f"pack format {fmt} directory layout is not supported"
+            " by this reader; only the header facts above are"
+            " reported")
+        return report
+    if dir_offset + 4 > len(data):
+        raise PckError("directory offset points outside the pack")
     pos = dir_offset
     if pos + 4 > len(data):
         raise PckError("truncated before the file directory")
@@ -99,10 +128,11 @@ def parse_pck(data):
         if fmt >= 2:
             entry_flags = struct.unpack_from("<I", data, pos)[0]
             pos += 4
-        if off + size > len(data):
+        if base + off + size > len(data):
             raise PckError(f"entry {path!r} points outside the pack"
                            " (offset+size beyond end of file)")
-        files.append({"path": path, "offset": off, "size_bytes": size,
+        files.append({"path": path, "offset": base + off,
+                      "size_bytes": size,
                       "flags": entry_flags,
                       "encrypted": bool(entry_flags & FLAG_ENCRYPTED)})
     report["files"] = files
@@ -253,7 +283,9 @@ def human(report, limit):
                          f" {pck.get('total_content_bytes', 0):,} content bytes")
             shown = pck["files"] if limit <= 0 else pck["files"][:limit]
             for f in shown:
-                lines.append(f"  {f['path']} ({f['size_bytes']:,} bytes)")
+                mark = " [encrypted]" if f.get("encrypted") else ""
+                lines.append(f"  {f['path']} ({f['size_bytes']:,} bytes)"
+                             f"{mark}")
             if len(shown) < pck["file_count"]:
                 lines.append(f"  ... and {pck['file_count'] - len(shown)} more"
                              " (raise --limit, or use --json for all)")

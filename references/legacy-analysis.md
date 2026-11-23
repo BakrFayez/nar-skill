@@ -51,11 +51,12 @@ Where they live: `/data/dalvik-cache/<abi>/` (system apps),
 `/system/framework/<abi>/boot.oat` (the boot image).
 
 The OAT header starts with the magic `oat\n` and a three-digit
-version that changes with almost every Android release (010 for
-Android 5.0, 013 for 5.1, 023 for 6.0, 039 for 7.0, 045 for 7.1, 052
-for 8.0, 059 for 8.1, 067 for 9.0, 074 for 10, 085 for 11, 088 for
-12). Read the version from the header of your own file; newer
-releases use higher numbers.
+version that changes with almost every Android release.
+Per-release tables in older references are unreliable: one
+widely copied table lists 052 for Android 8.0, but a real
+API 26 (Android 8.0) OAT header examined here reads 124,
+and its ART image reads 043. Read the version from the
+header of your own file; newer releases use higher numbers.
 
 How to read one:
 
@@ -92,10 +93,17 @@ quickening and writes plain `.dex` files you can feed to jadx or
 apktool. Its backend is per-VDEX-version, so a newer VDEX than 021
 needs a newer tool.
 
-No ODEX, OAT, VDEX, or CDEX sample was available on this machine
-while writing this guide. The file layouts and tool commands above
-come from the format documentation and the tools' own docs, not from
-a file examined here. See the verification notes at the end.
+Sample status, updated: real API 26 OAT and VDEX files have
+since been examined on this machine — an app `.odex` (OAT
+version 124) and its companion `.vdex` (VDEX 006) pulled
+from a device, plus the boot image's `.oat` and `.art`
+(043). NAR's own parser reads these formats directly
+(`nar-dex` accepts `.vdex`/`.odex`/`.oat`/`.cdex` targets
+and parses the DEX a VDEX carries), verified against those
+files. Dalvik ODEX and CDEX still have no real sample here;
+for those two, the layouts above come from the format
+documentation and synthetic fixtures only, and they stay
+labeled as such. See the verification notes at the end.
 
 ## DEX versions 035, 037, and 038
 

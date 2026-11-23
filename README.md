@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.3.0
+Version 2.4.0
 
 Research by Bakr Fayez
 

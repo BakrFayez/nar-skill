@@ -84,7 +84,13 @@ ENGINES = {
                                 "deep": None, "version_keys": []},
 }
 STRONG_MARKERS = (".so", ".dat", ".pak", ".pck", "application.xml",
-                  "capacitor.config", "cordova.js", "assemblies/")
+                  "capacitor.config", "cordova.js", "cordova-",
+                  "phonegap", "assemblies/",
+                  # Engine-unique payload names: a compiled Ren'Py
+                  # script or an RPG Maker core runtime script is
+                  # shipped by exactly one engine, so a single hit
+                  # is strong evidence, not a weak path hint.
+                  ".rpyc", "rpg_core.js", "rmmz_core.js")
 
 
 def run_json_tool(script, args, timeout=1800):
@@ -278,7 +284,7 @@ def fuse(apk_path, deep=False, work_dir=None):
             if v["engine"] == "React Native" and v["detected"]:
                 v["variant"] = "new architecture (Fabric/TurboModules)"
     verdicts.sort(key=lambda v: -v["score"])
-    return {"tool": "nar-engines", "version": "2.3.0",
+    return {"tool": "nar-engines", "version": "2.4.0",
             "target": os.path.abspath(apk_path),
             "target_sha256": sha256_of(apk_path),
             "verdicts": verdicts, "ambiguities": ambiguities}

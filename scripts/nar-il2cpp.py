@@ -296,8 +296,13 @@ def analyze(target, out_dir, backend=None):
                            " global-metadata.dat and libil2cpp.so);"
                            " this is not a Unity IL2CPP build, or the"
                            " pair lives outside the given target")
-        report["found"] = {"metadata": bool(meta_src),
-                           "binary": bool(so_src)}
+        # Report which piece WAS located: for ZIP targets the
+        # extraction above only materializes meta_src/so_src when
+        # BOTH entries exist, so the entry names are the evidence
+        # (regression: a split config APK carrying libil2cpp.so
+        # alone reported found={metadata: False, binary: False}).
+        report["found"] = {"metadata": bool(meta_src or meta_entry),
+                           "binary": bool(so_src or so_entry)}
         return report
     report["is_il2cpp"] = True
     with open(meta_src, "rb") as fh:

@@ -28,6 +28,14 @@ For an APK (or a bare .pak / IoStore container):
   (directory-indexed ExportBundleData chunks), and inside
   .pak files when --work extraction is enabled; a bare
   .uasset/.umap file is a target of its own.
+- Zen package inspection by narlib.zen (pure Python,
+  public Zen layout): the IoStore-native packages UE5
+  cooking writes carry a Zen header instead of an
+  FPackageFileSummary — header, versioning info when the
+  writer recorded it, per-package name map, bulk data
+  map, imported public export hashes, import/export
+  maps and export bundle entries are parsed; sections
+  no public reader decodes are located and measured.
 
 Usage:
     python3 nar-unreal.py app.apk [--json] [--work DIR]
@@ -50,6 +58,7 @@ from narlib.hashing import sha256_of  # noqa: E402
 from narlib.iostore import (IoStoreError, extract_chunk,  # noqa: E402
                             parse_utoc)
 from narlib.uasset import UAssetError, parse_package  # noqa: E402
+from narlib.zen import ZenError, parse_zen_package  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -117,9 +126,48 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
     return parsed
 
 
+def zen_package_summary(data, name):
+    """Parse one Zen package into a presentation-ready
+    record (detail capped the same way as classic
+    packages; counts complete). A chunk whose header
+    does not validate for a full parse — a newer Zen
+    layout than this build reads, or a damaged chunk —
+    keeps its identification record with the parse
+    reason in the note; it is never reported as a
+    corrupt classic package."""
+    try:
+        parsed = parse_zen_package(data, name)
+    except ZenError as e:
+        record = _zen_package_record(data, name)
+        record["note"] += (
+            f" A full Zen parse was attempted and "
+            f"stopped: {e}")
+        return record
+    total_names = len(parsed["names"])
+    if total_names > NAME_CAP:
+        parsed["names"] = parsed["names"][:NAME_CAP]
+        parsed["names_capped"] = (
+            f"name detail capped at {NAME_CAP} of {total_names}; "
+            "counts cover every name")
+    for key in ("imports", "exports"):
+        total = len(parsed[key])
+        if total > ENTRY_CAP:
+            parsed[key] = parsed[key][:ENTRY_CAP]
+            parsed[key + "_capped"] = (
+                f"{key} detail capped at {ENTRY_CAP} of {total}; "
+                "counts cover every entry")
+    parsed["entry"] = name
+    parsed["zen_header_size"] = parsed["summary"]["header_size"]
+    return parsed
+
+
 def package_summary(data, name, uexp_data=None):
     """Parse one package into a presentation-ready record
-    (name/import/export detail capped; counts complete)."""
+    (name/import/export detail capped; counts complete).
+    Zen (IoStore-native) chunks dispatch to the Zen
+    parser; everything else to the classic one."""
+    if _is_zen_package(data):
+        return zen_package_summary(data, name)
     try:
         parsed = parse_package(data, name, uexp_data)
     except UAssetError as e:
@@ -151,6 +199,13 @@ def package_summary(data, name, uexp_data=None):
 def _package_generation(pkg):
     if not pkg or pkg.get("error"):
         return None
+    if pkg.get("format") == "zen-package":
+        s = pkg.get("summary") or {}
+        if s.get("file_version_ue5"):
+            return (f"UE5-era (Zen package; recorded UE5 "
+                    f"object version {s['file_version_ue5']})")
+        return ("UE5-era (IoStore/Zen packaging; header "
+                "records no per-package object version)")
     s = pkg.get("summary") or {}
     if s.get("file_version_ue5"):
         return (f"UE5-era (UE5 object version "
@@ -177,7 +232,51 @@ def _package_limitations():
         "UE5 property tag extensions (UE5 object version "
         ">= 1011) are reported as unsupported rather than "
         "guessed at.",
+        "Zen (IoStore-native) packages are parsed from "
+        "their Zen header: name map, import/export maps "
+        "and bundle entries are decoded, while the "
+        "dependency-bundle and imported-package-name "
+        "sections are located and measured, not decoded, "
+        "and versioned Zen property tag streams inside "
+        "exports are located and measured, not decoded.",
     ]
+
+
+PACKAGE_MAGIC_LE = b"\xc1\x83\x2a\x9e"
+
+
+def _is_zen_package(blob):
+    """UE5 IoStore-native (Zen) package chunks carry the
+    package magic as a trailer, not a header: the chunk
+    opens with the Zen package header instead of an
+    FPackageFileSummary. (On a real UE 5.3 container set,
+    every stored package chunk in it — 684 of 684 — has
+    exactly this shape, and its recorded header size is
+    in range in every case.)"""
+    return len(blob) >= 8 \
+        and blob[:4] != PACKAGE_MAGIC_LE \
+        and blob[-4:] == PACKAGE_MAGIC_LE
+
+
+def _zen_package_record(blob, path):
+    """Presentation record for a Zen-format package
+    chunk: identified and inventoried, never fed to the
+    classic summary parser under a misleading corruption
+    error, and no classic summary facts are claimed."""
+    return {
+        "entry": path,
+        "format": "zen-package",
+        "size": len(blob),
+        "zen_header_size": int.from_bytes(blob[4:8],
+                                          "little"),
+        "note": ("UE5 IoStore-native (Zen) package: the "
+                 "chunk carries a Zen package header, not "
+                 "an FPackageFileSummary, so the classic "
+                 "package parser does not apply. Zen "
+                 "headers record no UE4/UE5 object "
+                 "version — packages are versioned by "
+                 "the engine build, not per package."),
+    }
 
 
 def iostore_packages(utoc_bytes, ucas_bytes, container_name):
@@ -258,7 +357,7 @@ def pak_packages(pak_path, out_dir):
 
 
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unreal", "version": "2.3.0",
+    report = {"tool": "nar-unreal", "version": "2.4.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     lower = target.lower()
@@ -527,6 +626,27 @@ def _human_package(pkg):
     entry = pkg.get("entry", "")
     if pkg.get("error"):
         print(f"- package {entry}: {pkg['error']}")
+        return
+    if pkg.get("format") == "zen-package":
+        counts = pkg.get("counts", {})
+        if not counts:
+            print(f"- package {entry}: Zen package "
+                  f"(identification only)")
+            return
+        s = pkg.get("summary", {})
+        print(f"- package {entry}: Zen package "
+              f"({s.get('layout')}), "
+              f"{s.get('package_name')}, "
+              f"{counts.get('names')} names, "
+              f"{counts.get('imports')} imports, "
+              f"{counts.get('exports')} exports")
+        for exp in pkg.get("exports", []):
+            props = exp.get("properties") or {}
+            print(f"    export {exp.get('object_name')}: "
+                  f"class {exp.get('class_resolved')}, "
+                  f"{exp.get('cooked_serial_size')} bytes in "
+                  f"{(exp.get('data_location') or {}).get('file')}, "
+                  f"properties {props.get('status')}")
         return
     s = pkg.get("summary", {})
     if s.get("file_version_ue5"):

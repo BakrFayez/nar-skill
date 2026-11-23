@@ -452,6 +452,24 @@ with open(os.path.join(tmp, "bare.dex"), "wb") as fh:
     fh.write(b"dex\n039\x00" + b"\x00" * 120)
 with open(os.path.join(tmp, "plain.bin"), "wb") as fh:
     fh.write(b"no signature here")
+# Compiled-artifact family (OAT/VDEX/CDEX/ART): an ART OAT
+# wearing the .odex name, a VDEX 006 carrying one DEX whose
+# header file_size is truthful, a compact DEX, an ART image.
+dex = bytearray(b"dex\n039\x00" + b"\x00" * 120)
+struct.pack_into("<I", dex, 32, len(dex))
+with open(os.path.join(tmp, "synth.vdex"), "wb") as fh:
+    fh.write(b"vdex006\x00"
+             + struct.pack("<IIII", 1, len(dex), 0, 0)
+             + struct.pack("<I", 0x1234) + bytes(dex))
+oat_hdr = b"oat\n124\x00" + struct.pack("<IIII", 0x99, 5, 0, 1)
+oat_hdr += b"\x00" * 64 + b"compiler-filter\x00speed\x00"
+with open(os.path.join(tmp, "synth.odex"), "wb") as fh:
+    fh.write(b"\x7fELF\x02\x01\x01" + b"\x00" * 200 + oat_hdr)
+with open(os.path.join(tmp, "synth.cdex"), "wb") as fh:
+    fh.write(b"cdex001\x00" + b"\x00" * 120)
+art = b"art\n043\x00" + struct.pack("<IIIIIII", 0, 256, 0, 0, 0, 0, 0)
+with open(os.path.join(tmp, "synth.art"), "wb") as fh:
+    fh.write(art + b"\x00" * (256 - len(art)))
 PYEOF
 input_ok=1
 $PY "$SCRIPTS/nar-input.py" identify --json "$TMP/synth.apk" > "$TMP/input-apk.json" 2>/dev/null || input_ok=0
@@ -468,6 +486,33 @@ sys.exit(0 if (a["format"] == "apk" and d["format"] == "dex"
 PYEOF
 then ok "input: signature identification (apk/dex/unknown)"
 else bad "input-identify" "a synthetic format verdict was wrong"; fi
+
+input_art_ok=1
+$PY "$SCRIPTS/nar-input.py" identify --json "$TMP/synth.odex" > "$TMP/input-oat.json" 2>/dev/null || input_art_ok=0
+$PY "$SCRIPTS/nar-input.py" identify --json "$TMP/synth.vdex" > "$TMP/input-vdex.json" 2>/dev/null || input_art_ok=0
+$PY "$SCRIPTS/nar-input.py" identify --json "$TMP/synth.cdex" > "$TMP/input-cdex.json" 2>/dev/null || input_art_ok=0
+$PY "$SCRIPTS/nar-input.py" identify --json "$TMP/synth.art" > "$TMP/input-art.json" 2>/dev/null || input_art_ok=0
+$PY "$SCRIPTS/nar-dex.py" --json "$TMP/synth.vdex" > "$TMP/input-nardex-vdex.json" 2>/dev/null || input_art_ok=0
+if [ "$input_art_ok" -eq 1 ] && $PY - "$TMP" <<'PYEOF'
+import json, sys
+tmp = sys.argv[1]
+o = json.load(open(f"{tmp}/input-oat.json"))
+v = json.load(open(f"{tmp}/input-vdex.json"))
+c = json.load(open(f"{tmp}/input-cdex.json"))
+a = json.load(open(f"{tmp}/input-art.json"))
+d = json.load(open(f"{tmp}/input-nardex-vdex.json"))
+ok = (o["format"] == "oat" and not o["extension_mismatch"]
+      and o["details"]["oat_version"] == "124"
+      and v["format"] == "vdex"
+      and v["details"]["number_of_dex_files"] == 1
+      and c["format"] == "cdex" and a["format"] == "art"
+      and d.get("compiled_artifact", {}).get("kind") == "vdex"
+      and len(d.get("dex_files", [])) == 1
+      and "error" not in d["dex_files"][0])
+sys.exit(0 if ok else 1)
+PYEOF
+then ok "input: compiled artifacts (oat-in-odex/vdex/cdex/art + nar-dex vdex)"
+else bad "input-compiled-artifacts" "a compiled-artifact verdict or nar-dex vdex run was wrong"; fi
 
 $PY "$SCRIPTS/nar-input.py" extract "$TMP/evil.zip" --out "$TMP/evil-out" > "$TMP/input-extract.log" 2>&1
 if contains "$TMP/input-extract.log" "REJECTED ../evil.txt" \
