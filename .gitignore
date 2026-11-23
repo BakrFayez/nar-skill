@@ -1,0 +1,30 @@
+# APKs, bundles, and decoded output (never commit binaries)
+*.apk
+*.aab
+*.apks
+*.xapk
+*.obb
+*.idsig
+
+# NAR working output
+decoded/
+jadx-output/
+apktool-output/
+work/
+out/
+.validate/
+nar-work/
+
+# Logs and caches
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

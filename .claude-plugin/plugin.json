@@ -1,0 +1,12 @@
+{
+  "author": {
+    "name": "Bakr Fayez",
+    "organization": "Nirous Labs"
+  },
+  "description": "NAR: Nirous Android Reversing. Reverse engineer any Android APK or AAB, apps and games, old and new, with CLI tools: triage, manifest and resources, DEX/smali, jadx decompile, native/JNI, game engines, Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version compare, and feature maps.",
+  "name": "nar",
+  "skills": [
+    "./"
+  ],
+  "version": "1.0.0"
+}
