@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.2.0
+Version 2.3.0
 
 Research by Bakr Fayez
 
@@ -264,7 +264,7 @@ nar-skill/
     nar-strings.py          Ranked string extraction (plain and --json)
     nar-compare.py          Two-version diff (plain and --json)
     nar-perms.py            Permission and component audit (plain and --json)
-    nar-pak.py              Unreal .pak lister/extractor, pak format v1-7 (plain and --json)
+    nar-pak.py              Unreal .pak lister/extractor, pak format v1-7 + v10/v11 encoded index (plain and --json)
     nar-il2cpp.py           Unity IL2CPP locator + Il2CppDumper summary (plain and --json)
     nar-flutter.py          Flutter/Dart fingerprint (plain and --json)
     nar-godot.py            Godot .pck inspector (plain and --json)

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 2.3.0 (2026-11-23)
+
+- Real-UE5 verification rung executed on an unsealed
+  title: nar-pak now parses the v10/v11 encoded pak
+  index (path-hash + full directory index) with SHA-1
+  verification of both index regions, and extracts
+  stored/zlib/gzip entries from it (entries using a
+  method with no stdlib decoder are refused by name).
+  narlib.uasset now reads unversioned packages whose
+  legacy summary version is -8 — the variant that
+  carries the UE5 version field — under the UE5 layout
+  assumption instead of the UE4-only one; all 220
+  stored packages of the test title parsed, cross-
+  checked by an independent byte-walk oracle and an
+  independent pak header-chaining walk. Full record in
+  NAR_TEST_MATRIX.md.
+
 ## 2.2.0 (2026-11-23)
 
 Verification-and-depth release: the runtime layer was

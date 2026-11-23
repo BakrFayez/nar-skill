@@ -45,7 +45,7 @@ sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as NAR_VERSION
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.2.0"
+    NAR_VERSION = "2.3.0"
 
 # One entry per bundled-tool run, in execution order. main()
 # turns this into execution-log.json (2.0 orchestrator record).

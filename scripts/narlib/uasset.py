@@ -36,9 +36,12 @@ implement) for cooked and uncooked packages:
 
 Unversioned packages (both object versions zero, the
 usual IoStore-era cooking) are parsed under a stated
-assumption (final UE4 table layout) and accepted only
-when the structure validates end to end; the assumption
-is recorded in the result. Packages flagged
+assumption and accepted only when the structure
+validates end to end; the assumption is recorded in the
+result. The assumption is the final UE4 table layout,
+plus -- when the summary carries the UE5 version field
+(legacy file version -8), marking the package as a UE5
+one -- the UE5 1010 table layout. Packages flagged
 PKG_UnversionedProperties carry no tag stream to read
 (their properties need a .usmap mapping file, which is
 out of scope), and the UE5 tag-extension layouts (UE5
@@ -51,6 +54,12 @@ import struct
 MAGIC = 0x9E2A83C1
 OLDEST_LOADABLE_UE4 = 434
 FINAL_UE4 = 522
+# Assumed UE5 object version for an unversioned package whose
+# summary carries the UE5 version field (legacy file version
+# -8): the newest UE5 table layout this parser reads end to
+# end. Newer UE5 layouts change the property tag stream
+# (1011+), which this parser reports as unsupported anyway.
+ASSUMED_UE5_FOR_UNVERSIONED = 1010
 
 # EPackageFlags (only the bits with a documented name).
 PACKAGE_FLAGS = {
@@ -298,13 +307,35 @@ class _Package:
         # final-UE4 assumption and must validate structurally.
         self.eff4 = raw4 if raw4 else FINAL_UE4
         self.eff5 = raw5
+        if self.unversioned and legacy <= -8:
+            # A legacy -8 summary carries the UE5 object
+            # version field; finding it zero means a UE5
+            # package whose versions were stripped at cook
+            # time (the unversioned-content path). Its tables
+            # follow the UE5 layout, so the UE5 gates need an
+            # assumed version too, exactly as the real loader
+            # substitutes its own current version when loading
+            # unversioned content. The assumption is the
+            # newest UE5 layout this parser reads end to end;
+            # a package cooked by a newer engine will fail
+            # the structural validation below rather than
+            # parse into garbage.
+            self.eff5 = ASSUMED_UE5_FOR_UNVERSIONED
         s["unversioned"] = self.unversioned
         if self.unversioned:
-            s["version_assumption"] = (
-                "package carries no object versions; tables "
-                "were read with the final UE4 (522) layout "
-                "and accepted only because the structure "
-                "validates end to end")
+            if legacy <= -8:
+                s["version_assumption"] = (
+                    "package carries no object versions; "
+                    "tables were read with the final UE4 (522) "
+                    "layout and the UE5 1010 layout, and "
+                    "accepted only because the structure "
+                    "validates end to end")
+            else:
+                s["version_assumption"] = (
+                    "package carries no object versions; tables "
+                    "were read with the final UE4 (522) layout "
+                    "and accepted only because the structure "
+                    "validates end to end")
         if self.eff5 >= 1016:
             s["saved_hash"] = r.take(20).hex()
             s["total_header_size"] = r.i32()

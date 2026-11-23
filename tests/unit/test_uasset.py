@@ -561,6 +561,143 @@ def build_unversioned():
     return b.bytes()
 
 
+# Unversioned UE5 package: the layout a real UE5-era cook
+# ships -- legacy version -8 (the summary variant that
+# carries a UE5 object-version field) with every recorded
+# object version stripped to zero, FilterEditorOnly set
+# (no localization id, no persistent GUID, no package-name
+# FName in imports), UnversionedProperties set, zeroed
+# saved-by engine versions, one soft object path entry,
+# and the UE5 summary tail fields (names referenced,
+# payload TOC, data resource) present.
+UE5U_NAMES = ["None", "/Script/CoreUObject", "/Script/Engine",
+              "Class", "Package", "Widget", "Default__Widget",
+              "MyWidget"]
+(U5_NONE, U5_CORE, U5_ENGINE, U5_CLASS, U5_PACKAGE, U5_WIDGET,
+ U5_DEFAULT_WIDGET, U5_MY_WIDGET) = range(len(UE5U_NAMES))
+
+
+def build_unversioned_ue5():
+    b = _B()
+    b.u32(MAGIC)
+    b.i32(-8)           # legacy: -8 summary carries a UE5 field
+    b.i32(0)            # UE3 version
+    b.i32(0)            # file version UE4 (stripped at cook time)
+    b.i32(0)            # file version UE5 (stripped at cook time)
+    b.i32(0)            # licensee version
+    b.i32(0)            # custom versions
+    b.mark32("ths")
+    b.fstring("/Game/UnversionedUE5")
+    # PKG_FilterEditorOnly | PKG_UnversionedProperties | 0x200
+    b.u32(0x80002200)
+    b.i32(len(UE5U_NAMES))
+    b.mark32("name_off")
+    b.i32(1)                            # soft object paths
+    b.mark32("softpaths_off")
+    # FilterEditorOnly: no localization id string.
+    b.i32(0)                            # gatherable text data
+    b.i32(0)
+    b.i32(1)                            # exports
+    b.mark32("export_off")
+    b.i32(3)                            # imports
+    b.mark32("import_off")
+    b.mark32("depends_off")
+    b.i32(0)                            # soft package references
+    b.i32(0)
+    b.i32(0)                            # searchable names offset
+    b.i32(0)                            # thumbnail table offset
+    b.guid(0x77)                        # package GUID (< 1016)
+    # FilterEditorOnly: no persistent GUID.
+    b.i32(1)                            # generations
+    b.i32(1)
+    b.i32(len(UE5U_NAMES))
+    b.engine_version(0, 0, 0, 0, "")    # saved by (zeroed)
+    b.engine_version(0, 0, 0, 0, "")    # compatible with
+    b.u32(0)                            # compression flags
+    b.i32(0)                            # compressed chunks
+    b.u32(0)                            # package source
+    b.i32(0)                            # additional packages to cook
+    b.i32(0)                            # asset registry data offset
+    b.mark64("bulk_off")
+    b.i32(0)                            # world tile info offset
+    b.i32(0)                            # chunk IDs
+    b.i32(0)                            # preload dependencies
+    b.i32(0)
+    b.i32(2)                # names referenced from export data
+    b.i64(-1)               # payload TOC offset: none
+    b.i32(-1)               # data resource offset: none
+
+    b.patch32("name_off", b.pos())
+    _name_table(b, UE5U_NAMES)
+
+    b.patch32("softpaths_off", b.pos())
+    # UE5 >= 1007 layout: asset path and sub path are FStrings.
+    b.fstring("/Game/Other/Thing.Thing")
+    b.fstring("")
+
+    b.patch32("import_off", b.pos())
+    # FilterEditorOnly: no package-name FName; UE5 >= 1003
+    # adds the import-optional flag.
+    b.fname(U5_CORE)
+    b.fname(U5_CLASS)
+    b.i32(-2)
+    b.fname(U5_WIDGET)
+    b.i32(0)
+    b.fname(U5_CORE)
+    b.fname(U5_PACKAGE)
+    b.i32(0)
+    b.fname(U5_ENGINE)
+    b.i32(0)
+    b.fname(U5_ENGINE)
+    b.fname(U5_WIDGET)
+    b.i32(-2)
+    b.fname(U5_DEFAULT_WIDGET)
+    b.i32(0)
+
+    export_map_pos = b.pos()
+    b.patch32("export_off", export_map_pos)
+    # class/super/template/outer + name + flags + serial
+    # size/offset + 3 bools + inherited-instance + package
+    # flags + not-always-loaded + is-asset + generated hash
+    # + 5 preload deps; NO package GUID (UE5 >= 1005) and
+    # NO script serialization offsets (UnversionedProperties).
+    entry_size = 4 * 4 + 8 + 4 + 8 + 8 + 3 * 4 + 4 + 4 + 4 \
+        + 4 + 4 + 5 * 4
+    b.raw(b"\x00" * entry_size)
+
+    b.patch32("depends_off", b.pos())
+    b.i32(0)                        # export 0 depends on nothing
+
+    data_offset = b.pos()
+    b.raw(b"\x00" * 4)              # export serial data
+    b.patch32("ths", data_offset)
+    b.patch64("bulk_off", b.pos())
+
+    m = _B()
+    m.i32(-1)                       # class -> import 0
+    m.i32(0)                        # super
+    m.i32(-3)                       # template -> import 2
+    m.i32(0)                        # outer
+    m.fname(U5_MY_WIDGET)
+    m.u32(0x1)                      # RF_Public
+    m.i64(4)                        # serial size
+    m.i64(data_offset)              # serial offset
+    m.i32(0)
+    m.i32(0)
+    m.i32(0)
+    m.i32(0)                        # is inherited instance
+    m.u32(0x200)                    # package flags
+    m.i32(0)                        # not always loaded
+    m.i32(1)                        # is asset
+    m.i32(0)                        # generate public hash
+    for _ in range(5):
+        m.i32(0)                    # preload dependencies
+    assert len(m.bytes()) == entry_size, (
+        len(m.bytes()), entry_size)
+    b.buf[export_map_pos:export_map_pos + entry_size] = m.bytes()
+    return b.bytes()
+
+
 # ---------------------------------------------------------------- tests
 
 def test_ue4_summary():
@@ -689,6 +826,47 @@ def test_unversioned_package():
     props = exp["properties"]
     assert props["status"] == "parsed", props
     assert props["tags"][0]["value"] == 42
+
+
+def test_unversioned_ue5_package():
+    # A legacy -8 summary with both object versions zero is
+    # a UE5 package whose versions were stripped at cook
+    # time (that legacy variant exists to carry the UE5
+    # field): it must be read with the UE5 summary layout,
+    # not the UE4-only one -- otherwise the reader lands
+    # eight bytes behind and fails on the package GUID.
+    r = parse_package(build_unversioned_ue5(),
+                      "unversioned-ue5.uasset")
+    s = r["summary"]
+    assert s["unversioned"] is True
+    assert s["legacy_file_version"] == -8
+    assert s["file_version_ue4"] == 0
+    assert s["file_version_ue5"] == 0
+    assert "1010" in s["version_assumption"]
+    assert "PKG_UnversionedProperties" in s["package_flag_names"]
+    assert "PKG_FilterEditorOnly" in s["package_flag_names"]
+    assert s["names_referenced_from_export_data_count"] == 2
+    assert s["payload_toc_offset"] == -1
+    assert s["data_resource_offset"] == -1
+    assert r["counts"] == {"names": len(UE5U_NAMES), "imports": 3,
+                           "exports": 1,
+                           "soft_package_references": 0,
+                           "soft_object_paths": 1,
+                           "searchable_names": 0}
+    assert r["soft_object_paths"] == [{
+        "asset_path": "/Game/Other/Thing.Thing", "sub_path": ""}]
+    imp = r["imports"][0]
+    assert imp["class_package"] == "/Script/CoreUObject"
+    assert imp["class_name"] == "Class"
+    assert imp["object_name"] == "Widget"
+    assert imp["import_optional"] is False
+    exp = r["exports"][0]
+    assert exp["object_name"] == "MyWidget"
+    assert exp["class_resolved"] == "import[0] Widget"
+    assert exp["template_resolved"] == \
+        "import[2] Default__Widget"
+    # Properties are unversioned by design: reported, not read.
+    assert exp["properties"]["status"] == "unversioned"
 
 
 def test_bad_magic():

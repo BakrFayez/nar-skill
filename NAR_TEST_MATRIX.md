@@ -699,45 +699,91 @@ executed:
   UE5 tag-extension layouts (object version >= 1011)
   report their property streams as unparsed, with the
   reason.
-- Real-asset rung, UE5 (EXECUTED 2026-11-23 — sample
-  obtained; containers sealed): a free UE5 Android
-  title was lawfully obtained with the owner's explicit
-  approval (a ~2.6 GB bundle: split APKs, an install-
-  time asset pack, and an OBB) and its containers were
-  located and inspected. The UE5 generation is
-  confirmed from the data itself: the engine binary
-  carries UE5 console-variable category strings and a
-  help string referencing UE 5.4.2, and every content
-  container is pak format version 11. Seven paks in
-  total (six in the install-time asset pack, one
-  inside the OBB) were footer-checked individually:
-  all seven set the footer index-encryption flag, the
-  footer index SHA-1 does not match the stored index
-  bytes, and the index regions measure ~8 bits/byte of
-  entropy — the indexes are AES-encrypted. The only
-  compression method registered in any footer is
-  Oodle. No entry can therefore be listed or extracted
-  through the pak path, and key extraction is outside
-  this skill's scope by design, so no cooked package
-  could be obtained for narlib.uasset: the parser
-  remains unexercised on real UE5 packages, and the
-  UE5 evidence of record is unchanged (the UE5-era
-  synthetic fixture, object version 1010, and the
-  exact section accounting previously done on real
-  IoStore TOC containers). The rung's question stays
-  open, with the blocker now precisely identified:
-  this title's containers are sealed, so a future
-  attempt needs a UE5 title that ships unencrypted
-  pak indexes or IoStore containers.
-- In-cycle change from this rung: nar-pak now surfaces
-  the v7+ footer index-encryption flag (report field
-  index_encrypted, an explicit sentence in the v8+
-  unsupported error, a human-output line, and a
-  nar-unreal pak-summary passthrough), so a sealed
-  modern pak states both of its blockers instead of
-  only the index-layout one. Covered by
-  tests/unit/test_pak.py on synthetic byte-exact
-  footers (v11 encrypted / v11 plain / v5 no-field).
+- Real-asset rung, UE5 (EXECUTED 2026-11-23 — unsealed
+  title; rung closed for the unversioned case): a
+  second free UE5 Android title, a small independent
+  developer's exploration showcase obtained the same
+  way with the owner's approval, ships its content in
+  a single pak (format version 11) inside an OBB
+  carried in the APK. Encryption check first: the pak
+  footer's index-encryption flag is clear, the footer
+  index SHA-1 matches the stored index bytes, the
+  full-directory-index SHA-1 matches, and 0 of its
+  2,859 entries are flagged encrypted — the container
+  is unsealed, so the run proceeded. The title is
+  genuinely UE5 from its own data: the engine binary's
+  version string reads ++UE5+Release-5.2 (the store
+  page named an earlier 5.1; the binary is the
+  authority). New in-cycle support made this readable:
+  nar-pak now parses the v10/v11 encoded index
+  (path-hash + full directory index); the decoded
+  records were verified against an independent
+  header-chaining walk of the same file (2,859 of
+  2,859 entries in full agreement on offsets, sizes,
+  methods, block tables, and encoded lengths). All
+  220 stored (uncompressed) .uasset packages in the
+  pak were extracted through nar-pak and parsed by
+  narlib.uasset: 220 of 220 parsed, 0 failures (the
+  remaining packages are Oodle-compressed and refused
+  by name, as designed; the title's three level
+  packages are among them). An independent byte-walk
+  oracle on one project package agreed with the parser
+  on 23 of 23 compared facts (summary fields, the full
+  name list, every import, the export's indices and
+  serial range). One real defect was found and fixed
+  in-cycle: every package in this title is unversioned
+  (object versions stripped at cook time) with legacy
+  summary version -8, and the parser read those with
+  the UE4-only layout, landing eight bytes behind and
+  failing on the package GUID; a legacy -8 summary is
+  the variant that carries the UE5 version field, so
+  unversioned -8 packages are now read under the
+  final-UE4 (522) + UE5 1010 layout assumption, stated
+  in the report. UE5-gated structures the real data
+  exercises: the soft-object-path list field, the
+  payload-TOC offset, and the data-resource offset in
+  every summary (the data-resource offset carries a
+  real table offset in 41 packages), the
+  names-referenced-from-export-data count (nonzero in
+  115), the import-optional flag, and the export
+  package-GUID removal and inherited-instance fields.
+  Stated plainly as absent or unexercised: every
+  sampled package is unversioned, so no package with a
+  recorded UE5 object version (1000+) has been parsed
+  yet; the soft-object-path list is empty in all 220
+  packages (its entries are unexercised); the payload
+  TOC offset is -1 everywhere; structures gated above
+  this title's engine generation (saved hash, metadata
+  offset, Verse cells, import type hierarchies) do not
+  occur in its data; and Oodle-compressed packages
+  (407 of 627 package files) remain unextractable by
+  design. In-container routes: nar-unreal on the pak
+  reports the full listing and records a plain
+  per-package refusal for the first five packages in
+  directory order (all Oodle-compressed editor
+  resources); nar-analyze on the OBB finds the pak
+  inside it and reports the same listing. Regression
+  coverage: tests/unit/test_pak.py gained a byte-exact
+  synthetic v11 pak (stored / one-block zlib /
+  two-block zlib / refused-method entries; listing,
+  extraction, and the 64-bit-field and block-size-
+  escape decode paths), and tests/unit/test_uasset.py
+  gained an unversioned UE5 (legacy -8) fixture
+  mirroring this title's layout.
+- Prior attempt, same rung (2026-11-23): a first free
+  UE5 title (~2.6 GB bundle: split APKs, an install-
+  time asset pack, and an OBB) shipped all seven of
+  its paks with AES-encrypted indexes (footer flag
+  set, footer index SHA-1 mismatch, ~8 bits/byte index
+  entropy, Oodle the only registered compression
+  method), so no cooked package could be obtained and
+  the parser stayed unexercised on real UE5 data; key
+  extraction is outside this skill's scope by design.
+  That attempt produced the nar-pak index_encrypted
+  diagnosis (report field, explicit error sentence,
+  human-output line, and a nar-unreal pak-summary
+  passthrough), covered by tests/unit/test_pak.py on
+  synthetic byte-exact footers.
 
 ## Addendum (2026-11-23) — merged 2.2.0 tree battery
 
@@ -753,3 +799,11 @@ executed:
   corrected the capability registry's FModel entry, whose
   limitations text still called UAsset-level inspection a
   documented limitation after narlib.uasset shipped.
+
+## Addendum (2026-11-23) — merged 2.3.0 tree battery
+
+- The ue5-real-rung workstream was merged into main for
+  the 2.3.0 release. On the merged tree, re-run end to end
+  by the reviewer: pytest 76/76, end-to-end harness 46
+  passed / 0 failed / 0 skipped, nar-doctor core toolchain
+  READY, py_compile clean.

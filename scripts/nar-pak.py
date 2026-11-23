@@ -6,12 +6,16 @@ index (mount point + entry records) for the classic pak format
 versions 1-7 and prints each entry with its offset, packed and
 unpacked sizes, compression method, and encryption flag, plus
 grouped totals (by file extension and by top-level folder).
-Versions 8+ use a different
-(FName-based, path-hash) index and are reported as unsupported,
-plainly: this tool never guesses or invents entries. For v7+
-footers the report also surfaces the footer's index-encryption
-flag, so a modern pak whose index is AES-encrypted says so even
-though its index layout is not parsed.
+Versions 10+ use a different, encoded index (a path-hash index
+plus a full directory index); those are parsed too: entry names
+come from the full directory index and the entry records are
+decoded from the encoded blob, with the index bytes and the
+directory index both verified against their recorded SHA-1
+hashes before anything is decoded. Versions 8-9 are reported as
+unsupported, plainly: this tool never guesses or invents entries.
+For v7+ footers the report also surfaces the footer's
+index-encryption flag, so a modern pak whose index is
+AES-encrypted says so even before its index is read.
 
 Usage:
     python3 nar-pak.py game.pak [--json] [--limit N]
@@ -26,8 +30,12 @@ plainly instead of producing garbage.
 matches the pattern (exact name or shell-style glob) under --out,
 preserving the pak-relative path. Stored entries are copied, zlib and
 gzip entries are decompressed block by block. Encrypted entries and
-LZ4 entries are refused plainly: AES needs the key and LZ4 is not in
-the Python standard library.
+entries compressed with a method that has no standard-library
+decoder (LZ4, Oodle, ...) are refused plainly: AES needs the key
+and those codecs are not in the Python standard library. For
+v10+ entries the extracted bytes are additionally verified
+against the SHA-1 of the uncompressed data recorded in the
+entry's header.
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
@@ -209,6 +217,10 @@ def _parse_index(data, version, index_offset, index_size):
     consumes the index EXACTLY, so a wrong layout never yields
     plausible-looking garbage. Raises PakError when none fits.
     """
+    if version >= 10:
+        mount, entries, layout, _deleted = _parse_index_encoded(
+            data, version, index_offset, index_size)
+        return mount, entries, layout
     if version == 1:
         candidates = [(True, 0)]
     elif version == 2:
@@ -234,6 +246,224 @@ def _parse_index(data, version, index_offset, index_size):
                    " shown rather than guessed ones.")
 
 
+def footer_compression_methods(data, version):
+    """Compression method names from a v10+ footer.
+
+    The modern footer carries five fixed 32-byte name slots after
+    the index hash; the slot order defines the compression-method
+    indices the encoded index entries reference (as slot + 1, with
+    0 meaning stored). Returns [] for older versions or when the
+    slots fall outside the file.
+    """
+    if version < 10:
+        return []
+    base = _locate_magic(data)
+    start = base + 44
+    names = []
+    for i in range(5):
+        raw = data[start + i * 32:start + (i + 1) * 32]
+        if len(raw) < 32:
+            break
+        names.append(raw.split(b"\x00", 1)[0].decode("utf-8", "replace"))
+    return names
+
+
+def _decode_encoded_entry(blob, loc):
+    """Decode one entry record from the encoded index blob (v10+).
+
+    The record starts with a 32-bit flags word: bits 0-5 hold the
+    compression block size shifted right 11 bits (0x3F means a full
+    uint32 block size follows the size fields), bits 6-21 the
+    compression block count, bit 22 the encryption flag, bits
+    23-28 the compression method (0 = stored, otherwise the footer
+    compression-method slot + 1), bit 29 the compressed size is a
+    uint32 (else uint64), bit 30 the uncompressed size is a uint32,
+    bit 31 the offset is a uint32. Then come the offset, the
+    uncompressed size, the compressed size (only when a method is
+    set), the escaped block size when flagged, and -- when the
+    block count is above one -- one uint32 compressed size per
+    block. A single block is synthesized from the compressed size,
+    so no per-block sizes are stored for it.
+
+    Returns (fields, consumed_bytes). Raises PakError on any
+    structural problem.
+    """
+    r = Reader(blob, loc)
+    flags = r.u32()
+    block_size_field = flags & 0x3F
+    block_count = (flags >> 6) & 0xFFFF
+    encrypted = bool(flags & (1 << 22))
+    method = (flags >> 23) & 0x3F
+    offset = r.u32() if flags & (1 << 31) else r.u64()
+    uncompressed = r.u32() if flags & (1 << 30) else r.u64()
+    if method:
+        size = r.u32() if flags & (1 << 29) else r.u64()
+    else:
+        size = uncompressed
+    if block_size_field == 0x3F:
+        block_size = r.u32()
+    else:
+        block_size = block_size_field << 11
+    block_sizes = []
+    if block_count > 1:
+        if block_count > 1_000_000:
+            raise PakError(f"implausible compression block count "
+                           f"in encoded entry: {block_count}")
+        block_sizes = [r.u32() for _ in range(block_count)]
+    fields = {
+        "offset": offset,
+        "size": size,
+        "uncompressed": uncompressed,
+        "method": method,
+        "encrypted": encrypted,
+        "block_count": block_count if method else 0,
+        "block_size": block_size,
+        "block_sizes": block_sizes,
+    }
+    return fields, r.pos - loc
+
+
+def _parse_index_encoded(data, version, index_offset, index_size):
+    """Parse a v10+ (encoded) pak index.
+
+    Index layout: mount point, entry count, path-hash seed, an
+    optional path-hash index descriptor and an optional
+    full-directory-index descriptor (offset, size and SHA-1 each),
+    then the encoded entry blob. Entry names come from the full
+    directory index (a directory -> file name -> encoded-entry
+    location map stored elsewhere in the file); the path-hash
+    index only accelerates name lookups and is skipped. The index
+    bytes are verified against the SHA-1 in the footer and the
+    directory index against the SHA-1 recorded beside its offset
+    before anything is decoded, and both regions must be consumed
+    exactly, so a wrong layout never yields plausible-looking
+    garbage.
+
+    Returns (mount_point, entries, layout, deleted_count).
+    Negative directory-index locations are tombstones left by
+    patch paks for deleted files; they are counted, not listed.
+    """
+    base = _locate_magic(data)
+    stored_hash = data[base + 24:base + 44]
+    index = data[index_offset:index_offset + index_size]
+    if hashlib.sha1(index).digest() != stored_hash:
+        raise PakError(
+            "the index bytes do not match the SHA-1 recorded in "
+            "the footer: the index is corrupt, or it is encrypted "
+            "without the footer flag saying so. No entries are "
+            "shown rather than guessed ones.")
+    r = Reader(data, index_offset)
+    mount = r.fstring()
+    count = r.i32()
+    if count < 0 or count > MAX_ENTRIES:
+        raise PakError(f"implausible entry count in index: {count}")
+    r.read(8)  # path-hash seed: feeds the path-hash index only
+
+    def _optional_index():
+        present = r.i32()
+        if not present:
+            return None
+        off = struct.unpack("<q", r.read(8))[0]
+        size = struct.unpack("<q", r.read(8))[0]
+        return off, size, r.read(20)
+
+    _path_hash_index = _optional_index()
+    fdi = _optional_index()
+    if fdi is None:
+        raise PakError(
+            "the index carries no full directory index, so entry "
+            "names cannot be recovered from the index alone. No "
+            "entries are shown rather than guessed ones.")
+    blob_len = r.i32()
+    if blob_len < 0:
+        raise PakError("negative encoded entry blob size in the index")
+    blob = data[r.pos:r.pos + blob_len]
+    r.read(blob_len)
+    # Newer writers append one trailing array after the encoded
+    # entries (empty in every observed file). Accept the index
+    # only when every byte is accounted for: nothing may follow
+    # the blob except that array's count, and the count must be
+    # zero -- a non-empty trailing array is a layout this parser
+    # does not cover, so it is refused rather than guessed at.
+    remaining = index_size - (r.pos - index_offset)
+    if remaining == 4:
+        trailing = r.i32()
+        if trailing != 0:
+            raise PakError(
+                "the index carries a non-empty trailing array "
+                f"({trailing} records) after the encoded entries: "
+                "a layout this lister does not cover. No entries "
+                "are shown rather than guessed ones.")
+    elif remaining != 0:
+        raise PakError(
+            "encoded entry blob size does not exactly fill the "
+            "index (layout mismatch). No entries are shown rather "
+            "than guessed ones.")
+
+    fdi_offset, fdi_size, fdi_hash = fdi
+    fdi_bytes = data[fdi_offset:fdi_offset + fdi_size]
+    if len(fdi_bytes) != fdi_size:
+        raise PakError("full directory index points outside the file")
+    if hashlib.sha1(fdi_bytes).digest() != fdi_hash:
+        raise PakError(
+            "the full directory index bytes do not match the "
+            "SHA-1 recorded in the index: the archive is corrupt. "
+            "No entries are shown rather than guessed ones.")
+    fr = Reader(fdi_bytes, 0)
+    dir_count = fr.i32()
+    if dir_count < 0 or dir_count > MAX_ENTRIES:
+        raise PakError(f"implausible directory count: {dir_count}")
+    located = []
+    deleted = 0
+    for _ in range(dir_count):
+        folder = fr.fstring()
+        if folder and not folder.endswith("/"):
+            folder += "/"
+        file_count = fr.i32()
+        if file_count < 0 or file_count > MAX_ENTRIES:
+            raise PakError(f"implausible file count: {file_count}")
+        for _ in range(file_count):
+            filename = fr.fstring()
+            location = fr.i32()
+            if location < 0:
+                deleted += 1
+                continue
+            located.append((folder + filename, location))
+    if fr.pos != fdi_size:
+        raise PakError(
+            f"directory index parse consumed {fr.pos} of {fdi_size}"
+            " bytes (layout mismatch)")
+
+    methods = footer_compression_methods(data, version)
+    entries = []
+    for name, location in located:
+        fields, _consumed = _decode_encoded_entry(blob, location)
+        method = fields["method"]
+        if method == 0:
+            comp_name = "None"
+        else:
+            slot = method - 1
+            comp_name = (methods[slot]
+                         if slot < len(methods) and methods[slot]
+                         else f"method {method}")
+        if fields["offset"] > len(data) or fields["size"] > len(data):
+            raise PakError(
+                f"encoded entry for {name!r} points outside the file")
+        entries.append({
+            "name": name,
+            "offset": fields["offset"],
+            "size_bytes": fields["size"],
+            "uncompressed_size_bytes": fields["uncompressed"],
+            "compression_method": method,
+            "compression": comp_name,
+            "compression_blocks": fields["block_count"],
+            "compression_block_size": fields["block_size"],
+            "compression_block_sizes": fields["block_sizes"],
+            "encrypted": fields["encrypted"],
+        })
+    return mount, entries, (False, 5), deleted
+
+
 def list_pak(path):
     if not os.path.isfile(path):
         raise FileNotFoundError(f"not a file: {path}")
@@ -251,6 +481,41 @@ def list_pak(path):
     encrypted = index_encrypted(data, version)
     if encrypted is not None:
         report["index_encrypted"] = encrypted
+    if index_offset + index_size > len(data):
+        report["supported"] = False
+        report["error"] = ("index offset/size in the footer point outside"
+                           " the file: corrupt or truncated .pak")
+        return report
+    if version >= 10:
+        if encrypted:
+            report["supported"] = False
+            report["error"] = (
+                f"pak format version {version} uses the encoded index"
+                " (path-hash + full directory index), and this index"
+                " is flagged encrypted (AES): its entries cannot be"
+                " read without the pak encryption key. No entries are"
+                " shown rather than guessed ones.")
+            return report
+        try:
+            mount, entries, _layout, deleted = _parse_index_encoded(
+                data, version, index_offset, index_size)
+        except PakError as e:
+            report["supported"] = False
+            report["error"] = str(e)
+            return report
+        report["supported"] = True
+        report["mount_point"] = mount
+        report["entry_count"] = len(entries)
+        report["entries"] = entries
+        if deleted:
+            report["deleted_entry_count"] = deleted
+        report["total_packed_bytes"] = sum(e["size_bytes"] for e in entries)
+        report["total_uncompressed_bytes"] = sum(
+            e["uncompressed_size_bytes"] for e in entries)
+        report["encrypted_entry_count"] = sum(
+            1 for e in entries if e["encrypted"])
+        report["stats"] = pak_stats(entries)
+        return report
     if version >= 8:
         report["supported"] = False
         report["error"] = (
@@ -262,11 +527,6 @@ def list_pak(path):
                 " The index is additionally flagged encrypted (AES),"
                 " so its entries could not be read without the pak"
                 " encryption key even if the index layout were parsed.")
-        return report
-    if index_offset + index_size > len(data):
-        report["supported"] = False
-        report["error"] = ("index offset/size in the footer point outside"
-                           " the file: corrupt or truncated .pak")
         return report
     try:
         mount, entries, _layout = _parse_index(
@@ -368,6 +628,83 @@ def extract_entry(data, version, layout, entry):
     return out
 
 
+def extract_entry_encoded(data, entry):
+    """Return the decompressed bytes of one v10+ entry.
+
+    The entry's data in the file is preceded by the classic
+    serialized header; it is read and cross-checked against the
+    encoded index record, the compression blocks are taken from
+    the index record (one compressed size per block), and the
+    result is verified against the header's SHA-1 of the
+    uncompressed data, so a layout misunderstanding cannot
+    produce a plausible-looking wrong file. Raises PakError with
+    a plain reason when the entry cannot be extracted.
+    """
+    if entry["encrypted"]:
+        raise PakError(
+            "entry is flagged encrypted (AES); extraction needs the"
+            " pak encryption key, which this tool does not hold")
+    r = Reader(data, entry["offset"])
+    r.u64()  # offset field: serialized as 0 in the file, patched
+    # from the index at load time, so it cannot be checked
+    size = r.u64()
+    uncompressed = r.u64()
+    method = r.i32()
+    if (size != entry["size_bytes"]
+            or uncompressed != entry["uncompressed_size_bytes"]
+            or method != entry["compression_method"]):
+        raise PakError("entry header in the data region does not match"
+                       " the index record; the pak layout differs from"
+                       " what this tool parses")
+    digest = r.read(20)  # SHA-1 of the uncompressed data
+    if method != 0:
+        count = r.i32()
+        if count < 0 or count > 1_000_000:
+            raise PakError(f"implausible compression block count: {count}")
+        if count != entry["compression_blocks"]:
+            raise PakError("compression block count in the entry header"
+                           " does not match the index record; the pak"
+                           " layout differs from what this tool parses")
+        r.read(count * 16)  # block offsets: the index record's
+        # per-block compressed sizes are used instead
+    r.read(5)  # trailer: encryption flag + compression block size
+    if method == 0:
+        out = data[r.pos:r.pos + size]
+        if len(out) != size:
+            raise PakError("stored entry is truncated in the file")
+    elif entry["compression"].lower() in ("zlib", "gzip"):
+        use_gzip = entry["compression"].lower() == "gzip"
+        block_sizes = entry["compression_block_sizes"] or [size]
+        chunks = []
+        pos = r.pos
+        for block_size in block_sizes:
+            raw = data[pos:pos + block_size]
+            if len(raw) != block_size:
+                raise PakError("compression block is truncated in "
+                               "the file")
+            try:
+                chunks.append(gzip.decompress(raw) if use_gzip
+                              else zlib.decompress(raw))
+            except (zlib.error, OSError, EOFError) as e:
+                raise PakError(f"decompression failed: {e}") from e
+            pos += block_size
+        out = b"".join(chunks)
+    else:
+        raise PakError(
+            f"compression method {entry['compression']} is not "
+            "supported by the stdlib extractor (it has no decoder "
+            "in the Python standard library)")
+    if len(out) != uncompressed:
+        raise PakError(
+            f"extracted {len(out):,} bytes but the index promises"
+            f" {uncompressed:,}; refusing to write a partial result")
+    if hashlib.sha1(out).digest() != digest:
+        raise PakError(
+            "extracted data does not match the SHA-1 recorded in "
+            "the entry header; refusing to write a corrupt result")
+    return out
+
+
 def extract_pak(path, pattern, out_dir):
     """Extract every entry matching pattern under out_dir.
 
@@ -393,7 +730,11 @@ def extract_pak(path, pattern, out_dir):
     errors = []
     for entry in matched:
         try:
-            blob = extract_entry(data, report["pak_version"], layout, entry)
+            if report["pak_version"] >= 10:
+                blob = extract_entry_encoded(data, entry)
+            else:
+                blob = extract_entry(
+                    data, report["pak_version"], layout, entry)
         except PakError as e:
             errors.append({"name": entry["name"], "error": str(e)})
             continue
@@ -483,7 +824,8 @@ def human_extract(report):
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="NAR Unreal .pak lister: footer + index parse for "
-                    "pak format versions 1-7 (stdlib only).")
+                    "pak format versions 1-7 and the encoded 10+ index "
+                    "(stdlib only).")
     p.add_argument("pak", help="path to the .pak file")
     p.add_argument("--json", action="store_true",
                    help="machine-readable JSON output")

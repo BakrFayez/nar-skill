@@ -123,20 +123,26 @@ python3 scripts/nar-pak.py game.pak --json     # machine-readable
 ```
 
 It parses the FPakInfo footer and the index for pak format versions
-1-7 and prints each entry with packed/unpacked sizes and its
-compression method (None/Zlib/Gzip/LZ4). Entries can also be pulled
-out of an unencrypted pak (Zlib entries are decompressed, stored
-entries copied byte for byte; encrypted entries refuse plainly):
+1-7 and for the v10/v11 encoded index (path-hash + full directory
+index), and prints each entry with packed/unpacked sizes and its
+compression method (for v10+, resolved from the footer's
+compression-method slots). Entries can also be pulled out of an
+unencrypted pak (Zlib/Gzip entries are decompressed, stored entries
+copied byte for byte; entries using a method with no decoder in the
+Python standard library, such as Oodle, and encrypted entries
+refuse plainly):
 
 ```bash
 python3 scripts/nar-pak.py game.pak --extract "Content/Maps/*" --out work/pak-out
 python3 scripts/nar-pak.py game.pak --extract "Engine/Config/Base.ini" --out work/pak-out
 ``` A layout is only accepted
-when it consumes the index exactly, so a wrong guess never produces
-plausible-looking garbage. Versions 8+ use a different (FName-based,
-path-hash) index and are reported as unsupported, plainly. An
-encrypted index cannot be read without the key; the parse then fails
-plainly instead of inventing entries. Listing is inventory only:
+when it consumes the index exactly (for v10+, both index regions
+are also verified against their recorded SHA-1s), so a wrong guess
+never produces plausible-looking garbage. Versions 8/9 use a
+different FName-based index and are reported as unsupported,
+plainly. An index whose footer flags it as AES-encrypted cannot be
+read without the key; that is diagnosed explicitly instead of
+inventing entries. Listing is inventory only:
 names and sizes answer content questions, and entries can be matched
 against the classes and assets the code references.
 
