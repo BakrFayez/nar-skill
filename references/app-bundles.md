@@ -181,7 +181,9 @@ one as `split_config.en.apk`) with this manifest:
 ```
 
 The resulting file is 3,246,555 bytes.
-Unzip and triage verified the flow end to end:
+Triage also reads the container directly, without unzipping:
+it takes the identity from `manifest.json` and lists the contained
+APKs and OBBs. Unzip and triage verified the flow end to end:
 
 ```bash
 unzip -l app.xapk

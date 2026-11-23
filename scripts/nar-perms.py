@@ -79,14 +79,17 @@ NORMAL_PERMISSIONS = {
     "ACCESS_LOCATION_EXTRA_COMMANDS", "ACCESS_NETWORK_STATE",
     "ACCESS_NOTIFICATION_POLICY", "ACCESS_WIFI_STATE",
     "ACCESS_ADSERVICES_AD_ID", "ACCESS_ADSERVICES_ATTRIBUTION",
-    "ACCESS_ADSERVICES_TOPICS",
+    "ACCESS_ADSERVICES_CUSTOM_AUDIENCE", "ACCESS_ADSERVICES_TOPICS",
     "BLUETOOTH", "BLUETOOTH_ADMIN", "BROADCAST_STICKY",
     "CHANGE_NETWORK_STATE", "CHANGE_WIFI_MULTICAST_STATE", "CHANGE_WIFI_STATE",
+    "DETECT_SCREEN_CAPTURE", "DETECT_SCREEN_RECORDING",
     "DISABLE_KEYGUARD", "EXPAND_STATUS_BAR", "FLASHLIGHT",
     "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_CAMERA",
     "FOREGROUND_SERVICE_CONNECTED_DEVICE", "FOREGROUND_SERVICE_DATA_SYNC",
+    "FOREGROUND_SERVICE_FILE_MANAGEMENT", "FOREGROUND_SERVICE_HEALTH",
     "FOREGROUND_SERVICE_LOCATION", "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
-    "FOREGROUND_SERVICE_MICROPHONE", "FOREGROUND_SERVICE_PHONE_CALL",
+    "FOREGROUND_SERVICE_MEDIA_PROJECTION", "FOREGROUND_SERVICE_MICROPHONE",
+    "FOREGROUND_SERVICE_PHONE_CALL",
     "FOREGROUND_SERVICE_REMOTE_MESSAGING", "FOREGROUND_SERVICE_SPECIAL_USE",
     "FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
     "HIDE_NON_SYSTEM_OVERLAY_WINDOWS", "HIGH_SAMPLING_RATE_SENSORS",
@@ -99,6 +102,15 @@ NORMAL_PERMISSIONS = {
     "SUBSCRIBED_FEEDS_READ", "SUBSCRIBED_FEEDS_WRITE", "TRANSMIT_IR",
     "USE_BIOMETRIC", "USE_EXACT_ALARM", "USE_FINGERPRINT", "VIBRATE",
     "WAKE_LOCK", "WRITE_SYNC_SETTINGS",
+}
+
+# Well-known full permission names that do not use the
+# android.permission.* prefix (Play billing, ads ID, push).
+FULL_NAME_LEVELS = {
+    "com.android.vending.BILLING": "normal",
+    "com.android.vending.CHECK_LICENSE": "normal",
+    "com.google.android.gms.permission.AD_ID": "normal",
+    "com.google.android.c2dm.permission.RECEIVE": "normal",
 }
 
 # protectionLevel base values (low nibble) as compiled into binary XML.
@@ -446,9 +458,13 @@ def classify_permission(name, declared):
             return "signature" if base != "dangerous" else "dangerous"
         if base == "normal":
             return "normal"
+    if name in FULL_NAME_LEVELS:
+        return FULL_NAME_LEVELS[name]
     if name.startswith(ANDROID_PERM_PREFIX):
         short = name[len(ANDROID_PERM_PREFIX):]
-        if short in DANGEROUS_PERMISSIONS:
+        if short in DANGEROUS_PERMISSIONS or short.startswith("health."):
+            # android.permission.health.* (Health Connect) permissions
+            # are all runtime/dangerous.
             return "dangerous"
         if short in SIGNATURE_PERMISSIONS or short.startswith("BIND_"):
             return "signature"
@@ -477,9 +493,21 @@ def analyze(root):
     version_name = root.attrs.get("android:versionName")
     shared_user_id = root.attrs.get("android:sharedUserId")
 
-    uses_sdk = root.find_child("uses-sdk")
+    # <uses-sdk> can appear more than once in old manifests (sometimes
+    # nested inside a component, where the platform ignores it). Count
+    # every occurrence in document order; the FIRST one wins, in
+    # agreement with nar-perms.
+    uses_sdk_els = root.find_all("uses-sdk")
+    uses_sdk = uses_sdk_els[0] if uses_sdk_els else None
     min_sdk = _as_int(uses_sdk.attrs.get("android:minSdkVersion")) if uses_sdk else None
     target_sdk = _as_int(uses_sdk.attrs.get("android:targetSdkVersion")) if uses_sdk else None
+    uses_sdk_all = [{
+        "min_sdk": _as_int(el.attrs.get("android:minSdkVersion")),
+        "target_sdk": _as_int(el.attrs.get("android:targetSdkVersion")),
+    } for el in uses_sdk_els]
+    # Split APKs carry a split="..." attribute on <manifest>; their
+    # <application> element is a stub, so app-level flags do not apply.
+    split_name = root.attrs.get("split") or root.attrs.get("android:split")
 
     # Declared <permission> elements (custom permissions this app defines).
     declared = {}
@@ -592,17 +620,31 @@ def analyze(root):
              " app that declares the same sharedUserId and is signed by the"
              " same key. Common in system apps (android.uid.system,"
              " android.uid.shared); the shared apps must be analyzed together.")
-    allow_backup = app["allow_backup"] if app["allow_backup"] is not None else True
-    if allow_backup:
-        flag("info", "allowBackup enabled"
-             + (" (default; attribute absent)" if app["allow_backup"] is None
-                else " (explicit)"),
-             "App data can be backed up with adb backup unless backup rules"
-             " exclude it.")
-    if app["network_security_config"] is None:
+    if split_name:
+        flag("info", f"split APK manifest (split: {split_name})",
+             "This file is one split of a bundle. Its <application>"
+             " element is a stub: app-level flags (allowBackup,"
+             " networkSecurityConfig) belong to the base APK, so they"
+             " are not reported here.")
+    elif app["allow_backup"] is None or app["allow_backup"]:
+        allow_backup = app["allow_backup"] if app["allow_backup"] is not None else True
+        if allow_backup:
+            flag("info", "allowBackup enabled"
+                 + (" (default; attribute absent)" if app["allow_backup"] is None
+                    else " (explicit)"),
+                 "App data can be backed up with adb backup unless backup rules"
+                 " exclude it.")
+    if split_name is None and app["network_security_config"] is None:
         flag("info", "no networkSecurityConfig",
              "Cleartext policy falls back to the platform default for the"
              " target SDK; there is no explicit pinning or cleartext policy.")
+    if len(uses_sdk_els) > 1:
+        pairs = "; ".join(
+            f"min {p['min_sdk']} / target {p['target_sdk']}" for p in uses_sdk_all)
+        flag("info", f"duplicate <uses-sdk> ({len(uses_sdk_els)} elements)",
+             f"The manifest declares <uses-sdk> {len(uses_sdk_els)} times"
+             f" ({pairs}). The FIRST occurrence is used, in agreement"
+             " with nar-triage (aapt2 badging).")
     if app["uses_cleartext_traffic"] is True:
         flag("medium", "usesCleartextTraffic=true",
              "The app explicitly allows cleartext (non-TLS) network traffic.")
@@ -644,8 +686,11 @@ def analyze(root):
         "version_code": version_code,
         "version_name": version_name,
         "shared_user_id": shared_user_id,
+        "split_name": split_name,
         "min_sdk": min_sdk,
         "target_sdk": target_sdk,
+        "uses_sdk_count": len(uses_sdk_els),
+        "uses_sdk_all": uses_sdk_all,
         "application": app,
         "launcher_activity": launcher_activity,
         "permissions": permissions,
@@ -746,11 +791,23 @@ def human(report):
     lines.append(f"Parser: {path_label}")
     if report.get("parse_path") == "aapt2-xmltree":
         lines.append(f"  ({report.get('parse_note', '')})")
-    lines.append(f"Package: {report.get('package', '?')}"
-                 + (f"  v{report['version_name']} (code {report['version_code']})"
-                    if report.get("version_name") or report.get("version_code") else ""))
-    lines.append(f"SDK: min {report.get('min_sdk', '?')} / "
-                 f"target {report.get('target_sdk', '?')}")
+    ver_parts = []
+    if report.get("version_name") is not None:
+        ver_parts.append(f"v{report['version_name']}")
+    if report.get("version_code") is not None:
+        ver_parts.append(f"(code {report['version_code']})")
+    lines.append(f"Package: {report.get('package') or '?'}"
+                 + (("  " + " ".join(ver_parts)) if ver_parts else ""))
+    lines.append(f"SDK: min {report.get('min_sdk') if report.get('min_sdk') is not None else '?'} / "
+                 f"target {report.get('target_sdk') if report.get('target_sdk') is not None else '?'}")
+    if report.get("uses_sdk_count", 1) > 1:
+        pairs = "; ".join(f"min {p['min_sdk']} / target {p['target_sdk']}"
+                          for p in report["uses_sdk_all"])
+        lines.append(f"WARNING: <uses-sdk> appears {report['uses_sdk_count']} times"
+                     f" ({pairs}); the FIRST is used, in agreement with nar-triage.")
+    if report.get("split_name"):
+        lines.append(f"NOTE: split APK manifest (split: {report['split_name']})."
+                     " App-level flags below describe the stub, not the base app.")
     if report.get("shared_user_id"):
         lines.append(f"sharedUserId: {report['shared_user_id']}")
     app = report["application"]
@@ -760,13 +817,13 @@ def human(report):
         lines.append(f"  class: {app['name']}")
     if app.get("label"):
         lines.append(f"  label: {app['label']}")
-    lines.append(f"  debuggable: {app['debuggable']}")
+    lines.append(f"  debuggable: {app['debuggable'] if app['debuggable'] is not None else '?'}")
     ab = app["allow_backup"]
     lines.append("  allowBackup: " + ("true (default; attribute absent)" if ab is None
                                       else str(ab).lower()))
     nsc = app["network_security_config"]
     lines.append(f"  networkSecurityConfig: {nsc if nsc is not None else '(none)'}")
-    lines.append(f"  usesCleartextTraffic: {app['uses_cleartext_traffic']}")
+    lines.append(f"  usesCleartextTraffic: {app['uses_cleartext_traffic'] if app['uses_cleartext_traffic'] is not None else '?'}")
     if report.get("launcher_activity"):
         lines.append(f"  launcher activity: {report['launcher_activity']}")
 

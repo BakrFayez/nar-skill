@@ -2,7 +2,7 @@
 name: nar
 description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15) analysis.
 metadata:
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # NAR: Nirous Android Reversing
@@ -78,6 +78,7 @@ investigation with triage unless the question already names a deeper target.
 | What does the native library do? JNI bindings? | `.so` inventory, strings, Ghidra/Kuna | [native libs and JNI](references/native-libs-and-jni.md) |
 | Unity IL2CPP game: what is the game logic? | Il2CppDumper on `global-metadata.dat` + `libil2cpp.so`, then Ghidra | [Unity IL2CPP](references/unity-il2cpp.md) |
 | Godot game: what is in the `.pck` and the scripts? | GodotPckTool list/extract, GDRE Tools decompile | [native libs and JNI](references/native-libs-and-jni.md) |
+| Unreal game: what is inside the `.pak` packs? | Extract the `.pak`, then `python3 scripts/nar-pak.py game.pak` | [native libs and JNI](references/native-libs-and-jni.md) |
 | React Native app: what is in the JS bundle? | Extract `index.android.bundle`, hermes-dec parse/decompile | [React Native](references/react-native.md) |
 | Flutter/Dart app: what is in `libapp.so`? | Dart AOT strings and symbols, version detection | [Flutter and Dart](references/flutter-dart.md) |
 | What does it do on the network? | mitmproxy capture, tshark pcap reading | [network traffic](references/network-traffic.md) |
@@ -191,7 +192,8 @@ investigation as complete while required questions remain open.
 
 Helper scripts (run with `--help`): `scripts/nar-strings.py` (ranked
 strings), `scripts/nar-compare.py` (two-version diff),
-`scripts/nar-perms.py` (permission and component audit), and the Frida
+`scripts/nar-perms.py` (permission and component audit),
+`scripts/nar-pak.py` (Unreal .pak lister), and the Frida
 observation scripts in `scripts/frida/` (see the Frida guide).
 
 ## Finish the task

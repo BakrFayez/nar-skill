@@ -7,6 +7,7 @@ and reports identity, inventory, and structure.
 Usage:
     python3 nar-triage.py app.apk [--json]
     python3 nar-triage.py app.aab [--json]     # AABs are ZIPs too; flagged as such
+    python3 nar-triage.py app.xapk [--json]    # XAPK/APKM containers: manifest + contents
     python3 nar-triage.py main.123.com.game.obb [--json]  # OBB expansion files
 
 Output: SHA-256, size, ZIP entry breakdown (DEX files, .so per ABI,
@@ -17,14 +18,19 @@ schemes (via `apksigner verify --verbose` when apksigner is available),
 game-engine hints (Unity / Unreal / Godot / Cocos / Flutter / libGDX /
 Adobe AIR / React Native old and new architecture, from path signatures
 only), engine version hints from binary headers (Unity IL2CPP metadata
-version, Godot PCK pack format and engine version), DEX content markers
-(Kotlin, Jetpack Compose, Play Integrity, legacy Apache HttpClient, and
-more, from string fingerprints inside the DEX files), Rust markers in
-native libs (Rust runtime strings inside .so files), baseline profiles,
-game asset-bundle inventory (.pak / .bundle / .unity3d / .obb / .pck),
-and split-APK detection. When aapt2 is available, package name / version /
-SDK levels from `aapt2 dump badging` are included; otherwise those fields
-report why badging is unavailable.
+version, Godot PCK pack format and engine version, Unreal version from
+the libUE4/libUnreal build string), DEX content markers
+(Kotlin, Jetpack Compose, AndroidX, legacy support library, Play
+Integrity, legacy Apache HttpClient, and more, from string fingerprints
+inside the DEX files), library versions from META-INF/*.version files,
+Rust markers in native libs (Rust runtime strings inside .so files),
+baseline profiles, game asset-bundle inventory (.pak / .bundle /
+.unity3d / .obb / .pck), XAPK/APKM container handling (identity and
+splits from the container manifest.json), and split-APK detection.
+When aapt2 is available, package name / version / SDK levels from
+`aapt2 dump badging` are included (first <uses-sdk> wins, duplicates
+and platform-implied permissions are reported, not hidden); otherwise
+those fields report why badging is unavailable.
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
@@ -73,10 +79,15 @@ ENGINE_SIGNATURES = [
 # DEX content markers: byte fingerprints searched inside each DEX file.
 # These are string occurrences in the DEX string/type tables, so a hit
 # means the framework's classes are referenced, not that they run.
+# Kotlin deliberately does NOT rely on `kotlin/Metadata` alone: R8
+# strips that annotation in release builds, so type descriptors
+# (`Lkotlin/...`) and the coroutines package are the durable evidence.
 DEX_MARKERS = [
-    ("Kotlin", [b"kotlin/Metadata"]),
+    ("Kotlin", [b"kotlin/Metadata", b"Lkotlin/", b"kotlinx/coroutines"]),
     ("Jetpack Compose", [b"androidx/compose"]),
     ("Compose Multiplatform", [b"org/jetbrains/compose"]),
+    ("AndroidX", [b"androidx/"]),
+    ("Android support library (legacy)", [b"android/support/"]),
     ("Play Integrity API", [b"com/google/android/play/core/integrity"]),
     ("Apache HttpClient (legacy)", [b"org/apache/http"]),
     ("Adobe AIR", [b"com/adobe/air"]),
@@ -108,6 +119,10 @@ UNITY_METADATA_ERAS = {
     39: "Unity 6 (6000.x) era",
 }
 UNITY_METADATA_MAGIC = 0xFAB11BAF
+# Unreal build string embedded in libUE4.so / libUnreal.so, e.g.
+# "++UE4+Release-4.16+Compile...". The branch suffix varies; the
+# engine generation and release number are the stable part.
+UE_VERSION_RE = re.compile(rb"\+\+(UE[45])\+Release-(\d+\.\d+(?:\.\d+)?)")
 # Godot PCK pack format version -> engine line (GodotPckTool constants).
 GODOT_PCK_ERAS = {
     1: "Godot 3.x",
@@ -257,6 +272,31 @@ def godot_pck_info_of(zf, name):
             "engine_version": f"{major}.{minor}.{patch}"}
 
 
+def unreal_version_of(zf, name):
+    """Unreal engine version from the build string inside libUE4.so /
+    libUnreal.so (e.g. "++UE4+Release-4.16+Compile...").
+
+    Streams the library with a small overlap so a match straddling a
+    chunk boundary is still found. Returns {"engine": "UE4",
+    "version": "4.16"} or None.
+    """
+    try:
+        with zf.open(name) as f:
+            tail = b""
+            while True:
+                chunk = f.read(1 << 20)
+                if not chunk:
+                    return None
+                data = tail + chunk
+                m = UE_VERSION_RE.search(data)
+                if m:
+                    return {"engine": m.group(1).decode("ascii"),
+                            "version": m.group(2).decode("ascii")}
+                tail = data[-64:]
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return None
+
+
 def find_sdk_tool(name):
     """Locate a build-tools binary: PATH first, then the newest versioned
     build-tools directory under the usual Android SDK locations."""
@@ -314,16 +354,41 @@ def _tool_env():
     return env
 
 
+def uses_sdk_count_of(apk_path):
+    """Count <uses-sdk> elements in the binary manifest via xmltree.
+
+    aapt2 badging prints only the first SDK pair, so a duplicate
+    <uses-sdk> (old manifests sometimes carry a second one, even
+    nested inside a component) is invisible there. Returns None when
+    the count cannot be determined.
+    """
+    aapt2 = find_aapt2()
+    if not aapt2:
+        return None
+    try:
+        out = subprocess.run([aapt2, "dump", "xmltree", apk_path,
+                              "--file", "AndroidManifest.xml"],
+                             capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return sum(1 for line in out.stdout.splitlines()
+               if line.strip().startswith("E: uses-sdk"))
+
+
 def apksigner_verify(apk_path):
     """Signature schemes via `apksigner verify --verbose`.
 
     Returns (info_dict, status) where status is one of "ok",
     "not-found" (no apksigner binary), "unreadable" (apksigner ran but
-    its output could not be parsed), or "not-applicable" (AAB/OBB:
-    apksigner only verifies APKs; on an AAB it throws ApkFormatException).
-    An unsigned APK is a normal "ok" result with verifies=False.
+    its output could not be parsed), or "not-applicable" (AAB/OBB/XAPK/
+    APKM: apksigner only verifies APKs; on an AAB it throws
+    ApkFormatException). An unsigned APK is a normal "ok" result with
+    verifies=False. apksigner WARNING lines (for example JAR entries
+    not protected by a signature) are collected into info["warnings"].
     """
-    if apk_path.lower().endswith((".aab", ".obb")):
+    if apk_path.lower().endswith((".aab", ".obb", ".xapk", ".apkm")):
         return {}, "not-applicable"
     apksigner = find_sdk_tool("apksigner")
     if not apksigner:
@@ -337,6 +402,7 @@ def apksigner_verify(apk_path):
         return {}, "unreadable"
     info = {}
     errors = []
+    warnings = []
     parsed = False
     for line in (out.stdout + out.stderr).splitlines():
         if line == "Verifies":
@@ -366,8 +432,15 @@ def apksigner_verify(apk_path):
         if m:
             errors.append(m.group(1))
             parsed = True
+            continue
+        m = re.match(r"^WARNING: (.*)", line)
+        if m:
+            warnings.append(m.group(1))
+            parsed = True
     if errors:
         info["errors"] = errors
+    if warnings:
+        info["warnings"] = warnings
     if not parsed:
         return {}, "unreadable"
     return info, "ok"
@@ -440,6 +513,74 @@ def bundletool_manifest(aab_path):
     return info, "ok"
 
 
+def container_manifest_of(zf):
+    """Identity from an XAPK/APKM container's manifest.json, if present.
+
+    XAPK (APKPure) and APKM (APKMirror) are ZIP containers of APKs with
+    a JSON manifest at the root: package_name, version_code/name,
+    min/target SDK, permissions, split_configs, and split_apks entries
+    ({file, id}). Returns a dict (possibly partial) or None when there
+    is no readable manifest.json.
+    """
+    if "manifest.json" not in zf.namelist():
+        return None
+    try:
+        data = json.loads(zf.read("manifest.json").decode("utf-8", "replace"))
+    except (KeyError, OSError, zipfile.BadZipFile, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    info = {}
+    for src, dst in (("xapk_version", "xapk_version"),
+                     ("package_name", "package"),
+                     ("name", "app_label"),
+                     ("version_code", "version_code"),
+                     ("version_name", "version_name"),
+                     ("min_sdk_version", "min_sdk"),
+                     ("target_sdk_version", "target_sdk"),
+                     ("total_size", "total_size")):
+        if data.get(src) is not None:
+            info[dst] = data[src]
+    if isinstance(data.get("permissions"), list):
+        info["permissions"] = sorted({str(p) for p in data["permissions"]})
+    if isinstance(data.get("split_configs"), list):
+        info["split_configs"] = [str(s) for s in data["split_configs"]]
+    splits = []
+    if isinstance(data.get("split_apks"), list):
+        for entry in data["split_apks"]:
+            if isinstance(entry, dict) and entry.get("file"):
+                splits.append({"file": str(entry["file"]),
+                               "id": str(entry.get("id", ""))})
+    if splits:
+        info["split_apks"] = splits
+    return info
+
+
+def find_aapt2():
+    """Locate aapt2: PATH first, then common Android SDK locations."""
+    aapt2 = shutil.which("aapt2")
+    if aapt2:
+        return aapt2
+    for root in filter(None, [
+        os.environ.get("ANDROID_HOME"),
+        os.environ.get("ANDROID_SDK_ROOT"),
+        os.path.expanduser("~/workspace/android-sdk"),
+        os.path.expanduser("~/Android/Sdk"),
+    ]):
+        bt = os.path.join(root, "build-tools")
+        if os.path.isdir(bt):
+            def _ver_key(v):
+                try:
+                    return tuple(int(x) for x in v.split("."))
+                except ValueError:
+                    return (0,)
+            for ver in sorted(os.listdir(bt), key=_ver_key, reverse=True):
+                cand = os.path.join(bt, ver, "aapt2")
+                if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                    return cand
+    return None
+
+
 def aapt2_badging(apk_path):
     """Best-effort package identity via aapt2.
 
@@ -450,29 +591,7 @@ def aapt2_badging(apk_path):
     """
     if apk_path.lower().endswith(".aab"):
         return bundletool_manifest(apk_path)
-    aapt2 = shutil.which("aapt2")
-    if not aapt2:
-        # Look in common Android SDK locations.
-        for root in filter(None, [
-            os.environ.get("ANDROID_HOME"),
-            os.environ.get("ANDROID_SDK_ROOT"),
-            os.path.expanduser("~/workspace/android-sdk"),
-            os.path.expanduser("~/Android/Sdk"),
-        ]):
-            bt = os.path.join(root, "build-tools")
-            if os.path.isdir(bt):
-                def _ver_key(v):
-                    try:
-                        return tuple(int(x) for x in v.split("."))
-                    except ValueError:
-                        return (0,)
-                for ver in sorted(os.listdir(bt), key=_ver_key, reverse=True):
-                    cand = os.path.join(bt, ver, "aapt2")
-                    if os.path.isfile(cand) and os.access(cand, os.X_OK):
-                        aapt2 = cand
-                        break
-            if aapt2:
-                break
+    aapt2 = find_aapt2()
     if not aapt2:
         return {}, "not-found"
     try:
@@ -486,6 +605,9 @@ def aapt2_badging(apk_path):
         return {}, "unreadable"
     info = {}
     permissions = []
+    implied = []
+    sdk_pairs = []       # every (min, target) pair badging prints, in order
+    pending_min = None
     for line in out.stdout.splitlines():
         m = BADGING_PATTERNS["package"].match(line)
         if m:
@@ -495,22 +617,47 @@ def aapt2_badging(apk_path):
             continue
         m = BADGING_PATTERNS["sdk"].match(line)
         if m:
-            info["min_sdk"] = m.group(1)
+            pending_min = m.group(1)
             continue
         m = BADGING_PATTERNS["target_sdk"].match(line)
         if m:
-            info["target_sdk"] = m.group(1)
+            sdk_pairs.append((pending_min, m.group(1)))
+            pending_min = None
             continue
         m = BADGING_PATTERNS["app_label"].match(line)
         if m:
             info["app_label"] = m.group(1)
             continue
+        if line.startswith("uses-implied-permission:"):
+            pm = re.search(r"name='([^']+)'", line)
+            rm = re.search(r"reason='([^']*)'", line)
+            if pm:
+                implied.append({"name": pm.group(1),
+                                "reason": rm.group(1) if rm else ""})
+            continue
         if line.startswith("uses-permission:"):
             pm = re.search(r"name='([^']+)'", line)
             if pm:
                 permissions.append(pm.group(1))
+    if pending_min is not None:
+        sdk_pairs.append((pending_min, None))
+    if sdk_pairs:
+        # FIRST <uses-sdk> wins, in agreement with nar-perms. A manifest
+        # can declare <uses-sdk> twice (seen in the wild in legacy
+        # apps); record every pair and flag the duplicate instead of
+        # silently overwriting.
+        info["min_sdk"] = sdk_pairs[0][0]
+        info["target_sdk"] = sdk_pairs[0][1]
+        if len(sdk_pairs) > 1:
+            info["sdk_pairs"] = [{"min_sdk": mn, "target_sdk": tg}
+                                 for mn, tg in sdk_pairs]
     if permissions:
         info["permissions"] = sorted(set(permissions))
+    if implied:
+        # aapt2 lists platform-implied permissions as uses-permission
+        # lines too; keep them labeled so they are never mistaken for
+        # permissions the manifest declares.
+        info["implied_permissions"] = sorted(implied, key=lambda i: i["name"])
     return info, "ok"
 
 
@@ -527,6 +674,8 @@ def triage(apk_path):
         "size_bytes": size,
         "is_aab": apk_path.lower().endswith(".aab"),
         "is_obb": apk_path.lower().endswith(".obb"),
+        "is_xapk": apk_path.lower().endswith(".xapk"),
+        "is_apkm": apk_path.lower().endswith(".apkm"),
         "obb_kind": obb_match.group(1) if obb_match else None,
         "obb_version_code": obb_match.group(2) if obb_match else None,
         "obb_package": obb_match.group(3) if obb_match else None,
@@ -641,6 +790,19 @@ def triage(apk_path):
                     pck_infos.append(info)
         if pck_infos:
             engine_versions["godot_pck"] = sorted(pck_infos, key=lambda p: p["name"])
+        # Unreal: no header version; the build string inside the engine
+        # library carries it ("++UE4+Release-4.16+Compile...").
+        for abi in sorted(native):
+            for lib in sorted(native[abi], key=lambda l: l["name"]):
+                if lib["name"].lower() in ("libue4.so", "libunreal.so"):
+                    uv = unreal_version_of(zf, lib["path"])
+                    if uv:
+                        engine_versions["unreal_engine"] = uv["engine"]
+                        engine_versions["unreal_version"] = uv["version"]
+                        engine_versions["unreal_version_file"] = lib["path"]
+                    break
+            if "unreal_version" in engine_versions:
+                break
 
         # Baseline profiles (ART profile-guided optimization inputs) and
         # .dm DEX metadata files.
@@ -656,6 +818,17 @@ def triage(apk_path):
             "has_manifest": has_manifest,
             "has_resources_arsc": has_arsc,
             "aab_modules": modules if result["is_aab"] else [],
+            "is_container": result["is_xapk"] or result["is_apkm"],
+            "container_manifest": container_manifest_of(zf)
+            if (result["is_xapk"] or result["is_apkm"]) else None,
+            "contained_apks": sorted(
+                ({"name": n, "size_bytes": infos[n].file_size}
+                 for n in names if n.lower().endswith(".apk")),
+                key=lambda a: a["name"]),
+            "contained_obbs": sorted(
+                ({"name": n, "size_bytes": infos[n].file_size}
+                 for n in names if n.lower().endswith(".obb")),
+                key=lambda a: a["name"]),
             "dex_files": sorted(dex, key=lambda d: d["name"]),
             "dex_count": len(dex),
             "dex_total_bytes": sum(d["size_bytes"] for d in dex),
@@ -678,6 +851,23 @@ def triage(apk_path):
         result["signing_files"] = [n for n in result["meta_inf_entries"]
                                    if n.upper().endswith((".RSA", ".DSA", ".EC", ".SF", ".MF"))]
 
+        # Library versions: Java/AndroidX libraries stamp a tiny
+        # META-INF/<group>_<artifact>.version file with their version
+        # string. Cheap, exact version evidence (Kotlin's own version
+        # is NOT recoverable this way: kotlin-stdlib ships no .version
+        # file and its version lives in the stripped Metadata).
+        library_versions = {}
+        for n in names:
+            if n.startswith("META-INF/") and n.endswith(".version"):
+                try:
+                    raw = zf.read(n)[:256].decode("utf-8", "replace").strip()
+                except (KeyError, OSError, zipfile.BadZipFile):
+                    continue
+                ver = raw.splitlines()[0].strip() if raw else ""
+                if ver and len(ver) <= 64:
+                    library_versions[n[len("META-INF/"):-len(".version")]] = ver
+        result["library_versions"] = dict(sorted(library_versions.items()))
+
         # Game-engine hints: simple case-insensitive path-substring matching.
         engine_hints = []
         for engine, markers in ENGINE_SIGNATURES:
@@ -696,9 +886,53 @@ def triage(apk_path):
         result["asset_bundle_count"] = len(bundles)
         result["asset_bundle_bytes"] = sum(b["size_bytes"] for b in bundles)
 
+        # Split-base tell: an engine that always ships native code
+        # (Unity/Unreal/Godot/Flutter) is hinted, IL2CPP metadata may
+        # even be present, yet this file holds no .so at all. The
+        # native libs then live in a config split of the same bundle;
+        # saying "pure DEX app" here would mislead the analyst. A
+        # second, engine-independent tell: APKs generated from a
+        # bundle carry a bundletool stamp (stamp-cert-sha256) and the
+        # base carries a splits manifest (res/xml/splits*.xml).
+        native_engines = {"Unity (IL2CPP)", "Unity (Mono)", "Unreal Engine",
+                          "Godot", "Flutter"}
+        bundle_split_evidence = sorted(
+            n for n in names
+            if n == "stamp-cert-sha256" or n.startswith("res/xml/splits"))
+        result["bundle_split_evidence"] = bundle_split_evidence
+        result["split_native_suspected"] = bool(
+            result["native_lib_count"] == 0
+            and not result["is_container"]
+            and (any(h["engine"] in native_engines for h in engine_hints)
+                 or bundle_split_evidence))
+
+    if result.get("is_container"):
+        # Identity for a container comes from its manifest.json, not
+        # from aapt2 (which cannot read a container at all).
+        cm = result.get("container_manifest") or {}
+        badging = {}
+        for src, dst in (("package", "package"),
+                         ("version_code", "version_code"),
+                         ("version_name", "version_name"),
+                         ("min_sdk", "min_sdk"),
+                         ("target_sdk", "target_sdk"),
+                         ("app_label", "app_label"),
+                         ("permissions", "permissions")):
+            if cm.get(src) is not None:
+                badging[dst] = (str(cm[src]) if src in
+                                ("version_code", "min_sdk", "target_sdk")
+                                else cm[src])
+        result["badging"] = badging
+        result["badging_status"] = "ok" if badging else "unreadable"
+        result["signature_schemes"] = {}
+        result["signature_status"] = "not-applicable"
+        return result
+
     badging, badging_status = aapt2_badging(apk_path)
     result["badging"] = badging
     result["badging_status"] = badging_status
+    result["uses_sdk_count"] = (None if result["is_aab"]
+                                else uses_sdk_count_of(apk_path))
     sig_info, sig_status = apksigner_verify(apk_path)
     result["signature_schemes"] = sig_info
     result["signature_status"] = sig_status
@@ -715,6 +949,15 @@ def human(report):
     ]
     if report.get("is_aab"):
         lines.append("NOTE: .aab bundle (ZIP container like an APK; needs bundletool to install).")
+    if report.get("is_container"):
+        kind = "XAPK" if report.get("is_xapk") else "APKM"
+        lines.append(f"NOTE: {kind} container (a ZIP of APKs plus a manifest.json)."
+                     " Identity below is from the container manifest;"
+                     " triage each contained APK for code-level detail.")
+        for a in report.get("contained_apks", []):
+            lines.append(f"  - contains APK: {a['name']}  ({a['size_bytes']:,} bytes)")
+        for o in report.get("contained_obbs", []):
+            lines.append(f"  - contains OBB: {o['name']}  ({o['size_bytes']:,} bytes)")
     if report.get("is_obb"):
         lines.append("NOTE: OBB expansion file"
                      + (f" ({report['obb_kind']} for {report['obb_package']},"
@@ -733,8 +976,23 @@ def human(report):
                      f"(code {b.get('version_code', '?')})")
         lines.append(f"SDK:     min {b.get('min_sdk', '?')} / target {b.get('target_sdk', '?')}"
                      + (f"  label: {b.get('app_label')}" if b.get("app_label") else ""))
+        if b.get("sdk_pairs"):
+            pairs = "; ".join(f"min {p['min_sdk']} / target {p['target_sdk']}"
+                              for p in b["sdk_pairs"])
+            lines.append(f"WARNING: manifest declares <uses-sdk> {len(b['sdk_pairs'])}"
+                         f" times ({pairs}). Using the FIRST, in agreement"
+                         " with nar-perms.")
+        elif report.get("uses_sdk_count") and report["uses_sdk_count"] > 1:
+            lines.append(f"WARNING: manifest contains {report['uses_sdk_count']}"
+                         " <uses-sdk> elements; the values above are from"
+                         " the FIRST, in agreement with nar-perms.")
         if b.get("permissions"):
             lines.append(f"Permissions ({len(b['permissions'])}): {', '.join(b['permissions'])}")
+        if b.get("implied_permissions"):
+            impl = ", ".join(f"{i['name']} ({i['reason']})" if i.get("reason")
+                             else i["name"] for i in b["implied_permissions"])
+            lines.append("  of which implied by the platform, NOT declared"
+                         f" in the manifest: {impl}")
     elif report.get("badging_status") == "not-found":
         lines.append("Package: unknown (aapt2 not found. See nar-doctor.sh)")
     elif report.get("is_aab"):
@@ -764,17 +1022,38 @@ def human(report):
         for lib in libs:
             lines.append(f"  - [{abi}] {lib['name']}  ({lib['size_bytes']:,} bytes)")
     if not report["native_libs_by_abi"]:
-        if report.get("is_obb"):
+        if report.get("is_container"):
+            lines.append("  (none at container level: code lives in the contained APKs)")
+        elif report.get("is_obb"):
             lines.append("  (none: OBBs carry assets, not code)")
         elif report.get("is_aab"):
             lines.append("  (none at bundle level. Check base/lib/ after bundletool extract)")
+        elif report.get("split_native_suspected"):
+            ev = report.get("bundle_split_evidence") or []
+            native_engines = {"Unity (IL2CPP)", "Unity (Mono)",
+                              "Unreal Engine", "Godot", "Flutter"}
+            engine_based = any(h["engine"] in native_engines
+                               for h in report.get("engine_hints", []))
+            why = ("engine evidence above says native code exists"
+                   if engine_based else
+                   "this APK belongs to a split set")
+            detail = f" (bundle evidence: {', '.join(ev)})" if ev else ""
+            lines.append(f"  (none in this file, but {why}{detail}: the .so"
+                         " files likely live in a config split of the same"
+                         " bundle. Triage the splits too)")
         else:
             lines.append("  (none: pure DEX app)")
     lines.append(f"META-INF ({len(report['meta_inf_entries'])}): "
                  f"{', '.join(report['meta_inf_entries']) or '(none)'}")
-    lines.append(f"Signing files: {', '.join(report['signing_files']) or '(none found)'}")
     sig = report.get("signature_schemes") or {}
     sig_status = report.get("signature_status")
+    if report["signing_files"]:
+        lines.append(f"Signing files: {', '.join(report['signing_files'])}")
+    elif sig_status == "ok" and (sig.get("v2") or sig.get("v3")):
+        lines.append("Signing files: (none: v2/v3 signing uses the APK Signing"
+                     " Block, which carries no META-INF files)")
+    else:
+        lines.append("Signing files: (none found)")
     if sig_status == "ok" and sig:
         if sig.get("verifies"):
             parts = [f"v1 {'yes' if sig.get('v1') else 'no'}",
@@ -783,10 +1062,18 @@ def human(report):
                      f"v3.1 {'yes' if sig.get('v3_1') else 'no'}",
                      f"v4 {'yes' if sig.get('v4') else 'no'}"]
             lines.append("Signature schemes (apksigner): " + ", ".join(parts)
-                         + f"  |  signers: {sig.get('signers', '?')}  |  verifies")
+                         + f"  |  signers: {sig.get('signers', '?')}  |  verifies"
+                         + (f"  |  source stamp: {'yes' if sig['source_stamp'] else 'no'}"
+                            if "source_stamp" in sig else ""))
         else:
             err = "; ".join(sig.get("errors", [])) or "verification failed"
             lines.append(f"Signature schemes (apksigner): DOES NOT VERIFY ({err})")
+        if sig.get("warnings"):
+            lines.append(f"apksigner warnings ({len(sig['warnings'])}):")
+            for w in sig["warnings"][:5]:
+                lines.append(f"  - {w}")
+            if len(sig["warnings"]) > 5:
+                lines.append(f"  ... and {len(sig['warnings']) - 5} more (see --json)")
     elif sig_status == "not-found":
         lines.append("Signature schemes: unknown (apksigner not found. See nar-doctor.sh)")
     elif sig_status == "not-applicable":
@@ -816,6 +1103,17 @@ def human(report):
             era = f", {p['pack_format_era']}" if p.get("pack_format_era") else ""
             lines.append(f"Godot PCK: {p['name']} (pack format {p['pack_format_version']}"
                          f"{era}, engine {p['engine_version']})")
+    if ev.get("unreal_version"):
+        lines.append(f"Unreal version: {ev.get('unreal_engine', 'UE')} "
+                     f"{ev['unreal_version']} (build string in "
+                     f"{ev.get('unreal_version_file', 'the engine library')})")
+    if report.get("library_versions"):
+        lv = report["library_versions"]
+        lines.append(f"Library versions (META-INF/*.version, {len(lv)} entries):")
+        for name in list(lv)[:20]:
+            lines.append(f"  - {name}: {lv[name]}")
+        if len(lv) > 20:
+            lines.append(f"  ... and {len(lv) - 20} more (see --json)")
     if report.get("rust_hints"):
         lines.append("Rust markers in native libs (suggests Rust code linked in):")
         for h in report["rust_hints"]:

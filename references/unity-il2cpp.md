@@ -202,7 +202,13 @@ Done!
 ```
 
 Exit code was 0. The two `ERROR` lines look bad but the dump still
-completed; section 6 explains both. The output directory held four
+completed; section 6 explains both.
+
+One practical quirk: Il2CppDumper may ignore the output-directory
+argument and write `dump.cs`, `il2cpp.h`, `script.json`, and
+`stringliteral.json` next to its own DLL instead. If the output
+directory is empty after a successful run, look in the dumper's
+install directory before re-running or blaming the metadata. The output directory held four
 files:
 
 ```text

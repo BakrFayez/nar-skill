@@ -121,6 +121,7 @@ def aapt2_badging(apk_path):
         return {}, "unreadable"
     info = {}
     permissions = []
+    sdk_pairs = []
     for line in out.stdout.splitlines():
         m = BADGING_PATTERNS["package"].match(line)
         if m:
@@ -130,11 +131,19 @@ def aapt2_badging(apk_path):
             continue
         m = BADGING_PATTERNS["sdk"].match(line)
         if m:
-            info["min_sdk"] = m.group(1)
+            # First <uses-sdk> wins (a manifest can carry duplicates);
+            # every pair is recorded so a duplicate is visible, in
+            # agreement with nar-triage and nar-perms.
+            sdk_pairs.append({"min_sdk": m.group(1)})
+            if "min_sdk" not in info:
+                info["min_sdk"] = m.group(1)
             continue
         m = BADGING_PATTERNS["target_sdk"].match(line)
         if m:
-            info["target_sdk"] = m.group(1)
+            if sdk_pairs:
+                sdk_pairs[-1]["target_sdk"] = m.group(1)
+            if "target_sdk" not in info:
+                info["target_sdk"] = m.group(1)
             continue
         m = BADGING_PATTERNS["app_label"].match(line)
         if m:
@@ -146,6 +155,8 @@ def aapt2_badging(apk_path):
                 permissions.append(pm.group(1))
     if permissions:
         info["permissions"] = sorted(set(permissions))
+    if len(sdk_pairs) > 1:
+        info["sdk_pairs"] = sdk_pairs
     return info, "ok"
 
 

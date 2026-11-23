@@ -106,6 +106,48 @@ For the full asset picture, decode with apktool and inventory `assets/`
 and `res/raw/` by extension and size. See
 [manifest and resources](manifest-and-resources.md).
 
+## Reading the triage report
+
+Details that are easy to misread:
+
+- **Containers (.xapk/.apkm)** are ZIPs of APKs plus a `manifest.json`.
+  Triage takes the container's identity (package, version, SDK,
+  permissions) from that manifest and lists the contained APKs and
+  OBBs. There is no code at container level; triage each contained
+  APK for code-level detail. The app-bundles guide covers the format.
+- **Implied permissions.** `aapt2 dump badging` lists not only the
+  permissions declared in the manifest but also ones the platform
+  implies (for example `READ_EXTERNAL_STORAGE` implied by
+  `WRITE_EXTERNAL_STORAGE`, and several implied for apps with very
+  old target SDKs). Triage separates them into their own labeled
+  line; never report an implied permission as declared.
+- **Duplicate `<uses-sdk>`.** Old manifests sometimes declare
+  `<uses-sdk>` twice (occasionally nested inside a component, where
+  the platform ignores it). Both NAR tools use the FIRST occurrence
+  and warn. If triage and nar-perms ever disagree on SDK levels,
+  that agreement rule is the tiebreaker to check.
+- **Library versions.** Java/AndroidX libraries stamp
+  `META-INF/<group>_<artifact>.version` files with their exact
+  version. Triage surfaces them as `library_versions` — measured
+  version evidence, better than guessing from class names. Kotlin's
+  own version is the exception: kotlin-stdlib ships no `.version`
+  file, and its version lives in `kotlin.Metadata`, which R8 strips
+  from release builds. Detect Kotlin by DEX type evidence
+  (`Lkotlin/`, `kotlinx/coroutines`) instead; that survives
+  stripping.
+- **A base APK with no native libs is not always a pure-DEX app.**
+  When engine evidence (Unity/Unreal/Godot/Flutter) is present but
+  the file holds no `.so`, the native libs live in a config split of
+  the same bundle. The same applies to any APK generated from a
+  bundle, engine or not: bundletool leaves a `stamp-cert-sha256`
+  file in every APK of the set and a splits manifest
+  (`res/xml/splits*.xml`) in the base. Triage reports the evidence
+  instead of printing the pure-DEX line; triage the splits before
+  concluding anything about native code.
+- **No META-INF signing files is normal for v2/v3-only APKs**: the
+  APK Signing Block carries the signature, so there are no `.RSA` /
+  `.SF` files to find. Triage's signing line says which case applies.
+
 ## Split APKs, APKS, and AAB
 
 Modern Play installs are often split: one base APK plus config splits

@@ -246,6 +246,24 @@ elif [ -x "$HOME/workspace/tools/hermes-dec/bin/hbc-file-parser" ]; then
 fi
 check "hermes-dec" "optional" "$HERMES_BIN" "$HERMES_DETAIL" "Optional (Hermes bytecode parse/disassemble/decompile): pip install hermes-dec (https://pypi.org/project/hermes-dec/)"
 
+# --- nar scripts (core: the skill's own helpers must at least compile) ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+NAR_SCRIPTS_OK=""
+NAR_SCRIPTS_DETAIL=""
+if [ -n "$PY_BIN" ]; then
+  NAR_SCRIPTS_OK="ok"
+  NAR_SCRIPTS_DETAIL="all bundled scripts compile"
+  for s in nar-triage.py nar-strings.py nar-perms.py nar-compare.py nar-pak.py; do
+    if [ ! -f "$SCRIPT_DIR/$s" ]; then
+      NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="missing scripts/$s"; break
+    fi
+    if ! "$PY_BIN" -m py_compile "$SCRIPT_DIR/$s" 2>/dev/null; then
+      NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="scripts/$s does not compile"; break
+    fi
+  done
+fi
+check "nar-scripts" "core" "$NAR_SCRIPTS_OK" "$NAR_SCRIPTS_DETAIL" "The scripts bundled with the skill are missing or broken; reinstall the skill"
+
 # --- verdict ---
 CORE_OK=1
 for i in "${!NAMES[@]}"; do

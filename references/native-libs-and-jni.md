@@ -106,9 +106,32 @@ Detect: `libUE4.so` (or `libUnreal.so`) plus `.pak` asset packs.
 Unreal game logic is C++ in the `.so`; there is no managed metadata
 to dump. Analysis is native decompilation (Ghidra/Kuna) guided by
 exported symbols when present, plus `.pak` inventory for content
-questions. Unreal `.pak` files are versioned containers; use a
-`.pak` reader for the matching engine version rather than guessing
-at bytes.
+questions.
+
+The engine version is not in any header. Triage extracts it from the
+build string embedded in the engine library
+(`++UE4+Release-4.16+Compile...` becomes `unreal_version: 4.16` in
+the triage report); believe that string over any store listing.
+
+Listing a `.pak`: extract the `.pak` from the APK or OBB, then use
+the bundled stdlib-only lister:
+
+```bash
+python3 scripts/nar-pak.py game.pak            # first 50 entries
+python3 scripts/nar-pak.py game.pak --limit 0  # all entries
+python3 scripts/nar-pak.py game.pak --json     # machine-readable
+```
+
+It parses the FPakInfo footer and the index for pak format versions
+1-7 and prints each entry with packed/unpacked sizes and its
+compression method (None/Zlib/Gzip/LZ4). A layout is only accepted
+when it consumes the index exactly, so a wrong guess never produces
+plausible-looking garbage. Versions 8+ use a different (FName-based,
+path-hash) index and are reported as unsupported, plainly. An
+encrypted index cannot be read without the key; the parse then fails
+plainly instead of inventing entries. Listing is inventory only:
+names and sizes answer content questions, and entries can be matched
+against the classes and assets the code references.
 
 ### Godot
 

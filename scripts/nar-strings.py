@@ -40,22 +40,32 @@ SO_RE = re.compile(r"^(base/)?lib/([^/]+)/(.+\.so)$")
 ARSC_RE = re.compile(r"^(base/)?resources\.arsc$")
 
 URL_RE = re.compile(r"https?://[^\s\"'<>]+")
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
-IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+# Domain must be real labels (no leading dot/hyphen) with a dot + TLD.
+EMAIL_RE = re.compile(
+    r"[A-Za-z0-9_%+\-][A-Za-z0-9._%+\-]*@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}")
+# An IP must not be part of a longer dotted-numeric sequence (versions
+# like 1.0.4.5.2); octet range is validated in classify().
+IP_RE = re.compile(r"(?<![0-9.])\d{1,3}(?:\.\d{1,3}){3}(?![0-9.])")
 API_RE = re.compile(r"/(?:api|v\d+|graphql|rest|oauth|auth)(?:/[\w\-./?=&%~]*)?")
 PACKAGE_RE = re.compile(r"\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){2,}\b")
 UNIX_PATH_RE = re.compile(r"/(?:[A-Za-z0-9_.\-]+/)+[A-Za-z0-9_.\-]*")
 WIN_PATH_RE = re.compile(r"[A-Za-z]:\\(?:[^\\\s]+\\)+[^\\\s]*")
 # Key-like PATTERNS (presence only -- never proof of a real secret):
+# The assigned value (group 2) must look like a value: it contains a
+# digit, or is at least 12 chars. Plain English after a colon ("invalid
+# token: skipping.") is a log sentence, not an assignment.
 KEY_ASSIGN_RE = re.compile(
     r"(?i)\b(api[_-]?key|apikey|secret|token|passwd|password|auth[_-]?key|"
-    r"access[_-]?key|private[_-]?key|client[_-]?secret)\b\s*[:=]\s*\S{6,}")
+    r"access[_-]?key|private[_-]?key|client[_-]?secret)\b\s*[:=]\s*(\S{6,})")
 KEY_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9_\-\.]{16,}")
 KEY_TOKEN_RE = re.compile(
-    r"(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z0-9_\-+=.]{32,}")
+    r"(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z0-9_\-+=.]{40,}")
 # Long hex runs are tokens or hashes: MD5 (32), SHA-1 (40), SHA-256 (64).
-# Lowercase-only hex is common for API keys and must not be missed.
-KEY_HEX_RE = re.compile(r"[0-9a-f]{32,}", re.IGNORECASE)
+# Lowercase-only hex is common for API keys and must not be missed. The
+# run is bounded to token sizes and must not be part of a longer hex run.
+KEY_HEX_RE = re.compile(r"(?<![0-9a-f])[0-9a-f]{32,64}(?![0-9a-f])",
+                        re.IGNORECASE)
 # Keyword-prefixed tokens: demo_token_<hex>, api_key_<...>, secret-<...>.
 KEY_PREFIXED_RE = re.compile(
     r"(?i)\b(api[_-]?key|apikey|secret|token|passwd|password|auth[_-]?key|"
@@ -107,20 +117,63 @@ def _is_file_path(path):
     return "." in parts[-1]
 
 
+def _token_candidate_ok(tok):
+    """Reject identifier-like floods from the mixed-token pattern.
+
+    Native symbol tables are full of 40+ char names that are code, not
+    tokens: C++ mangled names (`_ZN...`), snake/Camel identifiers
+    (`K2_GetTimer...`, `OnRep_...`). Real random tokens rarely carry
+    those shapes.
+    """
+    if tok.startswith("_Z"):
+        return False
+    if tok.count("_") >= 2:
+        return False
+    if re.search(r"_[A-Z]", tok):
+        return False
+    # Dotted identifiers (theme/style/class names such as
+    # Animation.Material3.SideSheetDialog.Left) are names, not tokens:
+    # 3+ short word-like segments give them away. A JWT's segments are
+    # long base64url runs, so this does not hide those.
+    segs = tok.split(".")
+    if len(segs) >= 3 and all(len(s) <= 30 for s in segs):
+        return False
+    return True
+
+
 def _looks_like_key(s):
     """Key-like PATTERN test (presence only -- never proof of a real secret)."""
-    if KEY_ASSIGN_RE.search(s) or KEY_BEARER_RE.search(s):
+    m = KEY_ASSIGN_RE.search(s)
+    if m:
+        value = m.group(2)
+        if any(c.isdigit() for c in value) or len(value) >= 12:
+            return True
+    if KEY_BEARER_RE.search(s):
         return True
     if PERCENT_TABLE_RE.search(s):
         return False
     m = KEY_PREFIXED_RE.search(s)
     if m and len(m.group(0)) <= MAX_TOKEN_LEN:
         return True
+    # A whitespace-led run of almost pure hex is a chunk of a constant
+    # table (crypto test vectors stored as text), not a discrete token.
+    stripped = s.strip()
+    is_hex_chunk = (s[:1].isspace() and len(stripped) >= 32
+                    and sum(1 for c in stripped
+                            if c in "0123456789abcdefABCDEF")
+                    >= 0.9 * len(stripped))
+    # A bare hex run only counts when it mixes digits and a-f letters.
+    # All-digit runs are decimal constants (or ASCII digits hex-encoded
+    # inside binary tables), and all-letter runs are table data; real
+    # hex-encoded tokens (MD5/SHA digests, API keys) mix both.
     m = KEY_HEX_RE.search(s)
-    if m and len(m.group(0)) <= MAX_TOKEN_LEN:
-        return True
+    if m and len(m.group(0)) <= MAX_TOKEN_LEN and not is_hex_chunk:
+        run = m.group(0)
+        if any(c.isdigit() for c in run) and any(c in "abcdefABCDEF" for c in run):
+            return True
     m = KEY_TOKEN_RE.search(s)
-    return bool(m) and len(m.group(0)) <= MAX_TOKEN_LEN
+    return bool(m) and len(m.group(0)) <= MAX_TOKEN_LEN \
+        and not is_hex_chunk and _token_candidate_ok(m.group(0))
 
 
 def classify(s):
@@ -148,9 +201,14 @@ def classify(s):
             return "ips", ip
     if _looks_like_key(s):
         return "key_patterns", s
-    m = API_RE.search(s)
-    if m:
-        return "api_endpoints", m.group(0)
+    # An API path only counts when it starts the string or follows a
+    # separator. Inside a longer path (`Lcom/google/api/Client;`, DEX
+    # class descriptors, slash-form class names) `/api/` is a package
+    # segment, not an endpoint -- those flooded this group before.
+    for m in API_RE.finditer(s):
+        prev = s[m.start() - 1] if m.start() else ""
+        if not prev or not (prev.isalnum() or prev in "_/$."):
+            return "api_endpoints", m.group(0)
     m = PACKAGE_RE.search(s)
     if m:
         return "package_names", m.group(0)
@@ -254,7 +312,10 @@ def human(report, limit):
         for hit in g["hits"][:limit]:
             src = hit["sources"][0]
             extra = f" (+{len(hit['sources']) - 1} more)" if len(hit["sources"]) > 1 else ""
-            lines.append(f"  - {hit['value']}  [{src}{extra}]")
+            value = hit["value"]
+            if len(value) > 300:  # one glued binary run must not flood the page
+                value = value[:300] + f"... [{len(hit['value'])} chars]"
+            lines.append(f"  - {value}  [{src}{extra}]")
         if len(g["hits"]) > limit:
             lines.append(f"  ... and {len(g['hits']) - limit:,} more (see --json)")
     return "\n".join(lines)

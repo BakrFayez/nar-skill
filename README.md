@@ -1,6 +1,6 @@
 # NAR Skill: Nirous Android Reversing
 
-Version 1.0.1
+Version 1.0.2
 
 Research by Bakr Fayez
 
@@ -38,7 +38,7 @@ bash scripts/nar-doctor.sh
 python3 scripts/nar-triage.py app.apk
 ```
 
-`nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits.
+`nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists Unreal `.pak` archives.
 
 Then open `SKILL.md` and follow the routing table for your question.
 
@@ -141,6 +141,12 @@ Audit permissions and components:
 python3 scripts/nar-perms.py app.apk
 ```
 
+List an Unreal `.pak` (extract it from the APK or OBB first):
+
+```bash
+python3 scripts/nar-pak.py game.pak
+```
+
 A full example session is in `examples/quick-triage.md`. A filled report is in `examples/sample-report.md`. A Unity IL2CPP session is in `examples/unity-il2cpp-triage.md`. A Godot session is in `examples/godot-triage.md`.
 
 ## Repo structure
@@ -178,6 +184,7 @@ nar-skill/
     nar-strings.py          Ranked string extraction (plain and --json)
     nar-compare.py          Two-version diff (plain and --json)
     nar-perms.py            Permission and component audit (plain and --json)
+    nar-pak.py              Unreal .pak lister, pak format v1-7 (plain and --json)
     frida/                  Frida observation scripts (Java, JNI, file, network)
   examples/
     sample-report.md        Filled report from a real triage run

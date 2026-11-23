@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.0.2 (2026-11-23)
+
+Fixes and one new tool, all found by running the skill end to end on
+real-world apps and games of every shape (native-heavy, legacy,
+split sets, containers, engine games, modern Compose apps).
+
+- `nar-triage.py`: Kotlin is now detected from DEX type evidence
+  (`Lkotlin/`, `kotlinx/coroutines`) instead of only the
+  `kotlin/Metadata` string, which R8 strips from release builds.
+  Framework markers for AndroidX (`androidx/`) and the legacy
+  support library (`android/support/`) added.
+- `nar-triage.py`: `.xapk` / `.apkm` containers are understood:
+  identity comes from the container `manifest.json`, contained APKs
+  and OBBs are listed, and the misleading "pure DEX app" line is
+  never printed for a container. The same line is also suppressed
+  for a split base whose native libs live in config splits, whether
+  the tell is engine evidence or bundle artifacts
+  (`stamp-cert-sha256`, `res/xml/splits*.xml`).
+- `nar-triage.py`: platform-implied permissions from badging are
+  labeled separately instead of being counted as declared.
+  Duplicate `<uses-sdk>` elements are detected (via xmltree) and
+  the first occurrence wins, in agreement with `nar-perms.py` and
+  `nar-compare.py`. apksigner warnings are no longer dropped, and
+  the source-stamp flag is shown in plain output. A v2/v3-only APK
+  now explains why it has no META-INF signing files.
+- `nar-triage.py`: library versions from `META-INF/*.version`
+  files are surfaced (`library_versions`), and the Unreal engine
+  version is extracted from the build string inside the engine
+  library (`++UE4+Release-X.Y`) into `engine_versions`.
+- `nar-strings.py`: the key-pattern matcher no longer floods on
+  binary-heavy apps. Hex runs are bounded and must mix digits with
+  a-f letters, assigned values must look like values, identifier
+  floods (mangled symbols, dotted theme/class names, hex constant
+  table chunks) are rejected, the email pattern requires a real
+  domain, and IP matches inside longer dotted-numeric sequences are
+  dropped. On the test corpus, key-pattern hits fell from 191,895
+  to 55 on an Unreal game and from 18,331 to 1,106 on a
+  native-heavy app, while planted test tokens are still caught.
+- `nar-perms.py`: duplicate `<uses-sdk>` handled first-wins with a
+  warning; split manifests are recognized (split name reported,
+  stub app-level flags suppressed, no raw `None` values printed).
+  Permission table extended: Play billing and license, ads ID and
+  ad-services permissions, push receive, foreground-service media
+  projection/health/file-management, screen capture/recording
+  detection, and Health Connect (`health.*`) permissions.
+- New: `nar-pak.py`, a stdlib-only Unreal `.pak` lister (pak
+  format versions 1-7). Parses the footer and index, lists entries
+  with sizes and compression, and accepts a layout only when it
+  consumes the index exactly. Versions 8+ and encrypted indexes are
+  reported as unsupported, plainly, never guessed.
+- `nar-doctor.sh`: also verifies the bundled NAR scripts exist and
+  compile.
+- Guides: the Unreal section of the native-libs guide documents
+  the `nar-pak.py` workflow and build-string version extraction;
+  the Unity IL2CPP guide notes that Il2CppDumper may ignore its
+  output-directory argument and write next to its own DLL; the
+  triage guide explains containers, implied permissions, duplicate
+  `<uses-sdk>`, library versions, and the split-base native note.
+
 ## 1.0.1 (2026-11-23)
 
 - `nar-strings.py`: the key-pattern matcher now catches lowercase hex
