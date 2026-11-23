@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.0.4 (2026-11-23)
+
+Protection-systems detection in triage, covering the full Android
+protection taxonomy. Detection and reporting only.
+
+- `nar-triage.py`: new "Protection systems" section (plain and
+  JSON), organized by category. Findings are attributed to a named
+  product only when a dedicated marker attributes them; anything
+  else is reported at category level or as unattributed.
+- Commercial packers / VM protectors, named: Pairip (Google),
+  Tencent Legu, Qihoo 360 Jiagu, Bangcle SecShell, Alibaba
+  SecurityGuard, Baidu Protect, NetEase YiDun, iJiami,
+  DexProtector, LIAPP, AppSealing — via dedicated runtime
+  libraries, stub application classes, wrapper packages, and
+  payload files. A StubApp-shaped class with no vendor marker is
+  reported as an unattributed packer stub, never guessed.
+- Obfuscation: DEX string-table statistics (share of class
+  descriptors with <= 2-char simple names) and R8 annotation
+  stripping residue (Kotlin referenced, `kotlin/Metadata` absent).
+- Anti-tamper / RASP: RootBeer, su / Magisk / Superuser markers,
+  emulator and debugger markers, Frida / Xposed / Substrate
+  markers, SafetyNet (legacy), and Play Integrity API — the last
+  two labeled client-side presence only, since their verdicts are
+  server-side.
+- Network protection: SSL pinning from compiled-in `sha256/...`
+  pin constants and from pin-sets in a network security config.
+  The OkHttp `CertificatePinner` class alone is not treated as
+  evidence: it ships with the library whether or not pins are
+  configured.
+- Licensing / DRM: Play License Verification classes, the
+  `CHECK_LICENSE` permission (folded into the LVL finding when
+  both are present), and Widevine via its MediaDrm scheme UUID.
+- Code / asset encryption: DEX entries without a valid header,
+  the shell / stub DEX shape (tiny DEX, bulk native or asset
+  payload), IL2CPP metadata with an unreadable header, the Godot
+  PCK encryption flag (now also surfaced in `engine_versions`),
+  and the Unreal pak index-encryption flag read from the footer.
+- Native hardening: per-library posture from ELF headers —
+  `ET_DYN`, `PT_GNU_RELRO`, `BIND_NOW`, and symbol-table absence
+  (stripped) — aggregated in the report, with per-library detail
+  in JSON.
+- Guides: the triage guide gains a Protection systems section
+  with the taxonomy, the attribution discipline, and the honest
+  list of protection kinds that have no reliable static marker
+  (DexGuard-style string encryption, in-code signature checks,
+  OLLVM-style native obfuscation, injected commercial RASP
+  runtimes, encrypted string pools). `SKILL.md` gains a routing
+  row for "Is this app protected? Which packer / protector?".
+
 ## 1.0.3 (2026-11-23)
 
 Small fixes from a real-use simulation pass.

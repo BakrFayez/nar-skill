@@ -1,6 +1,6 @@
 # NAR Skill: Nirous Android Reversing
 
-Version 1.0.3
+Version 1.0.4
 
 Research by Bakr Fayez
 
@@ -15,6 +15,7 @@ REA (reverse-engineer-anything) covers everything: native binaries, Electron app
 ## What it does
 
 - Triage any APK, AAB, split set, or OBB in under a minute: identity, hashes, DEX versions and method counts, native inventory, permissions, signature schemes, game-engine and framework detection (Unity, Unreal, Godot, Flutter, Cocos2d-x, libGDX, React Native, Compose, Rust).
+- Detect protection systems and report them by category: named commercial packers and VM protectors (Pairip, Tencent Legu, 360 Jiagu, Bangcle SecShell, Alibaba SecurityGuard, Baidu Protect, NetEase YiDun, iJiami, DexProtector, LIAPP, AppSealing), obfuscation evidence, anti-tamper / RASP markers, SSL pinning, licensing and DRM, code and asset encryption, and native hardening posture from ELF headers. Detection and reporting only.
 - Decode manifests and resources with apktool and aapt2, including `resources.arsc` structure and string pools.
 - Read DEX and smali, and decompile with jadx, including obfuscated builds.
 - Map native libraries and JNI bindings, static and dynamic.

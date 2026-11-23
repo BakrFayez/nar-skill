@@ -2,7 +2,7 @@
 name: nar
 description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15) analysis.
 metadata:
-  version: "1.0.3"
+  version: "1.0.4"
 ---
 
 # NAR: Nirous Android Reversing
@@ -71,6 +71,7 @@ investigation with triage unless the question already names a deeper target.
 |---|---|---|
 | What is this APK? Package, version, size, DEX/.so inventory | `python3 scripts/nar-triage.py app.apk` | [triage and inventory](references/triage-and-inventory.md) |
 | What engine is this game? Unity / Unreal / Godot? | Triage engine hints, then confirm markers | [triage](references/triage-and-inventory.md), [native libs and JNI](references/native-libs-and-jni.md) |
+| Is this app protected? Which packer / protector? | Triage Protection systems section (named packers, obfuscation, RASP, pinning, DRM, encryption, native hardening) | [triage and inventory](references/triage-and-inventory.md) |
 | Permissions, components, intent filters, SDK levels | `apktool d` or `aapt2 dump xmltree` | [manifest and resources](references/manifest-and-resources.md) |
 | Strings, layouts, drawables, asset bundles (.pak/.bundle/.obb) | `apktool d` + inventory | [manifest and resources](references/manifest-and-resources.md) |
 | Which classes/methods exist? Where is feature X? | Grep jadx output, then read one class | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |

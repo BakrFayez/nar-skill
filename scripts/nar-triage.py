@@ -26,7 +26,12 @@ inside the DEX files), library versions from META-INF/*.version files,
 Rust markers in native libs (Rust runtime strings inside .so files),
 baseline profiles, game asset-bundle inventory (.pak / .bundle /
 .unity3d / .obb / .pck), XAPK/APKM container handling (identity and
-splits from the container manifest.json), and split-APK detection.
+splits from the container manifest.json), split-APK detection, and
+protection systems (named commercial packers and VM protectors,
+obfuscation evidence, anti-tamper / RASP markers, SSL pinning, licensing
+and DRM, code and asset encryption, native hardening posture — from
+ZIP entry names, DEX bytes, and ELF headers only; detection and
+reporting, never bypass).
 When aapt2 is available, package name / version / SDK levels from
 `aapt2 dump badging` are included (first <uses-sdk> wins, duplicates
 and platform-implied permissions are reported, not hidden); otherwise
@@ -38,6 +43,7 @@ MIT License. See LICENSE in the repo root.
 import argparse
 import glob
 import hashlib
+import io
 import json
 import os
 import re
@@ -107,6 +113,189 @@ RUST_PATTERNS = [b"panicked at", b"rustc version", b"rust_begin_unwind", b".rust
 # Total .so bytes scanned for Rust markers before the scan stops. Triage
 # must stay fast on games with hundreds of MB of native code.
 RUST_SCAN_BUDGET_BYTES = 512 * 1024 * 1024
+
+# ---------------------------------------------------------------------
+# Protection systems. Detection and reporting ONLY: a hit means
+# protection artifacts or protection code ship inside the package. It
+# says nothing about whether a check passed at runtime, and NAR never
+# uses this to bypass anything (see the legitimate-use boundary in
+# SKILL.md).
+#
+# Output is organized by category. A finding is attributed to a named
+# product only when a marker is dedicated to that product: a protector
+# runtime library, its stub application class, or its SDK package.
+# Generic names that collide with ordinary libraries are never used as
+# markers (no bare "libshell.so", no bare "frida"). Where a protection
+# kind has no reliable static marker (DexGuard string encryption,
+# OLLVM control-flow flattening, in-code signature checks, injected
+# RASP runtimes that are renamed per build), triage stays silent and
+# the triage guide says so instead of the tool guessing.
+PROTECTION_CATEGORIES = [
+    ("commercial_packer", "Commercial packer / VM protector"),
+    ("obfuscation", "Obfuscation"),
+    ("anti_tamper_rasp", "Anti-tamper / RASP"),
+    ("network_protection", "Network protection"),
+    ("licensing_drm", "Licensing / DRM"),
+    ("code_asset_encryption", "Code / asset encryption"),
+    ("native_hardening", "Native hardening"),
+]
+PROTECTION_CATEGORY_LABELS = dict(PROTECTION_CATEGORIES)
+PROTECTION_CATEGORY_ORDER = {key: i for i, (key, _) in
+                             enumerate(PROTECTION_CATEGORIES)}
+
+# Named commercial packers / VM protectors. Each entry:
+# (product name, .so matchers, DEX byte patterns, other entry-name
+# substrings). A .so matcher is ("exact", name), ("prefix", p), or
+# ("contains", s), matched case-insensitively against the .so file's
+# base name. DEX patterns are class/package strings from the shipped
+# runtime: stub application classes and wrapper packages. Only markers
+# specific to the product are listed; crash reporters and analytics
+# SDKs from the same vendor are NOT packer evidence and are excluded.
+PACKER_MARKERS = [
+    # Pairip (Google): VM-based protection. The runtime library name
+    # is dedicated, and the runtime classes (application, license
+    # check) live under com/pairip/.
+    ("Pairip (Google)",
+     [("exact", "libpairipcore.so")],
+     [b"com/pairip/"],
+     []),
+    # Tencent Legu: shell libraries are versioned (libshella-2.x.so,
+    # libshellx-*.so); the stub application package is
+    # com.tencent.StubShell. com.tencent.bugly is a crash reporter,
+    # not Legu, and is deliberately absent.
+    ("Tencent Legu",
+     [("prefix", "libshella"), ("prefix", "libshellx")],
+     [b"com/tencent/StubShell"],
+     []),
+    # Qihoo 360 Jiagu: libjiagu*.so (libjiagu.so, libjiagu_art.so,
+    # libjiagu_x86.so); the stub application is com.stub.StubApp.
+    ("Qihoo 360 Jiagu",
+     [("prefix", "libjiagu")],
+     [b"com/stub/StubApp"],
+     []),
+    # Bangcle SecShell (also sold as SecNeo): libsecexe.so /
+    # libsecmain.so / libSecShell*.so; runtime classes under
+    # com/secshell/SecShell.
+    ("Bangcle SecShell",
+     [("exact", "libsecexe.so"), ("exact", "libsecmain.so"),
+      ("prefix", "libsecshell")],
+     [b"com/secshell/SecShell"],
+     []),
+    # Alibaba SecurityGuard / Mobisec: versioned
+    # libsgmainso-*.so (matcher prefix covers libsgmain.so too),
+    # libmobisec.so; the SecurityGuard SDK package is
+    # com/alibaba/wireless/security (the vendor's ordinary app
+    # packages are not markers).
+    ("Alibaba SecurityGuard",
+     [("prefix", "libsgmain"), ("exact", "libmobisec.so")],
+     [b"com/alibaba/wireless/security"],
+     []),
+    # Baidu Protect: libbaiduprotect*.so; wrapper package
+    # com/baidu/protect.
+    ("Baidu Protect",
+     [("prefix", "libbaiduprotect")],
+     [b"com/baidu/protect"],
+     []),
+    # NetEase YiDun: wrapper library libnesec.so; wrapper package
+    # com/netease/nis/wrapper.
+    ("NetEase YiDun",
+     [("exact", "libnesec.so")],
+     [b"com/netease/nis/wrapper"],
+     []),
+    # iJiami: libexec.so / libexecmain.so, an ijiami.dat payload in
+    # assets, and the shell application class (shipped under both the
+    # plain and the obfuscated s.h.e.l.l package).
+    ("iJiami",
+     [("exact", "libexec.so"), ("exact", "libexecmain.so")],
+     [b"com/shell/SuperApplication", b"s/h/e/l/l/SuperApplication"],
+     ["ijiami.dat"]),
+    # DexProtector (Licel): the runtime library carries the product
+    # name (libDexProtector.so, case varies by build).
+    ("DexProtector",
+     [("contains", "dexprotector")],
+     [],
+     []),
+    # LIAPP (Lockin Company): libLIAPP.so.
+    ("LIAPP",
+     [("exact", "libliapp.so")],
+     [],
+     []),
+    # AppSealing (INKA Entworks): libAppSealing.so.
+    ("AppSealing",
+     [("exact", "libappsealing.so")],
+     [],
+     []),
+]
+
+# Anti-tamper / RASP DEX markers: (finding name, byte patterns, note).
+# These are string fingerprints of protection CODE. Presence shows the
+# check ships in the app; it does not show the check firing, and the
+# same strings can appear in apps that use root features legitimately.
+RASP_DEX_MARKERS = [
+    ("Root detection (RootBeer library)",
+     [b"com/scottyab/rootbeer"],
+     None),
+    ("Root-related markers (su / Magisk / Superuser)",
+     [b"com/topjohnwu/magisk", b"eu/chainfire/supersu",
+      b"com/noshufou/android/su", b"com/koushikdutta/superuser",
+      b"/system/app/Superuser.apk", b"/system/xbin/su",
+      b"/system/bin/su"],
+     "Strings checked by root detectors; the same paths can also be "
+     "probed by apps that offer root features."),
+    ("Emulator detection markers",
+     [b"/dev/qemu_pipe", b"qemu_pipe", b"ranchu", b"qemu.hw.mainkeys"],
+     None),
+    ("Debugger detection markers",
+     [b"isDebuggerConnected", b"TracerPid"],
+     None),
+    ("Hook framework markers (Frida / Xposed / Substrate)",
+     [b"frida-server", b"frida-agent", b"gum-js-loop",
+      b"de/robv/android/xposed", b"com/saurik/substrate"],
+     None),
+    ("SafetyNet attestation (legacy)",
+     [b"com/google/android/gms/safetynet"],
+     "Client-side presence only: the attestation verdict is made by "
+     "Google's servers, never inside the APK."),
+]
+
+# Licensing / DRM DEX markers: (finding name, byte patterns, note).
+LICENSING_DEX_MARKERS = [
+    # Play License Verification Library: the com.android.vending.
+    # licensing package (LicenseChecker and friends). The separate
+    # CHECK_LICENSE permission is folded into this finding when the
+    # classes are present, and reported on its own when they are not.
+    ("Play License Verification (LVL)",
+     [b"com/android/vending/licensing"],
+     None),
+    # Widevine is identified by its MediaDrm scheme UUID, which DRM
+    # code carries as a string constant. A bare MediaDrm reference is
+    # generic Android API use and is not a marker.
+    ("Widevine DRM",
+     [b"edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"],
+     None),
+]
+
+# OkHttp pin constants and network-security-config pins share the
+# "sha256/<base64>" shape (43-44 base64 chars for a 32-byte digest).
+PIN_CONSTANT_RE = re.compile(rb"sha256/[A-Za-z0-9+/]{40,}={0,2}")
+# Class descriptors ending in StubApp: the classic packer stub shape.
+# Attributed stubs are claimed by PACKER_MARKERS first; whatever is
+# left over is reported unattributed rather than guessed.
+STUB_DESCRIPTOR_RE = re.compile(rb"^L[A-Za-z0-9/$]*StubApp;$")
+# A primary DEX below this size, inside an app whose bulk is native or
+# asset payload, is the shell pattern: the visible DEX is a loader and
+# the real code arrives at runtime.
+STUB_DEX_MAX_BYTES = 100_000
+STUB_APP_MIN_BYTES = 2_000_000
+STUB_PAYLOAD_MIN_BYTES = 1_000_000
+# DEX files larger than this are byte-scanned as streams (as before)
+# but not held in memory for the string-table parse.
+DEX_STRING_PARSE_MAX_BYTES = 96 * 1024 * 1024
+# Symbol-table reads for the stripped check are skipped on very large
+# libraries (their section headers sit at the end of a long deflate
+# stream); the posture then reports stripped as unknown for them.
+ELF_SYMTAB_MAX_BYTES = 32 * 1024 * 1024
+PAK_MAGIC_BYTES = struct.pack("<I", 0x5A6F12E1)
 # Unity IL2CPP metadata format version -> engine era. From builds checked
 # in REA's il2cpp-metadata docs (2019.4.41f1 -> 24, 2020.3.49f1 -> 27,
 # 2022.3.30f1 -> 29, 2022.3.62f3 -> 31, 6000.4.2f1 -> 39). The mapping is
@@ -256,20 +445,25 @@ def godot_pck_info_of(zf, name):
     """Godot PCK pack format version and engine version from the header.
 
     Header is magic "GDPC", then uint32 pack format version, then uint32
-    engine major/minor/patch. Returns None when the entry is missing,
-    short, or has no GDPC magic.
+    engine major/minor/patch. Pack format 2+ (Godot 4) adds a uint32
+    pack_flags field whose bit 0 marks an encrypted pack. Returns None
+    when the entry is missing, short, or has no GDPC magic.
     """
     try:
         with zf.open(name) as f:
-            head = f.read(20)
+            head = f.read(24)
     except (KeyError, OSError, zipfile.BadZipFile):
         return None
     if len(head) < 20 or head[:4] != b"GDPC":
         return None
     pack_version, major, minor, patch = struct.unpack("<IIII", head[4:20])
-    return {"pack_format_version": pack_version,
+    info = {"pack_format_version": pack_version,
             "pack_format_era": GODOT_PCK_ERAS.get(pack_version),
             "engine_version": f"{major}.{minor}.{patch}"}
+    if pack_version >= 2 and len(head) >= 24:
+        (flags,) = struct.unpack("<I", head[20:24])
+        info["encrypted"] = bool(flags & 1)
+    return info
 
 
 def unreal_version_of(zf, name):
@@ -294,6 +488,190 @@ def unreal_version_of(zf, name):
                             "version": m.group(2).decode("ascii")}
                 tail = data[-64:]
     except (KeyError, OSError, zipfile.BadZipFile):
+        return None
+
+
+def dex_string_stats(data):
+    """Parse a DEX string table for protection evidence.
+
+    Returns a dict with class-descriptor statistics (total count,
+    count whose simple name is <= 2 chars, up to 3 examples of the
+    short ones), SSL pin constants (strings of the form
+    "sha256/<base64>"), and StubApp class descriptors — or None when
+    the header is not a parseable DEX or any offset is inconsistent.
+    Only cheap byte checks run per string; nothing is decoded unless
+    it is a candidate.
+    """
+    if len(data) < 0x70 or not data.startswith(b"dex\n"):
+        return None
+    try:
+        string_ids_size, string_ids_off = struct.unpack_from("<II", data, 0x38)
+        if string_ids_size > 2_000_000:
+            return None
+        if string_ids_off + 4 * string_ids_size > len(data):
+            return None
+        total = 0
+        short = 0
+        examples = []
+        pins = set()
+        stubs = set()
+        for i in range(string_ids_size):
+            (off,) = struct.unpack_from("<I", data, string_ids_off + 4 * i)
+            if off <= 0 or off >= len(data):
+                return None
+            # Skip the ULEB128 UTF-16 length prefix (1-5 bytes).
+            pos = off
+            steps = 0
+            while pos < len(data) and steps < 5:
+                b = data[pos]
+                pos += 1
+                steps += 1
+                if not (b & 0x80):
+                    break
+            end = data.find(b"\x00", pos)
+            if end < 0:
+                return None
+            raw = data[pos:end]
+            if (len(raw) >= 3 and raw[:1] == b"L" and raw[-1:] == b";"
+                    and b" " not in raw):
+                total += 1
+                simple = raw[1:-1].rsplit(b"/", 1)[-1]
+                if len(simple) <= 2:
+                    short += 1
+                    if len(examples) < 3:
+                        examples.append(raw.decode("ascii", "replace"))
+                if STUB_DESCRIPTOR_RE.match(raw):
+                    stubs.add(raw.decode("ascii", "replace"))
+            elif b"sha256/" in raw:
+                m = PIN_CONSTANT_RE.search(raw)
+                if m:
+                    pins.add(m.group(0).decode("ascii", "replace"))
+        return {"class_descriptors": total,
+                "short_class_names": short,
+                "short_examples": examples,
+                "pin_constants": sorted(pins),
+                "stub_descriptors": sorted(stubs)}
+    except (struct.error, IndexError, ValueError):
+        return None
+
+
+def pak_index_encrypted_flag(zf, name):
+    """Unreal .pak index-encryption flag from the FPakInfo footer.
+
+    The footer layout ends with the 16-byte encryption key GUID, a
+    1-byte bEncryptedIndex flag, then the 4-byte magic — so the flag
+    is the byte immediately before the magic. Returns True/False, or
+    None when no footer magic is found in the file tail (not a pak,
+    or a layout this cheap check cannot read; nar-pak.py does the
+    full parse).
+    """
+    try:
+        size = zf.getinfo(name).file_size
+        if size < 64:
+            return None
+        with zf.open(name) as f:
+            f.seek(max(0, size - 512))
+            tail = f.read()
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return None
+    idx = tail.rfind(PAK_MAGIC_BYTES)
+    if idx < 1:
+        return None
+    return tail[idx - 1] != 0
+
+
+def elf_hardening_of(zf, name, size_bytes):
+    """Native hardening facts for one .so, from its ELF headers.
+
+    Stdlib-only header parse: ELF class, e_type (ET_DYN = PIE-style
+    position-independent library), PT_GNU_RELRO presence, BIND_NOW
+    (via DT_BIND_NOW, DT_FLAGS, or DT_FLAGS_1 in the dynamic segment),
+    and SHT_SYMTAB presence (its absence means the library is
+    stripped). Returns None when the entry is not a readable ELF;
+    individual facts are None when that part of the header could not
+    be read.
+    """
+    try:
+        with zf.open(name) as f:
+            head = f.read(64)
+            if len(head) < 52 or head[:4] != b"\x7fELF":
+                return None
+            is64 = head[4] == 2
+            e_type = struct.unpack_from("<H", head, 16)[0]
+            if is64:
+                e_phoff = struct.unpack_from("<Q", head, 32)[0]
+                e_shoff = struct.unpack_from("<Q", head, 40)[0]
+                e_phentsize, e_phnum = struct.unpack_from("<HH", head, 54)
+                e_shentsize, e_shnum = struct.unpack_from("<HH", head, 58)
+            else:
+                e_phoff = struct.unpack_from("<I", head, 28)[0]
+                e_shoff = struct.unpack_from("<I", head, 32)[0]
+                e_phentsize, e_phnum = struct.unpack_from("<HH", head, 42)
+                e_shentsize, e_shnum = struct.unpack_from("<HH", head, 46)
+            info = {"elf_class": 64 if is64 else 32,
+                    "elf_type": {2: "ET_EXEC", 3: "ET_DYN"}.get(
+                        e_type, f"ET_{e_type}"),
+                    "pie": e_type == 3,
+                    "relro": None,
+                    "bind_now": None,
+                    "stripped": None}
+            relro = None
+            dynamic = None  # (offset, filesz)
+            if e_phoff and 0 < e_phnum <= 128 and e_phentsize >= 32:
+                relro = False
+                f.seek(e_phoff)
+                ph = f.read(e_phentsize * e_phnum)
+                for i in range(e_phnum):
+                    off = i * e_phentsize
+                    if off + 32 > len(ph):
+                        break
+                    p_type = struct.unpack_from("<I", ph, off)[0]
+                    if is64:
+                        p_offset = struct.unpack_from("<Q", ph, off + 8)[0]
+                        p_filesz = struct.unpack_from("<Q", ph, off + 32)[0]
+                    else:
+                        p_offset = struct.unpack_from("<I", ph, off + 4)[0]
+                        p_filesz = struct.unpack_from("<I", ph, off + 16)[0]
+                    if p_type == 0x6474E552:  # PT_GNU_RELRO
+                        relro = True
+                    elif p_type == 2:  # PT_DYNAMIC
+                        dynamic = (p_offset, p_filesz)
+            info["relro"] = relro
+            if dynamic is not None:
+                bind_now = False
+                d_off, d_filesz = dynamic
+                entsize = 16 if is64 else 8
+                fmt = "<qQ" if is64 else "<iI"
+                if 0 < d_filesz <= 65536:
+                    f.seek(d_off)
+                    dyn = f.read(d_filesz)
+                    for off in range(0, len(dyn) - entsize + 1, entsize):
+                        tag, val = struct.unpack_from(fmt, dyn, off)
+                        if tag == 0:  # DT_NULL
+                            break
+                        if tag == 24:  # DT_BIND_NOW
+                            bind_now = True
+                        elif tag == 30 and (val & 0x8):  # DT_FLAGS BIND_NOW
+                            bind_now = True
+                        elif tag == 0x6FFFFFFB and (val & 0x1):  # FLAGS_1 NOW
+                            bind_now = True
+                info["bind_now"] = bind_now
+            if (e_shoff and 0 < e_shnum <= 1024 and e_shentsize >= 40
+                    and size_bytes <= ELF_SYMTAB_MAX_BYTES):
+                f.seek(e_shoff)
+                sh = f.read(e_shentsize * e_shnum)
+                has_symtab = False
+                for i in range(e_shnum):
+                    off = i * e_shentsize
+                    if off + 8 > len(sh):
+                        break
+                    # sh_type sits at offset 4 in both ELF classes.
+                    if struct.unpack_from("<I", sh, off + 4)[0] == 2:
+                        has_symtab = True  # SHT_SYMTAB
+                        break
+                info["stripped"] = not has_symtab
+            return info
+    except (KeyError, OSError, zipfile.BadZipFile, struct.error):
         return None
 
 
@@ -718,22 +1096,60 @@ def triage(apk_path):
         for d in dex:
             d["dex_version"] = dex_version_of(zf, d["name"])
 
-        # DEX content markers: stream each DEX file once and count
+        # DEX content markers: read each DEX file once and count
         # framework fingerprints (Compose, Play Integrity, legacy
-        # HttpClient, ...). One pass per DEX, all patterns together.
-        all_dex_patterns = [p for _, pats in DEX_MARKERS for p in pats]
+        # HttpClient, ...) plus protection-system fingerprints
+        # (packer runtimes, RASP code, licensing). One pass per DEX,
+        # all patterns together. Files up to the parse cap are held
+        # in memory so the same bytes feed the string-table parse
+        # (obfuscation statistics, pin constants, stub descriptors);
+        # larger files stream exactly as before.
+        packer_dex_patterns = [p for _, _, pats, _ in PACKER_MARKERS
+                               for p in pats]
+        rasp_dex_patterns = [p for _, pats, _ in RASP_DEX_MARKERS
+                             for p in pats]
+        licensing_dex_patterns = [p for _, pats, _ in LICENSING_DEX_MARKERS
+                                  for p in pats]
+        prot_dex_patterns = (packer_dex_patterns + rasp_dex_patterns
+                             + licensing_dex_patterns)
+        all_dex_patterns = list(dict.fromkeys(
+            [p for _, pats in DEX_MARKERS for p in pats] + prot_dex_patterns))
         marker_totals = {}
+        prot_hits = {}          # protection pattern -> {dex name: hits}
+        all_pattern_totals = {}  # any pattern -> hits across all DEX
+        string_stats = []        # (dex name, dex_string_stats dict)
         for d in dex:
+            data = None
+            if d["size_bytes"] <= DEX_STRING_PARSE_MAX_BYTES:
+                try:
+                    data = zf.read(d["name"])
+                except (KeyError, OSError, RuntimeError, zipfile.BadZipFile):
+                    data = None
             try:
-                with zf.open(d["name"]) as f:
-                    counts, _, _ = count_patterns_in_stream(f, all_dex_patterns)
+                if data is not None:
+                    counts, _, _ = count_patterns_in_stream(
+                        io.BytesIO(data), all_dex_patterns)
+                else:
+                    with zf.open(d["name"]) as f:
+                        counts, _, _ = count_patterns_in_stream(
+                            f, all_dex_patterns)
             except (KeyError, OSError, zipfile.BadZipFile):
                 continue
+            for p, c in counts.items():
+                if c:
+                    all_pattern_totals[p] = all_pattern_totals.get(p, 0) + c
             for label, pats in DEX_MARKERS:
                 hits = sum(counts[p] for p in pats)
                 if hits:
                     marker_totals.setdefault(label, []).append(
                         {"name": d["name"], "hits": hits})
+            for p in prot_dex_patterns:
+                if counts.get(p):
+                    prot_hits.setdefault(p, {})[d["name"]] = counts[p]
+            if data is not None:
+                stats = dex_string_stats(data)
+                if stats is not None:
+                    string_stats.append((d["name"], stats))
         dex_markers = [{"marker": label,
                         "total_hits": sum(f["hits"] for f in files),
                         "dex_files": sorted(files, key=lambda f: f["name"])}
@@ -906,6 +1322,296 @@ def triage(apk_path):
             and (any(h["engine"] in native_engines for h in engine_hints)
                  or bundle_split_evidence))
 
+        # ---------------------------------------------------------
+        # Protection systems. Static markers only: a finding means
+        # protection artifacts or protection code ship in the
+        # package, never that a runtime check passed. Organized by
+        # category; named products only where a dedicated marker
+        # attributes them.
+        protections = []
+
+        def add_protection(category, name, attributed, evidence,
+                           note=None, details=None):
+            finding = {"category": category,
+                       "category_label":
+                           PROTECTION_CATEGORY_LABELS[category],
+                       "name": name,
+                       "attributed": attributed,
+                       "evidence": evidence}
+            if note:
+                finding["note"] = note
+            if details:
+                finding["details"] = details
+            protections.append(finding)
+
+        def dex_evidence(patterns):
+            ev = []
+            for p in patterns:
+                per_dex = prot_hits.get(p)
+                if per_dex:
+                    where = ", ".join(f"{dn} x{h}"
+                                      for dn, h in sorted(per_dex.items()))
+                    ev.append(f"DEX string "
+                              f"{p.decode('ascii', 'replace')} in {where}")
+            return ev
+
+        # 1. Commercial packers / VM protectors: dedicated runtime
+        # libraries, stub classes, wrapper packages, payload files.
+        for product, so_matchers, dex_pats, entry_subs in PACKER_MARKERS:
+            ev = []
+            for n in names:
+                base = n.rsplit("/", 1)[-1].lower()
+                if not base.endswith(".so"):
+                    continue
+                for kind, pat in so_matchers:
+                    if ((kind == "exact" and base == pat)
+                            or (kind == "prefix" and base.startswith(pat))
+                            or (kind == "contains" and pat in base)):
+                        ev.append(n)
+                        break
+            ev.extend(dex_evidence(dex_pats))
+            for sub in entry_subs:
+                ev.extend(n for n in names if sub in n)
+            if ev:
+                add_protection("commercial_packer", product, True,
+                               sorted(set(ev)))
+
+        # A StubApp-shaped application class that no named packer
+        # claimed: report the shape, never a guessed vendor.
+        claimed_strings = set()
+        for _, _, pats, _ in PACKER_MARKERS:
+            claimed_strings.update(p.decode("ascii", "replace")
+                                   for p in pats)
+        unattributed_stubs = sorted({
+            desc for _, st in string_stats
+            for desc in st["stub_descriptors"]
+            if not any(cs in desc for cs in claimed_strings)})
+        if unattributed_stubs:
+            add_protection(
+                "commercial_packer", "Unattributed packer stub", False,
+                [f"DEX class {d}" for d in unattributed_stubs[:5]],
+                note="A StubApp-shaped application class is the classic "
+                     "packer shell shape, but no vendor marker attributes "
+                     "it; reported unattributed rather than guessed.")
+
+        # 2. Obfuscation: name-shortening statistics from the DEX
+        # string tables, plus R8 annotation-stripping residue.
+        total_desc = sum(st["class_descriptors"] for _, st in string_stats)
+        short_desc = sum(st["short_class_names"] for _, st in string_stats)
+        if total_desc >= 200 and short_desc * 100 >= 30 * total_desc:
+            examples = []
+            for _, st in string_stats:
+                examples.extend(st["short_examples"])
+                if len(examples) >= 3:
+                    break
+            add_protection(
+                "obfuscation", "Name obfuscation (R8 / ProGuard style)",
+                False,
+                [f"{short_desc:,} of {total_desc:,} class descriptors "
+                 f"({100.0 * short_desc / total_desc:.0f}%) have simple "
+                 f"names of <= 2 chars, e.g. {', '.join(examples[:3])}"],
+                note="Shortened names are the visible residue of "
+                     "R8/ProGuard/DexGuard-class obfuscation; which tool "
+                     "ran cannot be told from names alone.")
+        if ("Kotlin" in marker_totals
+                and not all_pattern_totals.get(b"kotlin/Metadata")):
+            add_protection(
+                "obfuscation", "Annotation stripping (R8 residue)", False,
+                ["Kotlin classes are referenced (Lkotlin/) but the "
+                 "kotlin/Metadata annotation string is absent"],
+                note="R8 strips kotlin.Metadata from release builds; "
+                     "absence beside live Kotlin references is shrinking "
+                     "residue, not a separate protection product.")
+
+        # 3. Anti-tamper / RASP markers in DEX.
+        for finding_name, pats, note in RASP_DEX_MARKERS:
+            ev = dex_evidence(pats)
+            if ev:
+                add_protection("anti_tamper_rasp", finding_name, False,
+                               ev, note)
+        if "Play Integrity API" in marker_totals:
+            files = ", ".join(
+                f"{f['name']} x{f['hits']}"
+                for f in marker_totals["Play Integrity API"])
+            add_protection(
+                "anti_tamper_rasp", "Play Integrity API", False,
+                [f"DEX marker com/google/android/play/core/integrity "
+                 f"in {files}"],
+                note="Client-side presence only: the integrity verdict "
+                     "is made by Google's servers, never inside the APK.")
+
+        # 4. Network protection: pin constants compiled into code,
+        # and pin-sets in a network security config.
+        pins = sorted({pin for _, st in string_stats
+                       for pin in st["pin_constants"]})
+        if pins:
+            add_protection(
+                "network_protection",
+                "SSL pinning (pin constants in code)", False,
+                [f"DEX pin constant {p}" for p in pins[:5]],
+                note="Pins in the sha256/<base64 digest> form used by "
+                     "OkHttp CertificatePinner, compiled into code.")
+        nsc_entries = []
+        for n in names:
+            if (re.match(r"^(base/)?res/xml/[^/]+\.xml$", n)
+                    and infos[n].file_size <= 512 * 1024):
+                try:
+                    raw = zf.read(n)
+                except (KeyError, OSError, RuntimeError, zipfile.BadZipFile):
+                    continue
+                has_digest = (b"sha256/" in raw
+                              or "sha256/".encode("utf-16-le") in raw)
+                has_pinset = ((b"SHA-256" in raw
+                               or "SHA-256".encode("utf-16-le") in raw)
+                              and (b"pin-set" in raw
+                                   or "pin-set".encode("utf-16-le") in raw))
+                if has_digest or has_pinset:
+                    nsc_entries.append(n)
+        if nsc_entries:
+            add_protection(
+                "network_protection",
+                "SSL pinning (network security config pin-set)", False,
+                sorted(nsc_entries),
+                note="A res/xml config carries a certificate pin-set; "
+                     "the manifest's networkSecurityConfig attribute "
+                     "points at the file that enforces it.")
+
+        # 5. Licensing / DRM. The CHECK_LICENSE permission is folded
+        # in after badging (see apply_check_license below).
+        for finding_name, pats, note in LICENSING_DEX_MARKERS:
+            ev = dex_evidence(pats)
+            if ev:
+                add_protection("licensing_drm", finding_name, False,
+                               ev, note)
+
+        # 6. Code / asset encryption.
+        bad_dex = [d["name"] for d in dex if d["dex_version"] is None]
+        if bad_dex:
+            add_protection(
+                "code_asset_encryption",
+                "DEX without a valid DEX header", False, bad_dex,
+                note="A classes*.dex entry whose header magic is missing "
+                     "is packed, encrypted, or corrupt; packers replace "
+                     "the real DEX (or its header) and restore it at "
+                     "runtime.")
+        native_bytes = sum(lib["size_bytes"] for libs in native.values()
+                           for lib in libs)
+        if (dex and result["dex_total_bytes"] < STUB_DEX_MAX_BYTES
+                and size >= STUB_APP_MIN_BYTES
+                and (native_bytes >= STUB_PAYLOAD_MIN_BYTES
+                     or result["asset_bundle_bytes"] >= STUB_PAYLOAD_MIN_BYTES)
+                and not any(f["category"] == "commercial_packer"
+                            and f["attributed"] for f in protections)):
+            add_protection(
+                "code_asset_encryption", "Shell / stub DEX pattern", False,
+                [f"DEX total {result['dex_total_bytes']:,} bytes against "
+                 f"{native_bytes:,} bytes of native libs and "
+                 f"{result['asset_bundle_bytes']:,} bytes of asset "
+                 f"bundles in a {size:,}-byte package"],
+                note="The visible DEX is a loader; the real code is "
+                     "delivered or decrypted at runtime (packer shell "
+                     "or dynamic code delivery). Static DEX analysis "
+                     "sees only the stub.")
+        for n in names:
+            if n.lower().endswith("global-metadata.dat"):
+                if "unity_metadata_version" not in engine_versions:
+                    add_protection(
+                        "code_asset_encryption",
+                        "IL2CPP metadata without a readable header", False,
+                        [n],
+                        note="global-metadata.dat is present but its "
+                             "IL2CPP magic and version could not be read; "
+                             "encrypted or obfuscated metadata is a "
+                             "standard IL2CPP protection.")
+                break
+        for p in pck_infos:
+            if p.get("encrypted"):
+                add_protection(
+                    "code_asset_encryption", "Encrypted Godot pack", False,
+                    [f"{p['name']} (pack format "
+                     f"{p['pack_format_version']}, engine "
+                     f"{p['engine_version']})"],
+                    note="The PCK header's encryption flag is set; the "
+                         "pack contents need the pack key.")
+        for bnd in bundles:
+            if bnd["name"].lower().endswith(".pak"):
+                if pak_index_encrypted_flag(zf, bnd["name"]):
+                    add_protection(
+                        "code_asset_encryption",
+                        "Encrypted Unreal pak index", False, [bnd["name"]],
+                        note="The pak footer's index-encryption flag is "
+                             "set; nar-pak.py cannot list an encrypted "
+                             "index without the key.")
+
+        # 7. Native hardening posture from ELF headers.
+        if native:
+            libs_detail = []
+            for abi in sorted(native):
+                for lib in sorted(native[abi], key=lambda l: l["name"]):
+                    eh = elf_hardening_of(zf, lib["path"],
+                                          lib["size_bytes"])
+                    if eh:
+                        libs_detail.append({"path": lib["path"], **eh})
+            if libs_detail:
+                n_libs = len(libs_detail)
+                pie = sum(1 for l in libs_detail if l["pie"])
+                full = sum(1 for l in libs_detail
+                           if l["relro"] and l["bind_now"])
+                partial = sum(1 for l in libs_detail
+                              if l["relro"] and not l["bind_now"])
+                no_relro = sum(1 for l in libs_detail
+                               if l["relro"] is False)
+                known_stripped = [l for l in libs_detail
+                                  if l["stripped"] is not None]
+                stripped = sum(1 for l in known_stripped if l["stripped"])
+                add_protection(
+                    "native_hardening",
+                    "Native hardening posture (ELF headers)", False,
+                    [f"{pie} of {n_libs} native libs are ET_DYN "
+                     f"(position-independent)",
+                     f"RELRO: {full} full (GNU_RELRO + BIND_NOW), "
+                     f"{partial} partial (GNU_RELRO only), {no_relro} "
+                     f"without GNU_RELRO",
+                     f"symbol tables: {stripped} of "
+                     f"{len(known_stripped)} libs stripped "
+                     f"(no SHT_SYMTAB)"],
+                    note="Read from ELF program, dynamic, and section "
+                         "headers. Posture only: it describes build "
+                         "flags, not exploit resistance.",
+                    details={"libs": libs_detail})
+
+        protections.sort(key=lambda f: (
+            PROTECTION_CATEGORY_ORDER[f["category"]], f["name"]))
+        result["protections"] = protections
+
+    def apply_check_license(permissions):
+        """Fold the CHECK_LICENSE permission into the licensing
+        findings: it is extra evidence when the LVL classes are
+        present, and a finding on its own when they are not (the
+        permission alone declares a license check)."""
+        if not permissions:
+            return
+        if "com.android.vending.CHECK_LICENSE" not in permissions:
+            return
+        prots = result.setdefault("protections", [])
+        for f in prots:
+            if f["name"] == "Play License Verification (LVL)":
+                f["evidence"].append(
+                    "permission com.android.vending.CHECK_LICENSE")
+                return
+        prots.append({
+            "category": "licensing_drm",
+            "category_label": PROTECTION_CATEGORY_LABELS["licensing_drm"],
+            "name": "Play license check (CHECK_LICENSE permission)",
+            "attributed": False,
+            "evidence": ["permission com.android.vending.CHECK_LICENSE"],
+            "note": "The permission declares a Play license check; no "
+                    "LVL classes were found in the DEX, so the check "
+                    "itself may live in native code or a split.",
+        })
+        prots.sort(key=lambda f: (
+            PROTECTION_CATEGORY_ORDER[f["category"]], f["name"]))
+
     if result.get("is_container"):
         # Identity for a container comes from its manifest.json, not
         # from aapt2 (which cannot read a container at all).
@@ -926,11 +1632,13 @@ def triage(apk_path):
         result["badging_status"] = "ok" if badging else "unreadable"
         result["signature_schemes"] = {}
         result["signature_status"] = "not-applicable"
+        apply_check_license(badging.get("permissions"))
         return result
 
     badging, badging_status = aapt2_badging(apk_path)
     result["badging"] = badging
     result["badging_status"] = badging_status
+    apply_check_license(badging.get("permissions"))
     result["uses_sdk_count"] = (None if result["is_aab"]
                                 else uses_sdk_count_of(apk_path))
     sig_info, sig_status = apksigner_verify(apk_path)
@@ -1122,6 +1830,23 @@ def human(report):
         lines.append("  (Rust scan stopped at the 512 MB budget; later .so files unscanned)")
     if report.get("baseline_profiles"):
         lines.append(f"Baseline profiles: {', '.join(report['baseline_profiles'])}")
+    prots = report.get("protections") or []
+    if prots:
+        lines.append("Protection systems (static markers only; a hit means"
+                     " protection artifacts or protection code ship in the"
+                     " package, not that a runtime check passed):")
+        current = None
+        for f in prots:
+            if f["category"] != current:
+                current = f["category"]
+                lines.append(f"  [{f['category_label']}]")
+            lines.append(f"  - {f['name']}: {'; '.join(f['evidence'])}")
+            if f.get("note"):
+                lines.append(f"    note: {f['note']}")
+    else:
+        lines.append("Protection systems: none detected by static markers"
+                     " (absence proves nothing: several protection kinds"
+                     " leave no static trace; see the triage guide)")
     return "\n".join(lines)
 
 

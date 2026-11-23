@@ -19,7 +19,8 @@ python3 scripts/nar-triage.py main.123.com.game.obb
 Output: SHA-256, size, package / version / SDK levels (via `aapt2 dump
 badging` when available), ZIP entry count, DEX files with sizes, native
 libraries per ABI, `META-INF` and signing files, assets / `res/` counts,
-game-engine hints, and asset-bundle inventory.
+game-engine hints, asset-bundle inventory, and a protection-systems
+section (next section).
 
 When `aapt2` cannot read badging (missing binary), the
 package fields report why instead of inventing values. For `.aab` files
@@ -147,6 +148,82 @@ Details that are easy to misread:
 - **No META-INF signing files is normal for v2/v3-only APKs**: the
   APK Signing Block carries the signature, so there are no `.RSA` /
   `.SF` files to find. Triage's signing line says which case applies.
+
+## Protection systems
+
+Triage ends with a protection-systems section, organized by category.
+It answers "is this app protected, and how?" from static markers only:
+ZIP entry names, DEX bytes and string tables, and ELF headers. A hit
+means protection artifacts or protection code ship inside the package.
+It never means a check passed at runtime, and several protection kinds
+leave no static trace at all (below). Detection and reporting only:
+NAR does not bypass protections.
+
+| Category | What triage detects | How |
+|---|---|---|
+| Commercial packer / VM protector | Named products: Pairip (Google), Tencent Legu, Qihoo 360 Jiagu, Bangcle SecShell, Alibaba SecurityGuard, Baidu Protect, NetEase YiDun, iJiami, DexProtector, LIAPP, AppSealing | Dedicated runtime libraries (`libpairipcore.so`, `libshella*.so` / `libshellx*.so`, `libjiagu*.so`, `libsecexe.so` / `libsecmain.so` / `libSecShell*.so`, `libsgmain*.so`, `libmobisec.so`, `libbaiduprotect*.so`, `libnesec.so`, `libexec.so` / `libexecmain.so`, `libDexProtector*.so`, `libLIAPP.so`, `libAppSealing.so`), stub application classes (`com/stub/StubApp`, `com/tencent/StubShell`, ...), wrapper packages, payload files |
+| Obfuscation | Name obfuscation (R8 / ProGuard style); annotation stripping | DEX string-table statistics: the share of class descriptors with <= 2-char simple names (reported at >= 30% of >= 200 classes); Kotlin referenced while `kotlin/Metadata` is stripped |
+| Anti-tamper / RASP | RootBeer library, su / Magisk / Superuser markers, emulator markers, debugger markers, Frida / Xposed / Substrate markers, SafetyNet (legacy), Play Integrity API | DEX string fingerprints of the check code |
+| Network protection | SSL pinning | `sha256/<base64>` pin constants in code (the OkHttp CertificatePinner form); pin-sets in a `res/xml` network security config |
+| Licensing / DRM | Play License Verification (LVL), Play license check, Widevine DRM | LVL classes (`com/android/vending/licensing`), the `CHECK_LICENSE` permission, the Widevine MediaDrm scheme UUID string |
+| Code / asset encryption | DEX without a valid header, shell / stub DEX pattern, unreadable IL2CPP metadata, encrypted Godot pack, encrypted Unreal pak index | DEX header magic, DEX-vs-payload size shape, `global-metadata.dat` magic, the PCK header encryption flag, the pak footer index-encryption flag |
+| Native hardening | Hardening posture per library | ELF headers: `ET_DYN` (position-independent), `PT_GNU_RELRO`, `BIND_NOW`, `SHT_SYMTAB` absence (stripped) |
+
+Reading the section:
+
+- **Attribution discipline.** A product is named only when a marker is
+  dedicated to it: its runtime library, its stub class, its SDK
+  package. Generic names that collide with ordinary libraries are
+  never markers. A vendor's other products are not evidence either:
+  a crash reporter from the same vendor as a packer says nothing
+  about packing. A stub-shaped application class with no vendor
+  marker is reported as an **unattributed packer stub**, never
+  guessed.
+- **Obfuscation numbers are statistics, not fingerprints.** The
+  short-name share is measured over the DEX string tables. It proves
+  a shrinker/obfuscator ran; it cannot say which one. R8, ProGuard,
+  and DexGuard output are indistinguishable by names alone.
+- **RASP markers prove code, not verdicts.** Root, emulator,
+  debugger, and hook markers mean the app carries check code. The
+  same su-path strings can also appear in apps that offer root
+  features. What the checks do with their result is a runtime
+  question.
+- **Server-verdict systems are client-presence only.** Play
+  Integrity and SafetyNet are reported when their client API is
+  integrated. The verdict is computed by Google's servers from a
+  runtime request; nothing inside the APK can confirm or deny it.
+- **Pinning evidence is the pin itself.** OkHttp's
+  `CertificatePinner` class ships with the library whether or not
+  pins are configured, so the class is not a marker. A compiled-in
+  `sha256/...` pin constant, or a pin-set in the network security
+  config, is.
+
+What triage does **not** claim, because there is no reliable static
+marker:
+
+- **DexGuard-style string encryption.** Encrypted string pools are
+  byte arrays and a decryptor routine; statically they look like any
+  other data and helper code. Obfuscation statistics are the only
+  signal, and they do not separate string encryption from plain
+  shrinking.
+- **In-code signature / tamper checks.** An app checking its own
+  certificate calls the same PackageManager APIs as benign code.
+  There is no string or class that separates a tamper check from
+  ordinary use.
+- **OLLVM-style native obfuscation.** Control-flow flattening and
+  native string encryption leave no dependable marker in a stripped
+  library. The ELF posture (RELRO, BIND_NOW, stripped) is reported;
+  obfuscation of native code is a Ghidra question, not a triage one.
+- **Injected commercial RASP** (for example V-Key, Promon, Virbox,
+  Digital.ai / Arxan, nProtect AppGuard). These runtimes are commonly
+  renamed, merged into the app's own libraries, or injected per
+  build, so no dedicated library or class name survives to mark
+  them. Their presence shows up, if at all, as unattributed native
+  bulk and runtime behavior — triage stays silent rather than
+  guessing a vendor.
+- **Encrypted string pools and custom packers** with no shipped
+  fingerprint: the shell-pattern and bad-header heuristics catch
+  some of them; the rest need the DEX and native guides.
 
 ## Split APKs, APKS, and AAB
 
