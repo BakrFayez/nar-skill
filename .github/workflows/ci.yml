@@ -1,0 +1,37 @@
+# NAR CI — authored for GitHub Actions.
+#
+# Status: AUTHORED, NOT EXECUTED in the build environment
+# (no GitHub Actions runner is available there). The same
+# checks run locally: `python3 -m pytest tests/unit/` and
+# `bash tests/run_e2e.sh` (the e2e harness needs the local
+# fixture tree, so CI runs the unit suite + syntax + the
+# doctor's core check only).
+name: nar-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-and-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test runner
+        run: pip install pytest
+      - name: Unit tests
+        run: python3 -m pytest tests/unit/ -q
+      - name: Syntax-check every script
+        run: |
+          for f in scripts/*.py; do
+            python3 -m py_compile "$f"
+          done
+          python3 -m py_compile scripts/narlib/*.py
+      - name: Unified CLI smoke
+        run: |
+          python3 scripts/nar.py version
+          python3 scripts/nar.py --help > /dev/null
