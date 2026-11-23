@@ -12,20 +12,32 @@ plainly: this tool never guesses or invents entries.
 
 Usage:
     python3 nar-pak.py game.pak [--json] [--limit N]
+    python3 nar-pak.py game.pak --extract <name-or-pattern> --out <dir>
 
 The .pak is usually inside the APK (assets or the engine content
 directory) or inside an OBB; extract it first, then list it. An
 encrypted index cannot be read without the key; the parse then fails
 plainly instead of producing garbage.
 
+--extract writes the decompressed bytes of every entry whose name
+matches the pattern (exact name or shell-style glob) under --out,
+preserving the pak-relative path. Stored entries are copied, zlib and
+gzip entries are decompressed block by block. Encrypted entries and
+LZ4 entries are refused plainly: AES needs the key and LZ4 is not in
+the Python standard library.
+
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
 """
 import argparse
+import fnmatch
+import gzip
+import hashlib
 import json
 import os
 import struct
 import sys
+import zlib
 
 PAK_MAGIC = 0x5A6F12E1
 PAK_MAGIC_BYTES = struct.pack("<I", PAK_MAGIC)
@@ -164,6 +176,40 @@ def pak_stats(entries):
     return {"by_extension": top(by_ext), "by_folder": top(by_folder)}
 
 
+def _parse_index(data, version, index_offset, index_size):
+    """Parse the index, returning (mount, entries, layout).
+
+    Entry layout candidates: (has_timestamp, per-entry trailer bytes).
+    v1 carries a timestamp; v3+ adds a 5-byte trailer (encryption flag
+    + compression block size). A candidate is accepted only when it
+    consumes the index EXACTLY, so a wrong layout never yields
+    plausible-looking garbage. Raises PakError when none fits.
+    """
+    if version == 1:
+        candidates = [(True, 0)]
+    elif version == 2:
+        candidates = [(False, 0)]
+    else:
+        candidates = [(False, 5), (False, 0)]
+    last_error = None
+    for has_ts, trailer in candidates:
+        try:
+            mount, entries, consumed = parse_entries(
+                data, version, index_offset, index_size, has_ts, trailer)
+        except PakError as e:
+            last_error = str(e)
+            continue
+        if consumed == index_size:
+            return mount, entries, (has_ts, trailer)
+        last_error = (f"index parse consumed {consumed} of {index_size}"
+                      " bytes (layout mismatch)")
+    raise PakError("could not parse the index exactly: "
+                   + (last_error or "unknown")
+                   + ". The index may be encrypted, or this is a pak"
+                   " layout this lister does not cover. No entries are"
+                   " shown rather than guessed ones.")
+
+
 def list_pak(path):
     if not os.path.isfile(path):
         raise FileNotFoundError(f"not a file: {path}")
@@ -190,45 +236,153 @@ def list_pak(path):
         report["error"] = ("index offset/size in the footer point outside"
                            " the file: corrupt or truncated .pak")
         return report
-    # Entry layout candidates: (has_timestamp, per-entry trailer bytes).
-    # v1 carries a timestamp; v3+ adds a 5-byte trailer (encryption flag
-    # + compression block size). A candidate is accepted only when it
-    # consumes the index EXACTLY, so a wrong layout never yields
-    # plausible-looking garbage.
-    if version == 1:
-        candidates = [(True, 0)]
-    elif version == 2:
-        candidates = [(False, 0)]
-    else:
-        candidates = [(False, 5), (False, 0)]
-    last_error = None
-    for has_ts, trailer in candidates:
+    try:
+        mount, entries, _layout = _parse_index(
+            data, version, index_offset, index_size)
+    except PakError as e:
+        report["supported"] = False
+        report["error"] = str(e)
+        return report
+    report["supported"] = True
+    report["mount_point"] = mount
+    report["entry_count"] = len(entries)
+    report["entries"] = entries
+    report["total_packed_bytes"] = sum(e["size_bytes"] for e in entries)
+    report["total_uncompressed_bytes"] = sum(
+        e["uncompressed_size_bytes"] for e in entries)
+    report["encrypted_entry_count"] = sum(
+        1 for e in entries if e["encrypted"])
+    report["stats"] = pak_stats(entries)
+    return report
+
+
+def extract_entry(data, version, layout, entry):
+    """Return the decompressed bytes of one entry.
+
+    Every entry's data in the file is preceded by a serialized copy of
+    its index record (without the name); compression block offsets in
+    that header are absolute file offsets. Raises PakError with a
+    plain reason when the entry cannot be extracted.
+    """
+    if entry["encrypted"]:
+        raise PakError(
+            "entry is flagged encrypted (AES); extraction needs the"
+            " pak encryption key, which this tool does not hold")
+    has_ts, trailer = layout
+    r = Reader(data, entry["offset"])
+    r.u64()  # offset field: serialized as 0 in the file, patched from
+    # the index at load time, so it cannot be checked against the index
+    size = r.u64()
+    uncompressed = r.u64()
+    method = r.i32()
+    if (size != entry["size_bytes"]
+            or uncompressed != entry["uncompressed_size_bytes"]
+            or method != entry["compression_method"]):
+        raise PakError("entry header in the data region does not match"
+                       " the index record; the pak layout differs from"
+                       " what this tool parses")
+    if has_ts:  # pak v1 only
+        r.read(8)
+    r.read(20)  # SHA-1 of the entry data
+    blocks = []
+    if version >= 3 and method != 0:
+        count = r.i32()
+        if count < 0 or count > 1_000_000:
+            raise PakError(f"implausible compression block count: {count}")
+        for _ in range(count):
+            start = r.u64()
+            end = r.u64()
+            blocks.append((start, end))
+    if trailer:
+        r.read(trailer)
+    if method == 0:
+        out = data[r.pos:r.pos + size]
+        if len(out) != size:
+            raise PakError("stored entry is truncated in the file")
+    elif method in (1, 2) and not blocks:
+        # Pak v1/v2 have no block table: one contiguous stream follows
+        # the header.
+        raw = data[r.pos:r.pos + size]
+        if len(raw) != size:
+            raise PakError("compressed entry is truncated in the file")
         try:
-            mount, entries, consumed = parse_entries(
-                data, version, index_offset, index_size, has_ts, trailer)
+            out = (zlib.decompress(raw) if method == 1
+                   else gzip.decompress(raw))
+        except (zlib.error, OSError, EOFError) as e:
+            raise PakError(f"decompression failed: {e}") from e
+    elif method in (1, 2):
+        chunks = []
+        for start, end in blocks:
+            raw = data[start:end]
+            if len(raw) != end - start:
+                raise PakError("compression block is truncated in the file")
+            try:
+                if method == 1:
+                    chunks.append(zlib.decompress(raw))
+                else:
+                    chunks.append(gzip.decompress(raw))
+            except (zlib.error, OSError, EOFError) as e:
+                raise PakError(f"decompression failed: {e}") from e
+        out = b"".join(chunks)
+    else:
+        raise PakError(
+            f"compression method {entry['compression']} is not supported"
+            " by the stdlib extractor (LZ4 is not in the Python"
+            " standard library)")
+    if len(out) != uncompressed:
+        raise PakError(
+            f"extracted {len(out):,} bytes but the index promises"
+            f" {uncompressed:,}; refusing to write a partial result")
+    return out
+
+
+def extract_pak(path, pattern, out_dir):
+    """Extract every entry matching pattern under out_dir.
+
+    Returns a report dict in the list_pak shape plus "extracted" and
+    "extract_errors" lists. Raises FileNotFoundError / PakError for
+    file-level problems.
+    """
+    report = list_pak(path)
+    if not report.get("supported"):
+        return report
+    with open(path, "rb") as fh:
+        data = fh.read()
+    _mount, _entries, layout = _parse_index(
+        data, report["pak_version"], report["index_offset"],
+        report["index_size_bytes"])
+    matched = [e for e in report["entries"]
+               if e["name"] == pattern
+               or fnmatch.fnmatchcase(e["name"], pattern)]
+    report["extract_pattern"] = pattern
+    report["extract_out_dir"] = os.path.abspath(out_dir)
+    report["extract_matched"] = len(matched)
+    extracted = []
+    errors = []
+    for entry in matched:
+        try:
+            blob = extract_entry(data, report["pak_version"], layout, entry)
         except PakError as e:
-            last_error = str(e)
+            errors.append({"name": entry["name"], "error": str(e)})
             continue
-        if consumed == index_size:
-            report["supported"] = True
-            report["mount_point"] = mount
-            report["entry_count"] = len(entries)
-            report["entries"] = entries
-            report["total_packed_bytes"] = sum(e["size_bytes"] for e in entries)
-            report["total_uncompressed_bytes"] = sum(
-                e["uncompressed_size_bytes"] for e in entries)
-            report["encrypted_entry_count"] = sum(
-                1 for e in entries if e["encrypted"])
-            report["stats"] = pak_stats(entries)
-            return report
-        last_error = (f"index parse consumed {consumed} of {index_size}"
-                      " bytes (layout mismatch)")
-    report["supported"] = False
-    report["error"] = (
-        "could not parse the index exactly: " + (last_error or "unknown")
-        + ". The index may be encrypted, or this is a pak layout this"
-        " lister does not cover. No entries are shown rather than"
-        " guessed ones.")
+        rel = entry["name"].replace("\\", "/").lstrip("/")
+        parts = [p for p in rel.split("/") if p not in ("", ".", "..")]
+        if not parts:
+            errors.append({"name": entry["name"],
+                           "error": "entry name has no safe relative path"})
+            continue
+        dest = os.path.join(out_dir, *parts)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "wb") as fh:
+            fh.write(blob)
+        extracted.append({
+            "name": entry["name"],
+            "out_path": os.path.abspath(dest),
+            "size_bytes": len(blob),
+            "sha256": hashlib.sha256(blob).hexdigest(),
+        })
+    report["extracted"] = extracted
+    report["extract_errors"] = errors
     return report
 
 
@@ -274,6 +428,23 @@ def human(report, limit):
     return "\n".join(lines)
 
 
+def human_extract(report):
+    lines = [f"NAR pak extract: {report['file']}",
+             f"Pattern: {report['extract_pattern']}"]
+    if not report.get("supported"):
+        lines.append(f"UNSUPPORTED: {report.get('error', 'unknown problem')}")
+        return "\n".join(lines)
+    lines.append(f"Matched: {report['extract_matched']:,} of "
+                 f"{report['entry_count']:,} entries")
+    for item in report.get("extracted", []):
+        lines.append(f"  OK  {item['name']} -> {item['out_path']}"
+                     f" ({item['size_bytes']:,} bytes,"
+                     f" sha256 {item['sha256'][:16]}...)")
+    for err in report.get("extract_errors", []):
+        lines.append(f"  REFUSED  {err['name']}: {err['error']}")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="NAR Unreal .pak lister: footer + index parse for "
@@ -284,9 +455,20 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=50,
                    help="max entries to print in human output "
                         "(default 50; 0 = all)")
+    p.add_argument("--extract", metavar="PATTERN",
+                   help="extract entries whose name matches PATTERN "
+                        "(exact name or shell-style glob) instead of "
+                        "only listing; requires --out")
+    p.add_argument("--out", metavar="DIR",
+                   help="directory --extract writes into")
     args = p.parse_args(argv)
+    if args.extract and not args.out:
+        p.error("--extract requires --out DIR")
     try:
-        report = list_pak(args.pak)
+        if args.extract:
+            report = extract_pak(args.pak, args.extract, args.out)
+        else:
+            report = list_pak(args.pak)
     except FileNotFoundError as e:
         print(f"nar-pak: {e}", file=sys.stderr)
         return 2
@@ -295,9 +477,17 @@ def main(argv=None):
         return 1
     if args.json:
         print(json.dumps(report, indent=2))
+    elif args.extract:
+        print(human_extract(report))
     else:
         print(human(report, args.limit))
-    return 0 if report.get("supported") else 1
+    if not report.get("supported"):
+        return 1
+    if args.extract:
+        ok = (report.get("extract_matched", 0) > 0
+              and not report.get("extract_errors"))
+        return 0 if ok else 1
+    return 0
 
 
 if __name__ == "__main__":

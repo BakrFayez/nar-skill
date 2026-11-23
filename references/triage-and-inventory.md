@@ -27,6 +27,24 @@ package fields report why instead of inventing values. For `.aab` files
 triage reads the manifest with `bundletool dump manifest` instead. Fall back to
 `apktool d` and read the decoded `AndroidManifest.xml` directly.
 
+## nar-analyze.py: the one-command workup
+
+When the question is "give me everything" rather than one fact, run
+the orchestrator instead of the pieces by hand:
+
+```bash
+python3 scripts/nar-analyze.py app.apk            # writes ./nar-analyze-<name>/report.md + report.json
+python3 scripts/nar-analyze.py app.apk --out work/report
+```
+
+It runs triage, the permission audit, and the strings scan, then
+routes to the engine deep dives the triage flags (IL2CPP, Flutter,
+Godot, React Native, Unreal `.pak`) and assembles one evidence
+report: identity, engines and frameworks, protections, permissions,
+strings summary, deep-dive results, and a limitations section. It
+reuses the other scripts' JSON, so numbers match a manual run.
+Static only: the report never claims runtime behavior.
+
 ## What to read from a triage
 
 - SHA-256 and size: the identity of the artifact. Record both in every
@@ -66,6 +84,16 @@ starting point, not proof: confirm with the
 | React Native (new architecture) | `libfabricjni.so`, `libturbomodulejsijni.so`, `libreact_nativemodule_core.so`, `libreactnative.so` |
 | libGDX | `libgdx.so` (+ `libgdx-freetype.so`, `libgdx-bullet.so`), `com/badlogic/gdx` in DEX |
 | Adobe AIR | `assets/META-INF/AIR/application.xml`, `.swf` in `assets/`, `com/adobe/air` in DEX |
+| Xamarin / .NET (incl. MAUI) | `libmonodroid.so`, `libxamarin-app.so`, `assemblies/*.dll` at the zip root, `mono/android/` in DEX |
+| Cordova (hybrid) | `assets/www/cordova.js`, `org/apache/cordova` in DEX |
+| Capacitor (hybrid) | `assets/capacitor.config.json`, `assets/capacitor.plugins.json`, `assets/public/`, `com/getcapacitor/` in DEX |
+| Qt for Android | `libQt5Core.so` / `libQt6Core.so`, `libqtforandroid.so`, `org/qtproject/qt` in DEX |
+| Defold | `libdmengine.so` |
+| Ren'Py | `*.rpyc` compiled scripts, `librenpython.so`, `org/renpy/android` in DEX |
+| RPG Maker MV/MZ (web export) | `assets/www/js/rpg_core.js` (MV), `assets/www/js/rmmz_core.js` (MZ) |
+| EasyRPG Player | `org/easyrpg/player` in DEX |
+| Embedded Python | `libpython3.*.so` / `libpython2.7.so`; whose runtime it is comes from the DEX markers (Kivy: `org/kivy/android`, Ren'Py: `org/renpy/android`) |
+| Web assets | Any `assets/www/` tree: hybrid framework content, a WebView wrapper, or bundled web pages |
 
 Notes:
 
@@ -87,6 +115,12 @@ Notes:
   output). Triage reports the flag string when DEX contains it.
 - A bare `.swf` alone is weak evidence for Adobe AIR: confirm with
   `META-INF/AIR/application.xml`, the descriptor.
+- Ionic has no fingerprint of its own: an Ionic app is a Cordova or
+  Capacitor app with a web UI layer, and triage attributes it to its
+  container. The same applies to other web UI layers.
+- `libpython` alone proves only that CPython is embedded. Kivy
+  (python-for-android), Ren'Py, and plain embedders all link it; the
+  DEX runtime markers decide which one shipped.
 - A game with no engine markers is usually a custom native engine or a
   pure-Java game. Check the `.so` list and the DEX package names.
 
@@ -106,6 +140,45 @@ Triage lists asset-bundle files (`.pak`, `.bundle`, `.unity3d`, `.obb`,
 For the full asset picture, decode with apktool and inventory `assets/`
 and `res/raw/` by extension and size. See
 [manifest and resources](manifest-and-resources.md).
+
+## Unpacking: the full chain
+
+Every analysis starts by opening containers in the right order. The
+chain, outermost first:
+
+1. **Delivery containers.** `.xapk` / `.apkm` are ZIPs of APKs plus a
+   `manifest.json`: unzip, then work on the contained APKs (triage
+   reads the container itself for identity and the contained list).
+   `.apks` is bundletool's split archive: unzip it, or install with
+   `bundletool install-apks` on a device. An `.aab` is not opened by
+   hand: `bundletool build-apks` turns it into an `.apks`, and
+   `bundletool dump manifest` reads its identity (triage does both
+   where they apply). Play Asset Delivery packs are modules inside
+   the AAB (or splits beside the base); a base APK without its asset
+   packs is an incomplete game — see the app-bundles guide.
+2. **The APK itself.** A ZIP: `unzip` for raw inventory, `apktool d`
+   for manifest, resources, and smali, `jadx` for Java. Triage,
+   nar-perms, and nar-strings all read the ZIP directly.
+3. **Expansion files.** `.obb` files are ZIPs named
+   `main.<versionCode>.<package>.obb` / `patch.…`: inventory them
+   like APK assets; the bulk game content lives there.
+4. **Asset containers inside.** Unreal `.pak`:
+   `nar-pak.py` lists and `--extract` pulls entries out of
+   unencrypted packs. Godot `.pck`: `nar-godot.py` lists it; extract
+   with GodotPckTool. Unity AssetBundles (`.bundle`, `.unity3d`):
+   inventory by name and size statically; content extraction needs
+   bundle tooling beyond this skill's scripts (see the native
+   guide). React Native bundles: `nar-rn.py` extracts and reads
+   them.
+5. **Packed DEX.** A packer's APK holds a small loader DEX; the real
+   DEX is encrypted or compressed inside assets or a native library
+   and is staged into memory by the loader at runtime. Static
+   evidence: the protection section's packed-DEX shape finding, a
+   stub application class, and a DEX far smaller than the app around
+   it. Recovering the staged DEX is **runtime work**: dump it from
+   memory on a device you own with the dynamic-analysis workflow.
+   No static tool in this skill produces it, and any tool that
+   claims to unpack every packer statically is overselling.
 
 ## Reading the triage report
 
@@ -148,6 +221,14 @@ Details that are easy to misread:
 - **No META-INF signing files is normal for v2/v3-only APKs**: the
   APK Signing Block carries the signature, so there are no `.RSA` /
   `.SF` files to find. Triage's signing line says which case applies.
+- **Form factors.** A build can declare a watch or TV form factor
+  through features and libraries rather than a separate package:
+  the `android.hardware.type.watch` feature or the
+  `com.google.android.wearable` library means a Wear OS build, and
+  the `android.software.leanback` feature means an Android TV
+  build. Triage surfaces them from badging as a form-factors line.
+  The same APK often serves phone and TV; the declaration, not the
+  package name, is the evidence.
 
 ## Protection systems
 
@@ -167,7 +248,7 @@ NAR does not bypass protections.
 | Network protection | SSL pinning | `sha256/<base64>` pin constants in code (the OkHttp CertificatePinner form); pin-sets in a `res/xml` network security config |
 | Licensing / DRM | Play License Verification (LVL), Play license check, Widevine DRM | LVL classes (`com/android/vending/licensing`), the `CHECK_LICENSE` permission, the Widevine MediaDrm scheme UUID string |
 | Code / asset encryption | DEX without a valid header, shell / stub DEX pattern, unreadable IL2CPP metadata, encrypted Godot pack, encrypted Unreal pak index | DEX header magic, DEX-vs-payload size shape, `global-metadata.dat` magic, the PCK header encryption flag, the pak footer index-encryption flag |
-| Native hardening | Hardening posture per library | ELF headers: `ET_DYN` (position-independent), `PT_GNU_RELRO`, `BIND_NOW`, `SHT_SYMTAB` absence (stripped) |
+| Native hardening | Hardening posture per library | ELF headers: `ET_DYN` (position-independent), `PT_GNU_RELRO`, `BIND_NOW`, `SHT_SYMTAB` absence (stripped), and LOAD-segment alignment (the 16 KB page-size check: every `PT_LOAD` `p_align` ≥ 16384) |
 
 Reading the section:
 
@@ -303,6 +384,18 @@ Then triage it like any other APK: `nar-triage.py` and
 - Old devices: system apps on Android 4.x-7 may be ODEXed, with
   the DEX stripped into `.odex`/`.oat` files beside the APK. See
   the [legacy guide](legacy-analysis.md).
+
+APEX modules are the other system packaging format, and they are
+**not APKs**: an `.apex` file is a ZIP holding `apex_manifest.pb`
+(a protobuf naming the module and its version) and
+`apex_payload.img` (an ext4 filesystem image containing the actual
+APKs, libraries, and binaries). Static route: unzip the container,
+read the manifest protobuf for identity, and inspect the payload
+image with filesystem tools on a workstation — mounting or
+extracting the image is a workstation task, not something triage
+does. The APKs inside the payload, once extracted, triage normally.
+No APEX sample was on this machine; this paragraph is format
+documentation, not a verified workflow.
 
 Verification note: no system APK was on this machine. The pull
 commands above are standard adb and were not run against a device

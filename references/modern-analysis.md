@@ -1,11 +1,11 @@
 # Modern Android analysis
 
-This guide covers current Android apps: Android 14 and 15 behavior,
-current engines and frameworks, current signing and integrity
-schemes, and current delivery through App Bundles. It assumes the
-triage and DEX guides for the basics.
+This guide covers current Android apps: Android 14, 15, and 16
+behavior, current engines and frameworks, current signing and
+integrity schemes, and current delivery through App Bundles. It
+assumes the triage and DEX guides for the basics.
 
-## Android 14 and 15
+## Android 14, 15, and 16
 
 ### The 16 KB page-size requirement
 
@@ -28,7 +28,11 @@ Two separate alignments must be right:
    multiple of 16,384. This is set at packaging time (`zipalign
    -P 16`).
 
-How to check the ELF side:
+How to check the ELF side: triage reports it automatically — the
+native-hardening finding counts how many libraries have every
+`LOAD` segment aligned to 16 KB or more, with per-library
+`load_align_min` / `load_align_max` / `aligned_16k` in the JSON
+details. The manual check:
 
 ```bash
 unzip -p app.apk lib/arm64-v8a/libexample.so > work/libexample.so
@@ -68,6 +72,18 @@ quote a deadline from memory.
   biggest analysis-relevant change, covered above.
 - `targetSdkVersion` decides which of these apply. Triage reports
   it from badging; always read it before assuming behavior.
+
+### Android 16 (API 36)
+
+Current store builds already target API 36, so triage will report
+`target 36` on up-to-date apps; nothing about the APK format itself
+changes for the analyst. The analysis-relevant points are the
+standing ones: behavior changes gate on the target level, the
+16 KB page-size requirement above applies with full force to
+API 35+ targets, and Play Integrity / RASP client markers read the
+same way. Treat any more specific API 36 behavior claim as runtime
+territory: static evidence proves the target level, not the
+behavior.
 
 ## Kotlin Multiplatform and Jetpack Compose
 

@@ -171,6 +171,14 @@ generation on.
 
 ## 5. Running the dump
 
+Shortcut: `python3 scripts/nar-il2cpp.py game.apk` does the whole
+locate-and-dump flow — it finds `global-metadata.dat` and the
+matching `libil2cpp.so` inside the APK, reads the metadata format
+version from the header, runs Il2CppDumper when the doctor finds it,
+and summarizes the dump (type count, method count, top namespaces).
+Run it first; do the manual steps below when you need control over
+the pair or the dumper flags.
+
 Run the dumper with the library, the metadata, and an output directory.
 All three arguments are given, so the tool asks no questions:
 

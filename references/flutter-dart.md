@@ -171,6 +171,12 @@ as leads to verify, not as proven behavior.
 
 ## Dart and Flutter version detection
 
+Shortcut: `python3 scripts/nar-flutter.py app.apk` fingerprints the
+build in one run — ABI list, the Dart version (from `libflutter.so`),
+the Flutter version (from `libapp.so`), the AOT snapshot markers,
+and a clean "not Flutter" verdict when neither library is present.
+The manual route below explains where each value lives.
+
 The Dart version string lives in `libflutter.so`:
 
 ```bash

@@ -1,6 +1,6 @@
 # NAR Skill: Nirous Android Reversing
 
-Version 1.0.4
+Version 1.1.0
 
 Research by Bakr Fayez
 
@@ -14,7 +14,7 @@ REA (reverse-engineer-anything) covers everything: native binaries, Electron app
 
 ## What it does
 
-- Triage any APK, AAB, split set, or OBB in under a minute: identity, hashes, DEX versions and method counts, native inventory, permissions, signature schemes, game-engine and framework detection (Unity, Unreal, Godot, Flutter, Cocos2d-x, libGDX, React Native, Compose, Rust).
+- Triage any APK, AAB, split set, or OBB in under a minute: identity, hashes, DEX versions and method counts, native inventory, permissions, signature schemes, form factors (Wear OS, Android TV), game-engine and framework detection (Unity, Unreal, Godot, Flutter, Cocos2d-x, libGDX, React Native, Compose, Rust, Xamarin / .NET, Cordova, Capacitor, Qt, Defold, Ren'Py, RPG Maker, Kivy / embedded Python).
 - Detect protection systems and report them by category: named commercial packers and VM protectors (Pairip, Tencent Legu, 360 Jiagu, Bangcle SecShell, Alibaba SecurityGuard, Baidu Protect, NetEase YiDun, iJiami, DexProtector, LIAPP, AppSealing), obfuscation evidence, anti-tamper / RASP markers, SSL pinning, licensing and DRM, code and asset encryption, and native hardening posture from ELF headers. Detection and reporting only.
 - Decode manifests and resources with apktool and aapt2, including `resources.arsc` structure and string pools.
 - Read DEX and smali, and decompile with jadx, including obfuscated builds.
@@ -27,7 +27,7 @@ REA (reverse-engineer-anything) covers everything: native binaries, Electron app
 - Analyze app bundles and split APKs with bundletool, including XAPK/APKM containers and Play Asset Delivery.
 - Capture and read network traffic with mitmproxy and tshark, on your own devices only.
 - Run dynamic analysis with adb and Frida on a device you own, with a ready script library for Java, JNI, file, and network observation.
-- Cover old and new Android: legacy Dalvik/ODEX/OAT, ARMv7, Eclipse-era builds, and Android 14/15 with 16KB page size, Kotlin Multiplatform, Jetpack Compose, Rust NDK, Play Integrity, and R8 full mode.
+- Cover old and new Android: legacy Dalvik/ODEX/OAT, ARMv7, Eclipse-era builds, and Android 14/15/16 with 16KB page size, Kotlin Multiplatform, Jetpack Compose, Rust NDK, Play Integrity, and R8 full mode.
 - Handle system apps and app data: platform signatures, sharedUserId, priv-app permissions, and on-device data extraction (SQLite databases, shared_prefs).
 
 ## Quick start
@@ -39,7 +39,7 @@ bash scripts/nar-doctor.sh
 python3 scripts/nar-triage.py app.apk
 ```
 
-`nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists Unreal `.pak` archives.
+`nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-analyze.py` runs the whole static workup in one command and writes a single evidence report (`report.md` + `report.json`). `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists and extracts Unreal `.pak` archives. `nar-il2cpp.py`, `nar-flutter.py`, `nar-godot.py`, and `nar-rn.py` handle the Unity IL2CPP, Flutter/Dart, Godot, and React Native deep dives.
 
 Then open `SKILL.md` and follow the routing table for your question.
 
@@ -142,10 +142,26 @@ Audit permissions and components:
 python3 scripts/nar-perms.py app.apk
 ```
 
-List an Unreal `.pak` (extract it from the APK or OBB first):
+List an Unreal `.pak` (extract it from the APK or OBB first), or extract entries from an unencrypted one:
 
 ```bash
 python3 scripts/nar-pak.py game.pak
+python3 scripts/nar-pak.py --extract "Content/*" --out work/pak-out game.pak
+```
+
+Run the full workup and write one evidence report:
+
+```bash
+python3 scripts/nar-analyze.py app.apk
+```
+
+Deep-dive a game engine build:
+
+```bash
+python3 scripts/nar-il2cpp.py game.apk     # Unity IL2CPP: locate pair, dump, summarize
+python3 scripts/nar-flutter.py app.apk     # Flutter/Dart fingerprint
+python3 scripts/nar-godot.py game.apk      # Godot pack listing + encryption flag
+python3 scripts/nar-rn.py app.apk          # React Native bundle (Hermes vs JSC)
 ```
 
 A full example session is in `examples/quick-triage.md`. A filled report is in `examples/sample-report.md`. A Unity IL2CPP session is in `examples/unity-il2cpp-triage.md`. A Godot session is in `examples/godot-triage.md`.
@@ -181,12 +197,19 @@ nar-skill/
     evidence-workflows.md
   scripts/
     nar-doctor.sh           Toolchain check (plain and --json)
+    nar-analyze.py          One-command full workup (report.md + report.json)
     nar-triage.py           First-5-minutes APK triage (plain and --json)
     nar-strings.py          Ranked string extraction (plain and --json)
     nar-compare.py          Two-version diff (plain and --json)
     nar-perms.py            Permission and component audit (plain and --json)
-    nar-pak.py              Unreal .pak lister, pak format v1-7 (plain and --json)
+    nar-pak.py              Unreal .pak lister/extractor, pak format v1-7 (plain and --json)
+    nar-il2cpp.py           Unity IL2CPP locator + Il2CppDumper summary (plain and --json)
+    nar-flutter.py          Flutter/Dart fingerprint (plain and --json)
+    nar-godot.py            Godot .pck inspector (plain and --json)
+    nar-rn.py               React Native bundle inspector (plain and --json)
     frida/                  Frida observation scripts (Java, JNI, file, network)
+  tests/
+    run_e2e.sh              End-to-end script test harness (fixtures via $NAR_FIXTURES)
   examples/
     sample-report.md        Filled report from a real triage run
     quick-triage.md         Example command session

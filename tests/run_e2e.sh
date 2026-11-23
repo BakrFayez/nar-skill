@@ -1,0 +1,400 @@
+#!/usr/bin/env bash
+# run_e2e.sh: end-to-end test harness for every bundled NAR script.
+#
+# Usage:
+#   bash tests/run_e2e.sh
+#   NAR_FIXTURES=/path/to/fixtures bash tests/run_e2e.sh
+#
+# Fixtures are binary and never ship in this repo. The harness reads
+# them from $NAR_FIXTURES (default ~/workspace/nar-e2e-fixtures). A
+# case whose fixture is absent is reported as SKIP, never as PASS.
+# Real-world fixture files are bound to roles through an optional
+# local manifest at $NAR_FIXTURES/manifest.env (never committed),
+# which may set:
+#   FIX_PAIRIP      APK doctored to carry a named packer's artifacts
+#   FIX_COMPOSE     modern Kotlin/Compose app APK
+#   FIX_JAVA        pure-Java app APK (no Kotlin)
+#   FIX_XAPK        .xapk container
+#   FIX_GAME_UNREAL Unreal-engine game APK
+#   FIX_PAK         Unreal .pak archive
+#   FIX_UNITY       Unity IL2CPP game APK
+#   FIX_FLUTTER     Flutter app APK
+#   FIX_GODOT_PCK   Godot .pck pack
+#   FIX_RN          React Native app APK
+#   FIX_APP         app APK for the nar-analyze case
+#   FIX_GAME        game APK for the nar-analyze case
+#   FIX_TV          APK declaring the leanback (Android TV) feature
+#   FIX_CLEAN_SET   space-separated APK list that must show zero
+#                   attributed commercial packers
+# The synthetic demo APKs under $NAR_FIXTURES/demo/ are used directly.
+#
+# Exit code: 0 when every non-skipped case passes, 1 otherwise.
+
+set -u
+SKILL="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+SCRIPTS="$SKILL/scripts"
+export NAR_FIXTURES="${NAR_FIXTURES:-$HOME/workspace/nar-e2e-fixtures}"
+F="$NAR_FIXTURES"
+[ -f "$F/manifest.env" ] && . "$F/manifest.env"
+
+PASS=0; FAIL=0; SKIP=0
+FAILED_CASES=""
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+ok()   { PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
+bad()  { FAIL=$((FAIL+1)); FAILED_CASES="$FAILED_CASES $1"; printf 'FAIL  %s  (%s)\n' "$1" "$2"; }
+skip() { SKIP=$((SKIP+1)); printf 'SKIP  %s  (%s)\n' "$1" "$2"; }
+
+# need <case-name> <path> : returns 0 if the fixture file exists
+need() { [ -n "${2:-}" ] && [ -f "$2" ]; }
+
+contains()    { grep -q -- "$2" "$1"; }
+not_contains(){ ! grep -qi -- "$2" "$1"; }
+
+PY=python3
+
+# ---------------------------------------------------------------- doctor
+"$SKILL/scripts/nar-doctor.sh" > "$TMP/doctor.log" 2>&1
+if [ $? -eq 0 ] && contains "$TMP/doctor.log" "Core toolchain: READY"; then
+  ok "doctor: READY, exit 0"
+else
+  bad "doctor" "not READY or non-zero exit; see nar-doctor.sh output"
+fi
+
+DEMO="$F/demo/NarDemo.apk"
+DEMO2="$F/demo/NarDemo_v2.apk"
+
+# ---------------------------------------------------------------- triage
+if need triage-demo "$DEMO"; then
+  $PY "$SCRIPTS/nar-triage.py" "$DEMO" > "$TMP/triage-demo.log" 2>&1
+  if contains "$TMP/triage-demo.log" "Package: com.example.nardemo" \
+     && contains "$TMP/triage-demo.log" "v1.0 (code 1)"; then
+    ok "triage: demo identity"
+  else bad "triage-demo-identity" "package/version line mismatch"; fi
+else skip "triage-demo-identity" "demo fixture absent"; fi
+
+if need triage-pairip "${FIX_PAIRIP:-}"; then
+  $PY "$SCRIPTS/nar-triage.py" --json "$FIX_PAIRIP" > "$TMP/triage-pairip.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/triage-pairip.json'))
+hits=[p for p in d.get('protections',[]) if p.get('category')=='commercial_packer' and p.get('attributed') and 'Pairip' in p.get('name','')]
+sys.exit(0 if hits else 1)"; then
+    ok "triage: Pairip named on doctored fixture"
+  else bad "triage-pairip" "no attributed Pairip finding"; fi
+else skip "triage-pairip" "FIX_PAIRIP unset or absent"; fi
+
+if [ -n "${FIX_CLEAN_SET:-}" ]; then
+  CLEAN_OK=1; CHECKED=0
+  for apk in $FIX_CLEAN_SET; do
+    [ -f "$apk" ] || continue
+    CHECKED=$((CHECKED+1))
+    $PY "$SCRIPTS/nar-triage.py" --json "$apk" > "$TMP/triage-clean.json" 2>/dev/null
+    if ! $PY -c "
+import json,sys
+d=json.load(open('$TMP/triage-clean.json'))
+hits=[p for p in d.get('protections',[]) if p.get('category')=='commercial_packer' and p.get('attributed')]
+sys.exit(0 if not hits else 1)"; then
+      CLEAN_OK=0; printf '       named packer on clean fixture: %s\n' "$apk"
+    fi
+  done
+  if [ "$CHECKED" -eq 0 ]; then skip "triage-clean-set" "no clean-set files exist"
+  elif [ "$CLEAN_OK" -eq 1 ]; then ok "triage: zero named packers on clean set ($CHECKED files)"
+  else bad "triage-clean-set" "attributed packer on a clean fixture"; fi
+else skip "triage-clean-set" "FIX_CLEAN_SET unset"; fi
+
+if need triage-kotlin "${FIX_COMPOSE:-}"; then
+  $PY "$SCRIPTS/nar-triage.py" --json "$FIX_COMPOSE" > "$TMP/triage-kotlin.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/triage-kotlin.json'))
+hits=[m for m in d.get('dex_markers',[]) if 'Kotlin' in m.get('marker','') and m.get('total_hits',0)>0]
+sys.exit(0 if hits else 1)"; then
+    ok "triage: Kotlin detected on Compose fixture"
+  else bad "triage-kotlin-compose" "no Kotlin marker"; fi
+else skip "triage-kotlin-compose" "FIX_COMPOSE unset or absent"; fi
+
+if need triage-nokotlin "${FIX_JAVA:-}"; then
+  $PY "$SCRIPTS/nar-triage.py" --json "$FIX_JAVA" > "$TMP/triage-java.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/triage-java.json'))
+hits=[m for m in d.get('dex_markers',[]) if 'Kotlin' in m.get('marker','') and m.get('total_hits',0)>0]
+sys.exit(0 if not hits else 1)"; then
+    ok "triage: Kotlin correctly absent on Java fixture"
+  else bad "triage-kotlin-absent" "Kotlin marker on a pure-Java build"; fi
+else skip "triage-kotlin-absent" "FIX_JAVA unset or absent"; fi
+
+if need triage-xapk "${FIX_XAPK:-}"; then
+  $PY "$SCRIPTS/nar-triage.py" "$FIX_XAPK" > "$TMP/triage-xapk.log" 2>&1
+  if contains "$TMP/triage-xapk.log" "XAPK container"; then
+    ok "triage: XAPK container parsed"
+  else bad "triage-xapk" "container note missing"; fi
+else skip "triage-xapk" "FIX_XAPK unset or absent"; fi
+
+# ---------------------------------------------------------------- strings
+if need strings-demo "$DEMO"; then
+  $PY "$SCRIPTS/nar-strings.py" "$DEMO" > "$TMP/strings-demo.log" 2>&1
+  if contains "$TMP/strings-demo.log" "demo_token_"; then
+    ok "strings: planted demo token caught"
+  else bad "strings-demo-token" "planted token missing"; fi
+else skip "strings-demo-token" "demo fixture absent"; fi
+
+if need strings-keys "${FIX_GAME_UNREAL:-}"; then
+  $PY "$SCRIPTS/nar-strings.py" --json "$FIX_GAME_UNREAL" > "$TMP/strings-game.json" 2>/dev/null
+  COUNT=$($PY -c "
+import json
+d=json.load(open('$TMP/strings-game.json'))
+print(d['groups']['key_patterns']['count'])" 2>/dev/null || echo -1)
+  if [ "$COUNT" -gt 0 ] && [ "$COUNT" -lt 200 ]; then
+    ok "strings: game key-pattern hits bounded ($COUNT < 200)"
+  else bad "strings-key-hits" "count=$COUNT"; fi
+else skip "strings-key-hits" "FIX_GAME_UNREAL unset or absent"; fi
+
+# ---------------------------------------------------------------- compare
+if need compare-demo "$DEMO" && need compare-demo2 "$DEMO2"; then
+  $PY "$SCRIPTS/nar-compare.py" "$DEMO" "$DEMO2" > "$TMP/compare.log" 2>&1
+  if contains "$TMP/compare.log" "Permissions added: android.permission.VIBRATE" \
+     && contains "$TMP/compare.log" "methods: 33 -> 35"; then
+    ok "compare: added permission + method growth caught"
+  else bad "compare-demo" "expected deltas missing"; fi
+else skip "compare-demo" "demo pair absent"; fi
+
+# ---------------------------------------------------------------- perms
+if need perms-demo "$DEMO"; then
+  $PY "$SCRIPTS/nar-perms.py" "$DEMO" > "$TMP/perms-demo.log" 2>&1
+  if contains "$TMP/perms-demo.log" "Permissions (2): 0 dangerous"; then
+    ok "perms: demo dangerous count (0 of 2)"
+  else bad "perms-demo" "dangerous count line mismatch"; fi
+else skip "perms-demo" "demo fixture absent"; fi
+
+if need perms-defaults "${FIX_GAME_UNREAL:-}"; then
+  $PY "$SCRIPTS/nar-perms.py" "$FIX_GAME_UNREAL" > "$TMP/perms-game.log" 2>&1
+  if contains "$TMP/perms-game.log" "platform default; attribute absent"; then
+    ok "perms: platform-default wording on absent attributes"
+  else bad "perms-defaults" "default wording missing"; fi
+else skip "perms-defaults" "FIX_GAME_UNREAL unset or absent"; fi
+
+# ---------------------------------------------------------------- pak
+if need pak-list "${FIX_PAK:-}"; then
+  $PY "$SCRIPTS/nar-pak.py" "$FIX_PAK" > "$TMP/pak.log" 2>&1
+  if contains "$TMP/pak.log" "Entries: 1,598" && contains "$TMP/pak.log" "Encryption: none"; then
+    ok "pak: 1,598 entries, encryption none"
+  else bad "pak-list" "entry count or encryption line mismatch"; fi
+else skip "pak-list" "FIX_PAK unset or absent"; fi
+
+if need pak-extract "${FIX_PAK:-}"; then
+  if $PY - "$FIX_PAK" "$SCRIPTS/nar-pak.py" "$TMP/pak-out" <<'PYEOF'
+import hashlib, json, struct, subprocess, sys, zlib, os
+pak, script, outdir = sys.argv[1], sys.argv[2], sys.argv[3]
+listing = json.loads(subprocess.run(
+    [sys.executable, script, "--json", pak],
+    capture_output=True, text=True, check=True).stdout)
+entries = listing.get("entries") or []
+cand = next((e for e in entries
+             if e.get("compression") == "Zlib"
+             and e.get("uncompressed_size_bytes", 0) > 0), None)
+if cand is None:
+    sys.exit("no Zlib entry to extract")
+name = cand["name"]
+subprocess.run([sys.executable, script, "--extract", name,
+                "--out", outdir, pak],
+               capture_output=True, text=True, check=True)
+extracted = open(os.path.join(outdir, name), "rb").read()
+# independent index parse + decompress (does not import the tool)
+data = open(pak, "rb").read()
+fi = data.rfind(struct.pack("<I", 0x5A6F12E1))
+idx_off, idx_size = struct.unpack_from("<qq", data, fi + 8)
+idx = data[idx_off:idx_off + idx_size]
+p = 0
+ln, = struct.unpack_from("<i", idx, p); p += 4 + ln
+count, = struct.unpack_from("<i", idx, p); p += 4
+found = None
+for _ in range(count):
+    ln, = struct.unpack_from("<i", idx, p); p += 4
+    nm = idx[p:p + ln - 1].decode("utf-8", "replace"); p += ln
+    off, csize, usize = struct.unpack_from("<qqq", idx, p); p += 24
+    comp, = struct.unpack_from("<i", idx, p); p += 4 + 20
+    blocks = []
+    if comp != 0:
+        nb, = struct.unpack_from("<i", idx, p); p += 4
+        for _ in range(nb):
+            s, e = struct.unpack_from("<qq", idx, p); p += 16
+            blocks.append((s, e))
+    p += 5
+    if nm == name:
+        found = (off, usize, blocks)
+        break
+if found is None:
+    sys.exit("entry not found by independent parse")
+off, usize, blocks = found
+raw = b"".join(zlib.decompress(data[s:e] if s >= off else data[off + s:off + e])
+               for s, e in blocks)
+if len(raw) != usize or len(extracted) != usize:
+    sys.exit("size mismatch")
+if hashlib.sha256(raw).hexdigest() != hashlib.sha256(extracted).hexdigest():
+    sys.exit("sha256 mismatch")
+PYEOF
+  then ok "pak: extract byte-verified vs independent read"
+  else bad "pak-extract" "independent verification failed"; fi
+else skip "pak-extract" "FIX_PAK unset or absent"; fi
+
+# ---------------------------------------------------------------- il2cpp
+if need il2cpp "${FIX_UNITY:-}"; then
+  $PY "$SCRIPTS/nar-il2cpp.py" "$FIX_UNITY" > "$TMP/il2cpp.log" 2>&1
+  if contains "$TMP/il2cpp.log" "format version" \
+     && contains "$TMP/il2cpp.log" "Il2CppDumper: ran" \
+     && contains "$TMP/il2cpp.log" "Types:"; then
+    ok "il2cpp: metadata version + dumper summary"
+  else bad "il2cpp" "summary lines missing"; fi
+else skip "il2cpp" "FIX_UNITY unset or absent"; fi
+
+# ---------------------------------------------------------------- flutter
+if need flutter-pos "${FIX_FLUTTER:-}"; then
+  $PY "$SCRIPTS/nar-flutter.py" "$FIX_FLUTTER" > "$TMP/flutter.log" 2>&1
+  if contains "$TMP/flutter.log" "Dart version:" \
+     && contains "$TMP/flutter.log" "AOT snapshot markers:"; then
+    ok "flutter: Dart fingerprint on Flutter fixture"
+  else bad "flutter-positive" "fingerprint lines missing"; fi
+else skip "flutter-positive" "FIX_FLUTTER unset or absent"; fi
+
+if need flutter-neg "$DEMO"; then
+  $PY "$SCRIPTS/nar-flutter.py" "$DEMO" > "$TMP/flutter-neg.log" 2>&1
+  if contains "$TMP/flutter-neg.log" "NOT FLUTTER"; then
+    ok "flutter: clean negative on demo"
+  else bad "flutter-negative" "NOT FLUTTER verdict missing"; fi
+else skip "flutter-negative" "demo fixture absent"; fi
+
+# ---------------------------------------------------------------- godot
+if need godot "${FIX_GODOT_PCK:-}"; then
+  $PY "$SCRIPTS/nar-godot.py" "$FIX_GODOT_PCK" > "$TMP/godot.log" 2>&1
+  if contains "$TMP/godot.log" "Encryption: no" && contains "$TMP/godot.log" "Files:"; then
+    ok "godot: pack listing + encryption flag"
+  else bad "godot" "listing or encryption line missing"; fi
+else skip "godot" "FIX_GODOT_PCK unset or absent"; fi
+
+# ---------------------------------------------------------------- rn
+if need rn-pos "${FIX_RN:-}"; then
+  $PY "$SCRIPTS/nar-rn.py" "$FIX_RN" > "$TMP/rn.log" 2>&1
+  if contains "$TMP/rn.log" "Engine: Hermes" \
+     && contains "$TMP/rn.log" "Hermes bytecode version:"; then
+    ok "rn: Hermes detection + bytecode version"
+  else bad "rn-positive" "Hermes lines missing"; fi
+else skip "rn-positive" "FIX_RN unset or absent"; fi
+
+if need rn-neg "$DEMO"; then
+  $PY "$SCRIPTS/nar-rn.py" "$DEMO" > "$TMP/rn-neg.log" 2>&1
+  if contains "$TMP/rn-neg.log" "NOT REACT NATIVE"; then
+    ok "rn: clean negative on demo"
+  else bad "rn-negative" "NOT REACT NATIVE verdict missing"; fi
+else skip "rn-negative" "demo fixture absent"; fi
+
+# ---------------------------------------------------------------- frameworks
+# Doctored demo copies under $NAR_FIXTURES/frameworks/, one planted
+# marker family each (built locally with the zip-append technique).
+FW="$F/frameworks"
+fw_case() {
+  # $1 fixture file name, $2 pool (hint|dex), $3 expected name
+  local file="$FW/$1"
+  if [ ! -f "$file" ]; then skip "frameworks-$1-$3" "fixture absent"; return; fi
+  $PY "$SCRIPTS/nar-triage.py" --json "$file" > "$TMP/fw.json" 2>/dev/null
+  if $PY - "$TMP/fw.json" "$2" "$3" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+pool = ([h["engine"] for h in d.get("engine_hints", [])]
+        if sys.argv[2] == "hint"
+        else [m["marker"] for m in d.get("dex_markers", [])])
+sys.exit(0 if sys.argv[3] in pool else 1)
+PYEOF
+  then ok "frameworks: $3 detected ($1)"
+  else bad "frameworks-$1" "$3 not detected"; fi
+}
+fw_case xamarin.apk hint "Xamarin / .NET"
+fw_case cordova.apk hint "Cordova (hybrid)"
+fw_case capacitor.apk hint "Capacitor (hybrid)"
+fw_case qt.apk hint "Qt for Android"
+fw_case defold.apk hint "Defold"
+fw_case renpy.apk hint "Ren'Py"
+fw_case rpgmaker.apk hint "RPG Maker (web export)"
+fw_case kivy.apk hint "Embedded Python"
+if [ -f "$FW/dexmarkers.apk" ]; then
+  $PY "$SCRIPTS/nar-triage.py" --json "$FW/dexmarkers.apk" > "$TMP/fw-dex.json" 2>/dev/null
+  if $PY - "$TMP/fw-dex.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+pool = {m["marker"] for m in d.get("dex_markers", [])}
+want = {"Xamarin / .NET runtime", "Cordova", "Capacitor",
+        "Qt for Android", "Kivy", "Ren'Py runtime", "EasyRPG Player"}
+sys.exit(0 if want <= pool else 1)
+PYEOF
+  then ok "frameworks: all planted DEX runtime markers detected"
+  else bad "frameworks-dexmarkers" "a planted runtime marker was missed"; fi
+else skip "frameworks-dexmarkers" "fixture absent"; fi
+
+# ------------------------------------------------- 16 KB alignment line
+if need align16k "$DEMO"; then
+  $PY "$SCRIPTS/nar-triage.py" --json "$DEMO" > "$TMP/align.json" 2>/dev/null
+  if $PY - "$TMP/align.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for p in d.get("protections", []):
+    if p.get("category") == "native_hardening":
+        sys.exit(0 if any("16 KB page alignment:" in e
+                          for e in p.get("evidence", [])) else 1)
+sys.exit(1)
+PYEOF
+  then ok "triage: 16 KB page-alignment evidence present"
+  else bad "triage-16k" "alignment evidence line missing"; fi
+else skip "triage-16k" "demo fixture absent"; fi
+
+# ------------------------------------------------------------- form factor
+if need formfactor "${FIX_TV:-}"; then
+  $PY "$SCRIPTS/nar-triage.py" --json "$FIX_TV" > "$TMP/ff.json" 2>/dev/null
+  if $PY - "$TMP/ff.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+ff = (d.get("badging") or {}).get("form_factors") or []
+sys.exit(0 if "Android TV" in ff else 1)
+PYEOF
+  then ok "triage: Android TV form factor from leanback feature"
+  else bad "triage-form-factor" "Android TV not surfaced"; fi
+else skip "triage-form-factor" "FIX_TV unset or absent"; fi
+
+# ---------------------------------------------------------------- analyze
+analyze_case() {
+  # $1 case label, $2 fixture
+  $PY "$SCRIPTS/nar-analyze.py" --out "$TMP/analyze-$1" "$2" > "$TMP/analyze-$1.log" 2>&1
+  local md="$TMP/analyze-$1/report.md" js="$TMP/analyze-$1/report.json"
+  if [ -f "$md" ] && [ -f "$js" ] \
+     && contains "$md" "## Identity" \
+     && contains "$md" "## Protections" \
+     && contains "$md" "## Limitations and unknowns"; then
+    ok "analyze: $1 report with identity/protections/limitations"
+  else
+    bad "analyze-$1" "report or required section missing"
+  fi
+}
+if need analyze-app "${FIX_APP:-}"; then analyze_case app "$FIX_APP"
+else skip "analyze-app" "FIX_APP unset or absent"; fi
+if need analyze-game "${FIX_GAME:-}"; then analyze_case game "$FIX_GAME"
+else skip "analyze-game" "FIX_GAME unset or absent"; fi
+
+# ---------------------------------------------------------------- frida
+if command -v node >/dev/null 2>&1; then
+  FRIDA_OK=1
+  for js in "$SCRIPTS"/frida/*.js; do
+    node --check "$js" 2>/dev/null || FRIDA_OK=0
+  done
+  if [ "$FRIDA_OK" -eq 1 ]; then ok "frida: node --check on all scripts"
+  else bad "frida" "a Frida script fails node --check"; fi
+else skip "frida" "node not installed"; fi
+
+# ---------------------------------------------------------------- summary
+echo "-----------------------------------------------------"
+printf 'e2e matrix: %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
+if [ "$FAIL" -gt 0 ]; then
+  printf 'failed cases:%s\n' "$FAILED_CASES"
+  exit 1
+fi
+exit 0

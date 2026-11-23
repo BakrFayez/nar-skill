@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""nar-il2cpp.py: locate a Unity IL2CPP pair and summarize the dump.
+
+Given an APK (or a directory holding an extracted pair), finds
+assets/bin/Data/Managed/Metadata/global-metadata.dat and
+lib/<abi>/libil2cpp.so, reads the metadata format version from the
+metadata header, then runs Il2CppDumper when one is available and
+summarizes its output: type count, method count, and the top
+namespaces by type count.
+
+When Il2CppDumper (or the .NET runtime it needs) is missing, the pair
+and the metadata version are still reported and the missing piece is
+named plainly; nothing is invented.
+
+Usage:
+    python3 nar-il2cpp.py game.apk [--json] [--out DIR]
+    python3 nar-il2cpp.py extracted-dir/ [--json] [--out DIR]
+
+The extracted pair and the dump are written under --out (default: a
+nar-il2cpp-<name> directory in the system temp dir); the paths are
+printed either way. Stdlib only; Il2CppDumper and dotnet are external
+tools located the same way nar-doctor locates them.
+
+Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+MIT License. See LICENSE in the repo root.
+"""
+import argparse
+import collections
+import json
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+METADATA_MAGIC = 0xFAB11BAF
+DUMP_TIMEOUT = 1800  # seconds; big games dump slowly
+
+TYPEDEF_RE = re.compile(r"// TypeDefIndex: \d+")
+RVA_RE = re.compile(r"// RVA: 0x[0-9A-Fa-f]+")
+NAMESPACE_RE = re.compile(r"^// Namespace: (.*)$", re.MULTILINE)
+
+
+def find_dotnet():
+    cand = shutil.which("dotnet")
+    if cand:
+        return cand
+    for path in (os.path.expanduser("~/workspace/tools/dotnet/dotnet"),
+                 "/usr/share/dotnet/dotnet", "/usr/lib/dotnet/dotnet"):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def find_dumper():
+    """Return (kind, path): kind is 'dotnet-dll' or 'binary'."""
+    env = os.environ.get("NAR_IL2CPPDUMPER_DLL")
+    if env and os.path.isfile(env):
+        return "dotnet-dll", env
+    dll = os.path.expanduser("~/workspace/tools/il2cppdumper/Il2CppDumper.dll")
+    if os.path.isfile(dll):
+        return "dotnet-dll", dll
+    for name in ("Il2CppDumper", "il2cppdumper"):
+        cand = shutil.which(name)
+        if cand:
+            return "binary", cand
+    return None, None
+
+
+def metadata_version(blob):
+    """(magic_ok, version) from the first 8 bytes of global-metadata.dat."""
+    if len(blob) < 8:
+        return False, None
+    magic, version = struct.unpack_from("<II", blob, 0)
+    return magic == METADATA_MAGIC, (version if magic == METADATA_MAGIC
+                                     else None)
+
+
+def locate_in_zip(zf):
+    names = zf.namelist()
+    meta = next((n for n in names
+                 if n.endswith("Managed/Metadata/global-metadata.dat")), None)
+    libs = [n for n in names
+            if n.startswith("lib/") and n.endswith("/libil2cpp.so")]
+    libs.sort(key=lambda n: (0 if "arm64-v8a" in n else 1, n))
+    return meta, (libs[0] if libs else None)
+
+
+def locate_in_dir(root):
+    meta = so = None
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            path = os.path.join(dirpath, name)
+            if name == "global-metadata.dat" and meta is None:
+                meta = path
+            elif name == "libil2cpp.so" and so is None:
+                so = path
+    return meta, so
+
+
+def summarize_dump(dump_dir):
+    """Count types, methods, and namespaces in Il2CppDumper output."""
+    summary = {"types": None, "methods": None, "top_namespaces": [],
+               "dump_cs_lines": None}
+    dump_cs = os.path.join(dump_dir, "dump.cs")
+    if os.path.isfile(dump_cs):
+        types = methods = lines = 0
+        ns_counts = collections.Counter()
+        with open(dump_cs, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                lines += 1
+                if TYPEDEF_RE.search(line):
+                    types += 1
+                if RVA_RE.search(line):
+                    methods += 1
+                m = NAMESPACE_RE.match(line)
+                if m:
+                    ns_counts[m.group(1).strip() or "(global)"] += 1
+        summary["types"] = types
+        summary["methods"] = methods
+        summary["dump_cs_lines"] = lines
+        summary["top_namespaces"] = [
+            {"namespace": ns, "types": n}
+            for ns, n in ns_counts.most_common(10)]
+    script_json = os.path.join(dump_dir, "script.json")
+    if os.path.isfile(script_json) and summary["methods"] is None:
+        try:
+            with open(script_json, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            summary["methods"] = len(data.get("ScriptMethod", []))
+        except (OSError, ValueError):
+            pass
+    return summary
+
+
+def analyze(target, out_dir):
+    report = {"tool": "nar-il2cpp", "target": os.path.abspath(target),
+              "is_il2cpp": False}
+    if not os.path.exists(target):
+        raise FileNotFoundError(f"not found: {target}")
+    os.makedirs(out_dir, exist_ok=True)
+    inputs_dir = os.path.join(out_dir, "inputs")
+    dump_dir = os.path.join(out_dir, "dump")
+    meta_src = so_src = None
+    meta_entry = so_entry = None
+    if os.path.isdir(target):
+        meta_src, so_src = locate_in_dir(target)
+    elif zipfile.is_zipfile(target):
+        with zipfile.ZipFile(target) as zf:
+            meta_entry, so_entry = locate_in_zip(zf)
+            if meta_entry and so_entry:
+                os.makedirs(inputs_dir, exist_ok=True)
+                meta_src = os.path.join(inputs_dir, "global-metadata.dat")
+                so_src = os.path.join(inputs_dir, "libil2cpp.so")
+                with zf.open(meta_entry) as src, open(meta_src, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                with zf.open(so_entry) as src, open(so_src, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+    else:
+        report["error"] = "target is neither an APK/ZIP nor a directory"
+        return report
+    if not meta_src or not so_src:
+        report["error"] = ("no IL2CPP pair found (need both"
+                           " global-metadata.dat and libil2cpp.so);"
+                           " this is not a Unity IL2CPP build, or the"
+                           " pair lives outside the given target")
+        report["found"] = {"metadata": bool(meta_src),
+                           "binary": bool(so_src)}
+        return report
+    report["is_il2cpp"] = True
+    with open(meta_src, "rb") as fh:
+        head = fh.read(8)
+    magic_ok, version = metadata_version(head)
+    abi = None
+    if so_entry and so_entry.startswith("lib/"):
+        abi = so_entry.split("/")[1]
+    report["metadata"] = {
+        "source": meta_entry or meta_src,
+        "size_bytes": os.path.getsize(meta_src),
+        "magic_ok": magic_ok,
+        "version": version,
+        "note": None if magic_ok else
+                "metadata magic is not the standard IL2CPP magic; the"
+                " file may be encrypted or obfuscated, so no version"
+                " can be read from the header",
+    }
+    report["binary"] = {
+        "source": so_entry or so_src,
+        "abi": abi,
+        "size_bytes": os.path.getsize(so_src),
+    }
+    kind, dumper_path = find_dumper()
+    dotnet = find_dotnet() if kind == "dotnet-dll" else None
+    report["dumper"] = {"found": bool(dumper_path), "path": dumper_path,
+                        "via": kind, "dotnet": dotnet, "ran": False,
+                        "exit_code": None, "error": None}
+    if not dumper_path:
+        report["dumper"]["error"] = (
+            "Il2CppDumper not found (looked for Il2CppDumper.dll under"
+            " ~/workspace/tools/il2cppdumper, $NAR_IL2CPPDUMPER_DLL,"
+            " and PATH). The pair and metadata version above are the"
+            " full result without it.")
+        return report
+    if kind == "dotnet-dll" and not dotnet:
+        report["dumper"]["error"] = (
+            "Il2CppDumper.dll found but no .NET runtime (dotnet) to run"
+            " it with; install .NET 6+ or set PATH to one.")
+        return report
+    os.makedirs(dump_dir, exist_ok=True)
+    cmd = ([dotnet, dumper_path] if kind == "dotnet-dll"
+           else [dumper_path])
+    cmd += [so_src, meta_src, dump_dir]
+    try:
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True,
+                              timeout=DUMP_TIMEOUT)
+        report["dumper"]["ran"] = True
+        report["dumper"]["exit_code"] = proc.returncode
+        tail = (proc.stdout or "") + (proc.stderr or "")
+        report["dumper"]["output_tail"] = tail.strip()[-500:]
+        if proc.returncode != 0:
+            report["dumper"]["error"] = (
+                f"Il2CppDumper exited {proc.returncode}; see output_tail")
+    except subprocess.TimeoutExpired:
+        report["dumper"]["error"] = (
+            f"Il2CppDumper did not finish within {DUMP_TIMEOUT}s")
+    except OSError as e:
+        report["dumper"]["error"] = f"could not start Il2CppDumper: {e}"
+    if os.path.isfile(os.path.join(dump_dir, "dump.cs")):
+        report["summary"] = summarize_dump(dump_dir)
+        report["outputs"] = {
+            "dir": os.path.abspath(dump_dir),
+            "dump_cs": os.path.join(os.path.abspath(dump_dir), "dump.cs"),
+            "script_json": os.path.join(os.path.abspath(dump_dir),
+                                        "script.json"),
+            "il2cpp_h": os.path.join(os.path.abspath(dump_dir), "il2cpp.h"),
+        }
+    return report
+
+
+def human(report):
+    lines = [f"NAR IL2CPP: {report['target']}"]
+    if not report.get("is_il2cpp"):
+        lines.append(f"NOT IL2CPP: {report.get('error', 'pair not found')}")
+        return "\n".join(lines)
+    meta = report["metadata"]
+    binary = report["binary"]
+    lines.append(f"Metadata: {meta['source']} ({meta['size_bytes']:,} bytes),"
+                 f" format version {meta['version']}")
+    if meta.get("note"):
+        lines.append(f"  note: {meta['note']}")
+    lines.append(f"Binary:   {binary['source']} ({binary['size_bytes']:,}"
+                 f" bytes, ABI {binary['abi'] or 'unknown'})")
+    dumper = report["dumper"]
+    if not dumper["found"]:
+        lines.append(f"Il2CppDumper: NOT FOUND. {dumper['error']}")
+    elif dumper["error"] and not dumper["ran"]:
+        lines.append(f"Il2CppDumper: {dumper['error']}")
+    elif report.get("summary"):
+        s = report["summary"]
+        lines.append(f"Il2CppDumper: ran (exit {dumper['exit_code']})")
+        lines.append(f"Types: {s['types']:,}   Methods (RVA-marked):"
+                     f" {s['methods']:,}")
+        lines.append("Top namespaces by type count:")
+        for item in s["top_namespaces"]:
+            lines.append(f"  {item['namespace']}: {item['types']:,}")
+        lines.append(f"Dump: {report['outputs']['dump_cs']}")
+    else:
+        lines.append(f"Il2CppDumper: {dumper.get('error') or 'ran but produced no dump.cs'}")
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(
+        description="NAR Unity IL2CPP locator + Il2CppDumper summary.")
+    p.add_argument("target", help="path to the .apk or an extracted dir")
+    p.add_argument("--json", action="store_true",
+                   help="machine-readable JSON output")
+    p.add_argument("--out", metavar="DIR",
+                   help="work/output directory (default: temp dir)")
+    args = p.parse_args(argv)
+    stem = os.path.splitext(os.path.basename(
+        os.path.abspath(args.target).rstrip("/")))[0] or "target"
+    out_dir = args.out or os.path.join(
+        tempfile.gettempdir(), f"nar-il2cpp-{stem}")
+    try:
+        report = analyze(args.target, out_dir)
+    except FileNotFoundError as e:
+        print(f"nar-il2cpp: {e}", file=sys.stderr)
+        return 2
+    report["out_dir"] = os.path.abspath(out_dir)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(human(report))
+    return 0 if report.get("is_il2cpp") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

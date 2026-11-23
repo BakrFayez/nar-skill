@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.1.0 (2026-11-23)
+
+The automation update: one-command analysis, engine deep-dive
+scripts, pak extraction, wider framework coverage, and a permanent
+end-to-end test harness.
+
+- New `nar-analyze.py`: runs the full static workup on an
+  APK/AAB/XAPK/OBB (triage, permission audit, strings scan,
+  protections, and the engine deep dives the target routes to) and
+  writes one evidence report (`report.md` + `report.json`) with an
+  explicit limitations section.
+- New engine scripts, all stdlib-only: `nar-il2cpp.py` (locates
+  the metadata/library pair in a Unity IL2CPP build, reads the
+  metadata format version, runs Il2CppDumper when available, and
+  summarizes types, methods, and top namespaces),
+  `nar-flutter.py` (Dart/Flutter versions and AOT snapshot markers
+  from the engine and app libraries, with a clean negative on
+  non-Flutter builds), `nar-godot.py` (Godot pack header, format,
+  engine version, encryption flag, and file listing for a bare
+  `.pck` or an APK), and `nar-rn.py` (extracts the React Native
+  bundle, decides Hermes vs JSC from the magic, and reports the
+  Hermes bytecode version with function/string/identifier counts,
+  cross-checked against hermes-dec when installed).
+- `nar-pak.py` gained `--extract`: entries can be pulled out of an
+  unencrypted pak (Zlib entries decompressed, stored entries copied
+  byte for byte); encrypted entries refuse plainly.
+- Triage coverage audit additions: framework/engine markers for
+  Xamarin / .NET (incl. MAUI), Cordova, Capacitor, Qt for Android,
+  Defold, Ren'Py, RPG Maker web exports, EasyRPG Player, Kivy /
+  embedded CPython, and generic web-asset bundles; form-factor
+  surfacing from badging (Wear OS, Android TV); and a 16 KB
+  page-alignment verdict in the native-hardening finding (every
+  `PT_LOAD` segment's `p_align`, weakest segment reported).
+- Guides: an "Unpacking: the full chain" section in the triage
+  guide (delivery containers → APK → expansion files → asset
+  containers → packed DEX, with staged-DEX recovery labeled as
+  runtime work); instant apps in the app-bundles guide; APEX
+  format notes with the system apps; Android 16 (API 36) notes in
+  the modern guide; and the signatures guide now carries the full
+  own-build signing workflow (what each scheme protects, the
+  align → sign → verify order, keystore/certificate analysis, v3
+  rotation lineage, source stamp, and signature continuity across
+  versions) with the analysis-only boundary stated inside it.
+- `tests/run_e2e.sh`: a permanent end-to-end harness that runs
+  every bundled script against a local fixture corpus (bound
+  through `$NAR_FIXTURES` and an uncommitted manifest, so no
+  fixture names live in the repo) and prints a pass/fail matrix.
+  Current matrix: 34 passed, 0 failed.
+- `nar-doctor.sh`'s bundled-script self-check now covers all ten
+  Python scripts.
+
 ## 1.0.4 (2026-11-23)
 
 Protection-systems detection in triage, covering the full Android

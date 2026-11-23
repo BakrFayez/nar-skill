@@ -60,6 +60,12 @@ bytecode version instead.
 
 ## Reading the header
 
+Shortcut: `python3 scripts/nar-rn.py app.apk` extracts the bundle,
+decides Hermes vs JSC from the magic, reports the Hermes bytecode
+version with function / string / identifier counts, and cross-checks
+against hermes-dec when it is installed. A clean "not React Native"
+verdict comes back when the APK ships no JS bundle asset.
+
 The first bytes are an 8-byte magic, a uint32 bytecode version,
 and a 20-byte source hash:
 

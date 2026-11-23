@@ -124,7 +124,14 @@ python3 scripts/nar-pak.py game.pak --json     # machine-readable
 
 It parses the FPakInfo footer and the index for pak format versions
 1-7 and prints each entry with packed/unpacked sizes and its
-compression method (None/Zlib/Gzip/LZ4). A layout is only accepted
+compression method (None/Zlib/Gzip/LZ4). Entries can also be pulled
+out of an unencrypted pak (Zlib entries are decompressed, stored
+entries copied byte for byte; encrypted entries refuse plainly):
+
+```bash
+python3 scripts/nar-pak.py game.pak --extract "Content/Maps/*" --out work/pak-out
+python3 scripts/nar-pak.py game.pak --extract "Engine/Config/Base.ini" --out work/pak-out
+``` A layout is only accepted
 when it consumes the index exactly, so a wrong guess never produces
 plausible-looking garbage. Versions 8+ use a different (FName-based,
 path-hash) index and are reported as unsupported, plainly. An
@@ -149,9 +156,21 @@ textures), `.remap` (path remaps), and `project.binary` (magic
 `ECFG`, readable with `strings`: it names the main scene, the
 app version, enabled plugins, and the physics engine).
 
-`.pck` layout: read the header first. The layout is magic `GDPC`,
-then four little-endian uint32 values: pack format version,
-engine major, minor, and patch.
+`.pck` layout: the bundled inspector reads the header and the file
+directory for you, on an APK (embedded pack or loose layout) or a
+bare `.pck`:
+
+```bash
+python3 scripts/nar-godot.py game.apk     # or: python3 scripts/nar-godot.py game.pck
+python3 scripts/nar-godot.py game.pck --json
+```
+
+It reports the pack format, the engine version, the encryption flag,
+and every contained file with its size, using a stdlib directory
+parse (GodotPckTool is the fallback for layouts it cannot read).
+For manual header work: the layout is magic `GDPC`, then four
+little-endian uint32 values: pack format version, engine major,
+minor, and patch.
 
 ```bash
 python3 -c "

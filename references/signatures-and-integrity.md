@@ -30,6 +30,34 @@ Output to record: verified or not, per-scheme present/absent, each
 signer's certificate SHA-256 fingerprint and subject/issuer, and the
 v3 rotation lineage when present.
 
+### What each scheme actually protects
+
+- **v1** digests each ZIP entry individually and signs the manifest
+  of digests. It does not protect the ZIP structure itself: entries
+  can be added, removed, or reordered without breaking v1, and the
+  digests are computed over uncompressed content, so it says nothing
+  about how bytes sit in the file. Weakest scheme; kept for old
+  devices.
+- **v2** digests the whole APK as byte ranges (everything except the
+  signing block itself) in 1 MB chunks. Any change anywhere outside
+  the block breaks it. This is the first scheme that protects the
+  file as a whole, which is also why alignment must happen *before*
+  signing (below).
+- **v3** is v2 plus two things: per-signer SDK-range targeting (a
+  signer can say "trust this key only from API N") and the key
+  rotation lineage, a signed proof chain from an old key to a new
+  one.
+- **v3.1** is a second, independent rotation lineage that only
+  Android 13+ reads, so a rotation can target new devices while old
+  devices keep following the v3 lineage to the original key.
+- **v4** signs nothing inside the APK: it is a Merkle hash tree of
+  the APK in a sidecar `.idsig` file, letting the fs-verity kernel
+  feature verify pages as they are read during streaming /
+  incremental installs. Without the sidecar, v4 does not exist.
+- **Source stamp** is a store's or distributor's countersignature
+  in the signing block. It attests where the APK came from, not who
+  built it, and the platform does not require it.
+
 ## What verification proves (and does not prove)
 
 - `apksigner verify` succeeding proves self-consistency: the bytes
@@ -106,17 +134,131 @@ The fingerprint comparison is the evidence.
   about content. Verify the signer, then analyze the content on its
   own merits.
 
-## Re-signing your own builds
+## Signing your own builds: the full workflow
 
-When you rebuild your own app (for example, after modifying your own
-APK tooling output), sign with your own keystore:
+This section is for signing **your own** apps and for verifying
+signatures during analysis. The boundary is exact: sign builds you
+own, verify any signature you need to read — never re-sign someone
+else's app to defeat its signature checks, never strip or kill
+another app's verification, and never present a re-signed build as
+the original developer's work.
+
+### Order of operations: align, sign, verify
 
 ```bash
-apksigner sign --ks my.keystore --out app-signed.apk app.apk
-apksigner verify --verbose app-signed.apk
+zipalign -P 16 -f -v 4 app-unsigned.apk app-aligned.apk
+apksigner sign --ks my.keystore --out app.apk app-aligned.apk
+apksigner verify --verbose --print-certs app.apk
 ```
 
+- `zipalign` rewrites ZIP entry offsets so uncompressed entries
+  (especially native libraries) start on page boundaries. `-P 16`
+  aligns library entries to 16 KB for the page-size requirement in
+  the modern guide.
+- Alignment must come **before** signing: v2+ digests cover the
+  file's byte layout, so aligning after signing invalidates the
+  signature. v1 alone would survive it; v2/v3 do not.
+- Verify last, on the exact file you ship, and record the
+  fingerprint output (below).
+
+### apksigner sign options that matter
+
+```bash
+apksigner sign --ks release.keystore --ks-key-alias release \
+  --v1-signing-enabled true \
+  --v2-signing-enabled true \
+  --v3-signing-enabled true \
+  --out app.apk app-aligned.apk
+```
+
+- Scheme switches (`--v1/v2/v3-signing-enabled`) decide which
+  schemes are written. Defaults depend on `minSdkVersion`: v1 is
+  added when old devices must install the APK; v2 is the baseline;
+  v3 is added when the APK targets devices that read it.
+- `--min-sdk-version` / `--max-sdk-version` on sign override the
+  values apksigner infers from the APK when it chooses schemes.
+- Multiple signers: repeat `--next-signer` blocks. Rare outside
+  shared-signature system builds.
+
+### Keystore and certificate analysis
+
+```bash
+keytool -list -v -keystore release.keystore -alias release
+keytool -exportcert -keystore release.keystore -alias release | keytool -printcert
+```
+
+Read from a certificate: the SHA-256 fingerprint (the identity
+everyone compares), the subject DN (`CN=`, `O=`, `OU=`, `L=`,
+`ST=`, `C=` — who the key claims to be; self-signed keys claim
+whatever their creator typed), the issuer DN (equal to the subject
+on self-signed keys), the serial, and the validity window.
+
+Expiry works differently than on the web: Android does **not**
+reject an app signature because the certificate expired after
+signing — install and update checks compare key identity, not
+dates. An expired certificate is still a build-hygiene finding
+(stores warn about short validity), not a verification failure.
+Record the dates; do not over-claim what they mean.
+
+For a signed APK, the same facts come from
+`apksigner verify --print-certs` (shown earlier); triage also
+inventories the schemes and the signer count.
+
+### Key rotation (v3 / v3.1 lineage)
+
+Rotation replaces a signing key without breaking updates: the new
+key carries a lineage — a chain of proofs, each signed by the
+previous key — back to the key old installs trust.
+
+```bash
+apksigner rotate --out lineage.bin \
+  --old-signer --ks old.keystore \
+  --new-signer --ks new.keystore
+apksigner sign --ks new.keystore --lineage lineage.bin \
+  --out app.apk app-aligned.apk
+apksigner verify --verbose --print-certs app.apk   # prints the lineage
+```
+
+Reading a lineage during analysis: `apksigner verify` reports each
+signer in the chain and which SDK ranges trust which key. A
+certificate change **with** a valid lineage is a planned rotation.
+A certificate change **without** one means the new build cannot
+install over the old one — the finding nar-compare is built to
+surface (next section). `--rotation-min-sdk-version 33` on sign
+writes the rotation into the v3.1 block so only Android 13+
+follows it.
+
+### Source stamp
+
+A distributor (typically a store) can countersign with a stamp
+signer: `apksigner sign --stamp-signer --ks stamp.keystore …` on
+top of an already signed APK. During analysis, triage reports the
+stamp's presence (`source_stamp` in the JSON, and in the plain
+report). A stamp says where the file was distributed from; it is
+not evidence about the developer's key.
+
+### Signature continuity across versions
+
+Android's update rule is signature continuity: an update must be
+signed by the same key as the installed app, or carry a v3/v3.1
+lineage back to it. The analysis workflow for a version pair:
+
+1. `apksigner verify --print-certs` on both versions; record each
+   signer's SHA-256 fingerprint.
+2. Same fingerprint on both: continuity holds.
+3. Different fingerprint: check the new APK for a rotation lineage
+   (`verify --verbose` prints it). Lineage present and rooted in
+   the old key: planned rotation, updates still work.
+4. Different fingerprint, no lineage: the "update" cannot install
+   over the old app. In a comparison report this is a headline
+   finding, not a footnote.
+
+`nar-compare.py` automates the mechanical half: it inventories
+signing files and reports identity changes between the two files.
+The fingerprint comparison itself is the analyst's step — run it
+on every version pair you diff.
+
 Keep the keystore safe and backed up: losing it means you can never
-publish an update under the same identity. Never sign someone else's
-app with your key, and never ship an app signed with a key you do
-not own.
+publish an update under the same identity. Never sign someone
+else's app with your key, and never ship an app signed with a key
+you do not own.

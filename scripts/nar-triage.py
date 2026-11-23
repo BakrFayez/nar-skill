@@ -81,6 +81,39 @@ ENGINE_SIGNATURES = [
     # Adobe AIR: the descriptor is the strong marker; a bare .swf alone is
     # weak (any app can bundle one). Confirm with the descriptor path.
     ("Adobe AIR", ["META-INF/AIR/application.xml", ".swf"]),
+    # Xamarin / .NET for Android (incl. .NET MAUI): the Mono runtime
+    # library, the app-model library, and the managed assemblies
+    # directory at the zip root are the shipped fingerprints.
+    ("Xamarin / .NET", ["libmonodroid.so", "libxamarin-app.so",
+                        "libmonosgen", "assemblies/"]),
+    # Hybrid web frameworks. Cordova's shipped runtime script is the
+    # strong marker; Capacitor ships its config + plugin registry and
+    # serves the app from assets/public/. Ionic is a UI layer on top
+    # of one of these two, so it is attributed to its container.
+    ("Cordova (hybrid)", ["assets/www/cordova.js"]),
+    ("Capacitor (hybrid)", ["capacitor.config.json",
+                            "capacitor.plugins.json", "assets/public/"]),
+    # Qt for Android: every Qt deployment ships the Core library for
+    # the Qt major it links (libQt5Core / libQt6Core) plus the Android
+    # platform plugin library.
+    ("Qt for Android", ["libqt5core.so", "libqt6core.so",
+                        "libqtforandroid.so"]),
+    # Defold: the engine ships as a single native library.
+    ("Defold", ["libdmengine.so"]),
+    # Ren'Py: compiled script files (.rpyc) are unique to the engine;
+    # its native Python runtime library is the second marker.
+    ("Ren'Py", [".rpyc", "librenpython.so"]),
+    # RPG Maker MV / MZ Android exports are web exports: their core
+    # runtime scripts have engine-specific names inside assets/www.
+    ("RPG Maker (web export)", ["rpg_core.js", "rmmz_core.js"]),
+    # Embedded CPython: python-for-android (Kivy, Ren'Py) and other
+    # embedders link libpython. The DEX markers below say whose
+    # runtime it is when that is knowable.
+    ("Embedded Python", ["libpython3", "libpython2.7.so"]),
+    # Any app bundling a web tree under assets/www: a hybrid
+    # framework, a WebView wrapper, or bundled web content. A content
+    # hint only; the framework markers above say more when they hit.
+    ("Web assets (assets/www)", ["assets/www/"]),
 ]
 # DEX content markers: byte fingerprints searched inside each DEX file.
 # These are string occurrences in the DEX string/type tables, so a hit
@@ -102,6 +135,13 @@ DEX_MARKERS = [
     ("Unity player wrapper", [b"com/unity3d/player"]),
     ("Godot wrapper", [b"org/godotengine/godot"]),
     ("Cocos2d-x wrapper", [b"org/cocos2dx/lib"]),
+    ("Xamarin / .NET runtime", [b"mono/android/"]),
+    ("Cordova", [b"org/apache/cordova"]),
+    ("Capacitor", [b"com/getcapacitor/"]),
+    ("Qt for Android", [b"org/qtproject/qt"]),
+    ("Kivy", [b"org/kivy/android"]),
+    ("Ren'Py runtime", [b"org/renpy/android"]),
+    ("EasyRPG Player", [b"org/easyrpg/player"]),
     # The flag string existing says nothing about its value. Read
     # BuildConfig.smali (apktool) to see true/false.
     ("React Native new-arch flag", [b"IS_NEW_ARCHITECTURE_ENABLED"]),
@@ -617,6 +657,7 @@ def elf_hardening_of(zf, name, size_bytes):
                     "stripped": None}
             relro = None
             dynamic = None  # (offset, filesz)
+            load_aligns = []
             if e_phoff and 0 < e_phnum <= 128 and e_phentsize >= 32:
                 relro = False
                 f.seek(e_phoff)
@@ -629,14 +670,31 @@ def elf_hardening_of(zf, name, size_bytes):
                     if is64:
                         p_offset = struct.unpack_from("<Q", ph, off + 8)[0]
                         p_filesz = struct.unpack_from("<Q", ph, off + 32)[0]
+                        p_align = (struct.unpack_from("<Q", ph, off + 48)[0]
+                                   if off + 56 <= len(ph) else None)
                     else:
                         p_offset = struct.unpack_from("<I", ph, off + 4)[0]
                         p_filesz = struct.unpack_from("<I", ph, off + 16)[0]
+                        p_align = (struct.unpack_from("<I", ph, off + 28)[0]
+                                   if off + 32 <= len(ph) else None)
                     if p_type == 0x6474E552:  # PT_GNU_RELRO
                         relro = True
                     elif p_type == 2:  # PT_DYNAMIC
                         dynamic = (p_offset, p_filesz)
+                    elif p_type == 1 and p_align is not None:  # PT_LOAD
+                        load_aligns.append(p_align)
             info["relro"] = relro
+            if load_aligns:
+                # 16 KB page-size readiness (Android 15+): every LOAD
+                # segment must be aligned to at least 16 KB. Report
+                # the weakest segment, not the strongest.
+                info["load_align_min"] = min(load_aligns)
+                info["load_align_max"] = max(load_aligns)
+                info["aligned_16k"] = min(load_aligns) >= 16384
+            else:
+                info["load_align_min"] = None
+                info["load_align_max"] = None
+                info["aligned_16k"] = None
             if dynamic is not None:
                 bind_now = False
                 d_off, d_filesz = dynamic
@@ -984,9 +1042,19 @@ def aapt2_badging(apk_path):
     info = {}
     permissions = []
     implied = []
+    form_factors = set()
     sdk_pairs = []       # every (min, target) pair badging prints, in order
     pending_min = None
     for line in out.stdout.splitlines():
+        # Form factors are declared as features/libraries, not as
+        # separate badging fields: a watch feature or the wearable
+        # support library means a Wear OS build; the leanback feature
+        # means an Android TV build.
+        if "android.hardware.type.watch" in line \
+                or "com.google.android.wearable" in line:
+            form_factors.add("Wear OS")
+        if "android.software.leanback" in line:
+            form_factors.add("Android TV")
         m = BADGING_PATTERNS["package"].match(line)
         if m:
             info["package"] = m.group(1)
@@ -1017,6 +1085,8 @@ def aapt2_badging(apk_path):
             pm = re.search(r"name='([^']+)'", line)
             if pm:
                 permissions.append(pm.group(1))
+    if form_factors:
+        info["form_factors"] = sorted(form_factors)
     if pending_min is not None:
         sdk_pairs.append((pending_min, None))
     if sdk_pairs:
@@ -1564,6 +1634,16 @@ def triage(apk_path):
                 known_stripped = [l for l in libs_detail
                                   if l["stripped"] is not None]
                 stripped = sum(1 for l in known_stripped if l["stripped"])
+                known_align = [l for l in libs_detail
+                               if l.get("aligned_16k") is not None]
+                aligned_16k = sum(1 for l in known_align
+                                  if l["aligned_16k"])
+                align_evidence = (
+                    f"16 KB page alignment: {aligned_16k} of "
+                    f"{len(known_align)} libs have every LOAD segment "
+                    f"aligned to 16 KB or more" if known_align else
+                    "16 KB page alignment: no LOAD segment alignment "
+                    "could be read")
                 add_protection(
                     "native_hardening",
                     "Native hardening posture (ELF headers)", False,
@@ -1574,7 +1654,8 @@ def triage(apk_path):
                      f"without GNU_RELRO",
                      f"symbol tables: {stripped} of "
                      f"{len(known_stripped)} libs stripped "
-                     f"(no SHT_SYMTAB)"],
+                     f"(no SHT_SYMTAB)",
+                     align_evidence],
                     note="Read from ELF program, dynamic, and section "
                          "headers. Posture only: it describes build "
                          "flags, not exploit resistance.",
@@ -1684,6 +1765,9 @@ def human(report):
                      f"(code {b.get('version_code', '?')})")
         lines.append(f"SDK:     min {b.get('min_sdk', '?')} / target {b.get('target_sdk', '?')}"
                      + (f"  label: {b.get('app_label')}" if b.get("app_label") else ""))
+        if b.get("form_factors"):
+            lines.append(f"Form factors: {', '.join(b['form_factors'])}"
+                         " (declared features/libraries)")
         if b.get("sdk_pairs"):
             pairs = "; ".join(f"min {p['min_sdk']} / target {p['target_sdk']}"
                               for p in b["sdk_pairs"])

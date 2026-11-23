@@ -233,6 +233,30 @@ its delivery mode from its manifest, and remember that on-demand
 packs may never reach a given device. No bundle with asset packs
 was available here, so pack-level commands are untested.
 
+## Instant apps
+
+An instant app is not a separate file format either: it is the
+same AAB with one or more modules marked instant-enabled. Play
+serves those modules to a device without a full install when a
+matching URL is opened. The static evidence lives in the bundle's
+module manifests:
+
+- A module whose manifest carries
+  `<dist:module dist:instant="true">` (distribution namespace) is
+  an instant module; `dist:delivery` inside it says how it is
+  served.
+- The base APK of an installed app and the entry module of an
+  instant experience can be the same module; an APK alone, with no
+  bundle context, does not prove instant delivery ever happened.
+- Instant modules obey size and permission limits (no background
+  services, a restricted permission set), so a module that declares
+  heavy permissions is evidence it is *not* the instant entry.
+
+Analysis route: dump each module manifest with bundletool, read
+the `dist:` elements, and triage the module APKs like any split.
+No instant-enabled bundle was available here, so this section is
+format documentation, not a verified workflow.
+
 ## A note on "PBA"
 
 No Android delivery format called PBA exists in the Android

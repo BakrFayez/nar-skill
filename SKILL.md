@@ -1,8 +1,8 @@
 ---
 name: nar
-description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15) analysis.
+description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis.
 metadata:
-  version: "1.0.4"
+  version: "1.1.0"
 ---
 
 # NAR: Nirous Android Reversing
@@ -70,6 +70,7 @@ investigation with triage unless the question already names a deeper target.
 | Question | First step | Guide |
 |---|---|---|
 | What is this APK? Package, version, size, DEX/.so inventory | `python3 scripts/nar-triage.py app.apk` | [triage and inventory](references/triage-and-inventory.md) |
+| Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (triage + perms + strings + protections + engine deep dives → report.md / report.json) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md) |
 | What engine is this game? Unity / Unreal / Godot? | Triage engine hints, then confirm markers | [triage](references/triage-and-inventory.md), [native libs and JNI](references/native-libs-and-jni.md) |
 | Is this app protected? Which packer / protector? | Triage Protection systems section (named packers, obfuscation, RASP, pinning, DRM, encryption, native hardening) | [triage and inventory](references/triage-and-inventory.md) |
 | Permissions, components, intent filters, SDK levels | `apktool d` or `aapt2 dump xmltree` | [manifest and resources](references/manifest-and-resources.md) |
@@ -77,21 +78,22 @@ investigation with triage unless the question already names a deeper target.
 | Which classes/methods exist? Where is feature X? | Grep jadx output, then read one class | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | How does this method work? | jadx decompile of one class/method | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | What does the native library do? JNI bindings? | `.so` inventory, strings, Ghidra/Kuna | [native libs and JNI](references/native-libs-and-jni.md) |
-| Unity IL2CPP game: what is the game logic? | Il2CppDumper on `global-metadata.dat` + `libil2cpp.so`, then Ghidra | [Unity IL2CPP](references/unity-il2cpp.md) |
-| Godot game: what is in the `.pck` and the scripts? | GodotPckTool list/extract, GDRE Tools decompile | [native libs and JNI](references/native-libs-and-jni.md) |
-| Unreal game: what is inside the `.pak` packs? | Extract the `.pak`, then `python3 scripts/nar-pak.py game.pak` | [native libs and JNI](references/native-libs-and-jni.md) |
-| React Native app: what is in the JS bundle? | Extract `index.android.bundle`, hermes-dec parse/decompile | [React Native](references/react-native.md) |
-| Flutter/Dart app: what is in `libapp.so`? | Dart AOT strings and symbols, version detection | [Flutter and Dart](references/flutter-dart.md) |
+| Unity IL2CPP game: what is the game logic? | `python3 scripts/nar-il2cpp.py game.apk` (locates the pair, runs Il2CppDumper, summarizes), then Ghidra | [Unity IL2CPP](references/unity-il2cpp.md) |
+| Godot game: what is in the `.pck` and the scripts? | `python3 scripts/nar-godot.py game.apk` (pack listing + encryption flag), GodotPckTool extract, GDRE Tools decompile | [native libs and JNI](references/native-libs-and-jni.md) |
+| Unreal game: what is inside the `.pak` packs? | Extract the `.pak`, then `python3 scripts/nar-pak.py game.pak` (list, or `--extract` entries) | [native libs and JNI](references/native-libs-and-jni.md) |
+| React Native app: what is in the JS bundle? | `python3 scripts/nar-rn.py app.apk` (Hermes vs JSC, bytecode version, counts), then hermes-dec decompile | [React Native](references/react-native.md) |
+| Flutter/Dart app: what is in `libapp.so`? | `python3 scripts/nar-flutter.py app.apk` (Dart/Flutter versions, AOT markers), then Dart AOT strings and symbols | [Flutter and Dart](references/flutter-dart.md) |
 | What does it do on the network? | mitmproxy capture, tshark pcap reading | [network traffic](references/network-traffic.md) |
 | What does it do at runtime? (Frida scripts) | `scripts/frida/*.js` on a rooted device or emulator | [Frida scripts](references/frida-scripts.md) |
 | Interesting strings, URLs, endpoints | `python3 scripts/nar-strings.py app.apk` | [nar-strings.py](scripts/nar-strings.py) |
 | Permissions, components, intent filters | `python3 scripts/nar-perms.py app.apk` | [manifest and resources](references/manifest-and-resources.md) |
 | What changed between v1 and v2? | `python3 scripts/nar-compare.py old.apk new.apk` | [version compare and feature map](references/version-compare-and-feature-map.md) |
 | Legacy app: Android 4.x-7, ODEX, v1 signing, ARMv7 | DEX version, signing schemes, legacy markers | [legacy analysis](references/legacy-analysis.md) |
-| Modern app: Android 14/15, 16KB pages, Compose, Rust | ELF alignment, DEX markers, Play Integrity | [modern analysis](references/modern-analysis.md) |
-| Is it signed? Which schemes? Whose certificate? | `apksigner verify --verbose --print-certs` | [signatures and integrity](references/signatures-and-integrity.md) |
+| Modern app: Android 14/15/16, 16KB pages, Compose, Rust | ELF alignment, DEX markers, Play Integrity | [modern analysis](references/modern-analysis.md) |
+| Is it signed? Which schemes? Whose certificate? How do I sign my own build? | `apksigner verify --verbose --print-certs`; own-build workflow (align → sign → verify, rotation, continuity) in the same guide | [signatures and integrity](references/signatures-and-integrity.md) |
 | What does it do at runtime? | adb/logcat, Frida on an authorized device | [dynamic analysis](references/dynamic-analysis.md) |
 | Split APKs / APKS / AAB / OBB set | Triage every file in the set together | [triage and inventory](references/triage-and-inventory.md), [app bundles](references/app-bundles.md) |
+| How do I open this file at all? (unpack chain) | Work outermost-first: delivery container → APK → asset containers → staged DEX | [triage and inventory](references/triage-and-inventory.md) (Unpacking section) |
 | System app from `/system` or `/system/priv-app`? | `adb pull`, then triage + `nar-perms.py` (sharedUserId, platform signature) | [triage and inventory](references/triage-and-inventory.md) |
 | What data does it store on the device? | `run-as` pull, sqlite3 read-only, shared_prefs XML | [dynamic analysis](references/dynamic-analysis.md) |
 
@@ -180,7 +182,7 @@ investigation as complete while required questions remain open.
   [references/frida-scripts.md](references/frida-scripts.md)
 - Legacy analysis: ODEX/OAT, old DEX, v1/v2 signing, ARMv7, old engines:
   [references/legacy-analysis.md](references/legacy-analysis.md)
-- Modern analysis: Android 14/15, 16KB pages, Compose, Rust, Play Integrity:
+- Modern analysis: Android 14/15/16, 16KB pages, Compose, Rust, Play Integrity:
   [references/modern-analysis.md](references/modern-analysis.md)
 - v1/v2/v3/v3.1 signatures, certificates, zipalign:
   [references/signatures-and-integrity.md](references/signatures-and-integrity.md)
@@ -191,11 +193,17 @@ investigation as complete while required questions remain open.
 - Evidence ledger, report template, confidence levels:
   [references/evidence-workflows.md](references/evidence-workflows.md)
 
-Helper scripts (run with `--help`): `scripts/nar-strings.py` (ranked
-strings), `scripts/nar-compare.py` (two-version diff),
-`scripts/nar-perms.py` (permission and component audit),
-`scripts/nar-pak.py` (Unreal .pak lister), and the Frida
-observation scripts in `scripts/frida/` (see the Frida guide).
+Helper scripts (run with `--help`): `scripts/nar-analyze.py`
+(one-command full workup → report.md + report.json),
+`scripts/nar-triage.py` (first-5-minutes triage),
+`scripts/nar-strings.py` (ranked strings), `scripts/nar-compare.py`
+(two-version diff), `scripts/nar-perms.py` (permission and component
+audit), `scripts/nar-pak.py` (Unreal .pak lister/extractor),
+`scripts/nar-il2cpp.py` (Unity IL2CPP locator + dumper summary),
+`scripts/nar-flutter.py` (Flutter/Dart fingerprint),
+`scripts/nar-godot.py` (Godot .pck inspector), `scripts/nar-rn.py`
+(React Native bundle inspector), and the Frida observation scripts
+in `scripts/frida/` (see the Frida guide).
 
 ## Finish the task
 

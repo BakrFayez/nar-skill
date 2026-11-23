@@ -286,7 +286,7 @@ NAR_SCRIPTS_DETAIL=""
 if [ -n "$PY_BIN" ]; then
   NAR_SCRIPTS_OK="ok"
   NAR_SCRIPTS_DETAIL="all bundled scripts compile"
-  for s in nar-triage.py nar-strings.py nar-perms.py nar-compare.py nar-pak.py; do
+  for s in nar-triage.py nar-strings.py nar-perms.py nar-compare.py nar-pak.py nar-analyze.py nar-il2cpp.py nar-flutter.py nar-godot.py nar-rn.py; do
     if [ ! -f "$SCRIPT_DIR/$s" ]; then
       NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="missing scripts/$s"; break
     fi
