@@ -6,6 +6,11 @@ NAR 2.0 — NIROUS ANDROID INTELLIGENCE. Everything from 1.x is
 preserved (same script CLIs, same report sections); 2.0 adds a
 platform layer underneath and around it.
 
+Post-release fix: the Kuna credit link pointed to a repository
+that does not exist; corrected to Kuna's real home
+(Noelo-Lab/kuna) in the README credits, the setup guide, the
+doctor hint, and the tool registry.
+
 - Input layer (nar-input, narlib): magic + structure
   identification for APK/APKS/XAPK/AAB/AAR/JAR/DEX/ODEX/VDEX/
   OBB/ELF and engine containers, duplicate detection by hash,

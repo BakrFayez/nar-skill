@@ -289,7 +289,7 @@ NAR stands on open source tools built by others:
 - [apktool](https://apktool.org/) by Connor Tumbleson and Ryszard Wiśniewski
 - [jadx](https://github.com/skylot/jadx) by skylot
 - [Ghidra](https://ghidra-sre.org/) by the NSA
-- [Kuna](https://github.com/ScepticCute/kuna)
+- [Kuna](https://github.com/Noelo-Lab/kuna)
 - [Android SDK](https://developer.android.com/tools) by Google (aapt2, apksigner, zipalign, adb, bundletool)
 - [Frida](https://frida.re/)
 - [Il2CppDumper](https://github.com/Perfare/Il2CppDumper) by Perfare

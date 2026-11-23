@@ -59,7 +59,7 @@ See [DEX, smali, and decompile](dex-smali-and-decompile.md) for flags.
 | adb | Dynamic analysis, pulling APKs from a device | SDK platform-tools |
 | Frida + frida-tools | Runtime hooks on an authorized device/emulator | `python3 -m venv ~/frida-venv && ~/frida-venv/bin/pip install frida-tools` (a venv avoids PEP 668 errors on Ubuntu 24.04+); needs a matching `frida-server` on the device |
 | Ghidra | Deep native `.so` decompilation | https://ghidra-sre.org/ (12.2+); set `NAR_GHIDRA_DIR` to the install dir |
-| Kuna | Fast whole-program native decompile | https://github.com/ScepticCute/kuna |
+| Kuna | Fast whole-program native decompile | https://github.com/Noelo-Lab/kuna |
 | bundletool | AAB inspection, generating APKs from a bundle | https://github.com/google/bundletool/releases |
 | Il2CppDumper | Unity IL2CPP metadata dumps | https://github.com/Perfare/Il2CppDumper/releases (net6 build; needs .NET 6+ runtime) |
 | mitmproxy | Network capture (mitmdump) | `python3 -m venv ~/mitmproxy-venv && ~/mitmproxy-venv/bin/pip install mitmproxy` |

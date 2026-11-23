@@ -202,7 +202,7 @@ elif [ -x "$HOME/workspace/tools/rea-engines/kuna/kuna" ]; then
   KUNA_BIN="$HOME/workspace/tools/rea-engines/kuna/kuna"
   KUNA_DETAIL="kuna (REA engines path)"
 fi
-check "kuna" "optional" "$KUNA_BIN" "$KUNA_DETAIL" "Optional (fast native decompile): https://github.com/ScepticCute/kuna"
+check "kuna" "optional" "$KUNA_BIN" "$KUNA_DETAIL" "Optional (fast native decompile): https://github.com/Noelo-Lab/kuna"
 
 # --- bundletool (optional) ---
 BUNDLETOOL_BIN="$(command -v bundletool || true)"
