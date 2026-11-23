@@ -1,9 +1,12 @@
-# NAR CI — authored for GitHub Actions.
+# NAR CI — runs on GitHub Actions.
 #
-# Status: AUTHORED, NOT EXECUTED in the build environment
-# (no GitHub Actions runner is available there). The same
-# checks run locally: `python3 -m pytest tests/unit/` and
-# `bash tests/run_e2e.sh` (the e2e harness needs the local
+# Status: EXECUTED AND PASSING on GitHub Actions. Runs #1–#3
+# (2026-11-23, for the workflow-add commit and the two commits
+# after it) all completed with conclusion "success" (11–15 s
+# each); the only annotation on any run is a Node.js 20
+# deprecation warning for the checkout/setup-python actions.
+# The same checks run locally: `python3 -m pytest tests/unit/`
+# and `bash tests/run_e2e.sh` (the e2e harness needs the local
 # fixture tree, so CI runs the unit suite + syntax + the
 # doctor's core check only).
 name: nar-ci
