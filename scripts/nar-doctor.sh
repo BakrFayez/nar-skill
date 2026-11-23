@@ -26,12 +26,16 @@ find_sdk_tool() {
 }
 
 # Each check: name | required(core|optional) | version-command | install hint
-declare -a NAMES=() STATUS=() DETAILS=()
+declare -a NAMES=() STATUS=() DETAILS=() REQUIRED=()
 
 check() {
-  local name="$1" required="$2" path="$3" detail="$4" hint="$5"
+  local name="$1" required="$2" path="$3" detail="$4" hint="$5" forced="${6:-}"
   NAMES+=("$name")
-  if [ -n "$path" ]; then
+  REQUIRED+=("$required")
+  if [ -n "$forced" ]; then
+    STATUS+=("$forced")
+    DETAILS+=("$detail")
+  elif [ -n "$path" ]; then
     STATUS+=("ok")
     DETAILS+=("$detail")
   else
@@ -88,21 +92,50 @@ fi
 check "apktool" "core" "$APKTOOL_BIN" "$APKTOOL_DETAIL" "Install apktool 2.7.0+: https://apktool.org/docs/install/ (or set NAR_APKTOOL_JAR to apktool.jar)"
 
 # --- jadx (core: binary or jar) ---
+# Existence is not enough: jadx ships as a launcher script that needs a
+# JDK (JAVA_HOME set, or java on PATH). Run it for real. A jadx that
+# exists but will not start is a warning with the fix, not an OK, and
+# it counts against the core verdict below.
 JADX_BIN="$(command -v jadx || true)"
 JADX_DETAIL=""
+JADX_STATUS=""
+jadx_try() {
+  # Print the version line when the binary actually starts, else fail.
+  local out
+  out="$("$1" --version 2>&1)" || return 1
+  [ -n "$out" ] || return 1
+  printf '%s' "$(printf '%s' "$out" | head -n 1)"
+}
+jadx_warn_detail() {
+  local home_hint="<path to a JDK 17+>"
+  if [ -n "$JAVA_BIN" ]; then
+    home_hint="$(dirname "$(dirname "$JAVA_BIN")")"
+  fi
+  printf 'jadx found at %s but it failed to start (its launcher needs a JDK). Fix: export JAVA_HOME=%s and re-run' "$1" "$home_hint"
+}
 if [ -n "$JADX_BIN" ]; then
-  JADX_DETAIL="jadx $(jadx --version 2>/dev/null | head -n 1) ($JADX_BIN)"
+  if JADX_VER="$(jadx_try "$JADX_BIN")"; then
+    JADX_DETAIL="jadx $JADX_VER ($JADX_BIN)"
+  else
+    JADX_STATUS="warning"
+    JADX_DETAIL="$(jadx_warn_detail "$JADX_BIN")"
+  fi
 elif [ -n "${NAR_JADX_JAR:-}" ] && [ -f "$NAR_JADX_JAR" ]; then
   JADX_BIN="jar:$NAR_JADX_JAR"
   JADX_DETAIL="jadx via NAR_JADX_JAR=$NAR_JADX_JAR"
 elif [ -x "$HOME/workspace/tools/jadx-cli/bin/jadx" ]; then
   JADX_BIN="$HOME/workspace/tools/jadx-cli/bin/jadx"
-  JADX_DETAIL="jadx $("$JADX_BIN" --version 2>/dev/null | head -n 1) ($JADX_BIN)"
+  if JADX_VER="$(jadx_try "$JADX_BIN")"; then
+    JADX_DETAIL="jadx $JADX_VER ($JADX_BIN)"
+  else
+    JADX_STATUS="warning"
+    JADX_DETAIL="$(jadx_warn_detail "$JADX_BIN")"
+  fi
 elif [ -f "$HOME/workspace/tools/rea-engines/jadx/jadx-headless-mcp-0.7.1-all.jar" ]; then
   JADX_BIN="jar:$HOME/workspace/tools/rea-engines/jadx/jadx-headless-mcp-0.7.1-all.jar"
   JADX_DETAIL="jadx headless MCP jar (REA engines path; MCP use, not CLI)"
 fi
-check "jadx" "core" "$JADX_BIN" "$JADX_DETAIL" "Install jadx: https://github.com/skylot/jadx/releases (or set NAR_JADX_JAR to a jadx jar)"
+check "jadx" "core" "$JADX_BIN" "$JADX_DETAIL" "Install jadx: https://github.com/skylot/jadx/releases (or set NAR_JADX_JAR to a jadx jar)" "$JADX_STATUS"
 
 # --- aapt2 (core) ---
 AAPT2_BIN="$(command -v aapt2 || find_sdk_tool aapt2 || true)"
@@ -268,6 +301,7 @@ check "nar-scripts" "core" "$NAR_SCRIPTS_OK" "$NAR_SCRIPTS_DETAIL" "The scripts 
 CORE_OK=1
 for i in "${!NAMES[@]}"; do
   if [ "${STATUS[$i]}" = "missing" ]; then CORE_OK=0; fi
+  if [ "${STATUS[$i]}" = "warning" ] && [ "${REQUIRED[$i]}" = "core" ]; then CORE_OK=0; fi
 done
 
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'; }
@@ -287,6 +321,7 @@ else
     case "${STATUS[$i]}" in
       ok) mark="OK      " ;;
       missing) mark="MISSING " ;;
+      warning) mark="WARNING " ;;
       *) mark="OPTIONAL" ;;
     esac
     printf '%s %-10s %s\n' "$mark" "${NAMES[$i]}" "${DETAILS[$i]}"

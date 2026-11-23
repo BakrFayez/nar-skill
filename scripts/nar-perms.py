@@ -817,10 +817,34 @@ def human(report):
         lines.append(f"  class: {app['name']}")
     if app.get("label"):
         lines.append(f"  label: {app['label']}")
-    lines.append(f"  debuggable: {app['debuggable'] if app['debuggable'] is not None else '?'}")
+    is_split = bool(report.get("split_name"))
+    dbg = app["debuggable"]
+    if dbg is not None:
+        dbg_text = str(dbg).lower()
+    elif is_split:
+        # Stub manifest: the real value lives in the base APK.
+        dbg_text = "?"
+    else:
+        # android:debuggable defaults to false when absent.
+        dbg_text = "false (platform default; attribute absent)"
+    lines.append(f"  debuggable: {dbg_text}")
     ab = app["allow_backup"]
-    lines.append("  allowBackup: " + ("true (default; attribute absent)" if ab is None
-                                      else str(ab).lower()))
+    if ab is not None:
+        ab_text = str(ab).lower()
+    elif is_split:
+        ab_text = "?"
+    else:
+        # android:allowBackup defaults to true below target 31. For
+        # target 31+ the platform default leaves cloud backup off
+        # (device-to-device transfer is still allowed) unless the
+        # attribute is declared.
+        target = report.get("target_sdk")
+        if target is not None and target >= 31:
+            ab_text = ("false for cloud backup (platform default for"
+                       " target 31+; attribute absent)")
+        else:
+            ab_text = "true (platform default; attribute absent)"
+    lines.append(f"  allowBackup: {ab_text}")
     nsc = app["network_security_config"]
     lines.append(f"  networkSecurityConfig: {nsc if nsc is not None else '(none)'}")
     lines.append(f"  usesCleartextTraffic: {app['uses_cleartext_traffic'] if app['uses_cleartext_traffic'] is not None else '?'}")

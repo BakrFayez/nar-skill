@@ -2,7 +2,7 @@
 name: nar
 description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15) analysis.
 metadata:
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # NAR: Nirous Android Reversing

@@ -1,6 +1,6 @@
 # NAR Skill: Nirous Android Reversing
 
-Version 1.0.2
+Version 1.0.3
 
 Research by Bakr Fayez
 

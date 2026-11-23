@@ -4,7 +4,9 @@
 Stdlib-only, no pip dependencies. Parses the FPakInfo footer and the
 index (mount point + entry records) for the classic pak format
 versions 1-7 and prints each entry with its offset, packed and
-unpacked sizes, and compression method. Versions 8+ use a different
+unpacked sizes, compression method, and encryption flag, plus
+grouped totals (by file extension and by top-level folder).
+Versions 8+ use a different
 (FName-based, path-hash) index and are reported as unsupported,
 plainly: this tool never guesses or invents entries.
 
@@ -112,8 +114,13 @@ def parse_entries(data, version, index_offset, index_size,
             if blocks < 0 or blocks > 1_000_000:
                 raise PakError(f"implausible compression block count: {blocks}")
             r.read(blocks * 16)
+        encrypted = False
         if trailer:
-            r.read(trailer)
+            # v3+ trailer: a 1-byte encryption flag followed by the
+            # compression block size (uint32). Read the flag; do not
+            # skip these bytes blind.
+            encrypted = r.read(1)[0] != 0
+            r.read(trailer - 1)
         entries.append({
             "name": name,
             "offset": offset,
@@ -122,8 +129,39 @@ def parse_entries(data, version, index_offset, index_size,
             "compression_method": method,
             "compression": COMPRESSION.get(method, f"method {method}"),
             "compression_blocks": blocks,
+            "encrypted": encrypted,
         })
     return mount, entries, r.pos - index_offset
+
+
+def pak_stats(entries):
+    """Grouped totals: by file extension and by top-level folder.
+
+    Each group list is sorted by count (name breaks ties) and capped
+    at the top 10, so the shape of a big archive is visible at a
+    glance without dumping every group.
+    """
+    by_ext = {}
+    by_folder = {}
+    for e in entries:
+        name = e["name"]
+        base = name.rsplit("/", 1)[-1]
+        stem, dot, ext = base.rpartition(".")
+        ext_key = f".{ext.lower()}" if dot and stem and ext else "(no extension)"
+        folder_key = name.split("/", 1)[0] if "/" in name else "(root)"
+        for table, key in ((by_ext, ext_key), (by_folder, folder_key)):
+            slot = table.setdefault(key, {"count": 0, "packed_bytes": 0,
+                                          "uncompressed_bytes": 0})
+            slot["count"] += 1
+            slot["packed_bytes"] += e["size_bytes"]
+            slot["uncompressed_bytes"] += e["uncompressed_size_bytes"]
+
+    def top(table):
+        ranked = sorted(table.items(),
+                        key=lambda kv: (-kv[1]["count"], kv[0]))
+        return [{"name": key, **vals} for key, vals in ranked[:10]]
+
+    return {"by_extension": top(by_ext), "by_folder": top(by_folder)}
 
 
 def list_pak(path):
@@ -179,6 +217,9 @@ def list_pak(path):
             report["total_packed_bytes"] = sum(e["size_bytes"] for e in entries)
             report["total_uncompressed_bytes"] = sum(
                 e["uncompressed_size_bytes"] for e in entries)
+            report["encrypted_entry_count"] = sum(
+                1 for e in entries if e["encrypted"])
+            report["stats"] = pak_stats(entries)
             return report
         last_error = (f"index parse consumed {consumed} of {index_size}"
                       " bytes (layout mismatch)")
@@ -201,8 +242,26 @@ def human(report, limit):
         return "\n".join(lines)
     lines.append(f"Mount point: {report['mount_point']}")
     lines.append(f"Entries: {report['entry_count']:,}")
+    enc = report.get("encrypted_entry_count", 0)
+    if enc:
+        lines.append(f"Encryption: AES ({enc:,} of "
+                     f"{report['entry_count']:,} entries flagged)")
+    else:
+        lines.append("Encryption: none")
     lines.append(f"Total packed: {report['total_packed_bytes']:,} bytes; "
                  f"uncompressed: {report['total_uncompressed_bytes']:,} bytes")
+    stats = report.get("stats") or {}
+    for label, key in (("extension", "by_extension"),
+                       ("top-level folder", "by_folder")):
+        groups = stats.get(key) or []
+        if not groups:
+            continue
+        lines.append("")
+        lines.append(f"Entries by {label} (top 10 by count):")
+        for g in groups:
+            lines.append(f"  {g['name']}: {g['count']:,} entries, "
+                         f"{g['packed_bytes']:,} packed / "
+                         f"{g['uncompressed_bytes']:,} uncompressed bytes")
     lines.append("")
     shown = report["entries"] if limit <= 0 else report["entries"][:limit]
     for e in shown:

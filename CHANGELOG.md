@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.0.3 (2026-11-23)
+
+Small fixes from a real-use simulation pass.
+
+- `nar-pak.py`: per-entry encryption flags are now read from the
+  pak index trailer instead of being skipped, and reported in
+  plain output ("Encryption: none", or AES with the flagged count)
+  and as a count in JSON. Plain output also adds grouped stats:
+  entries by file extension and by top-level folder (top 10 by
+  count), each with packed and uncompressed totals.
+- `nar-perms.py`: an absent `android:debuggable` now prints the
+  platform default, "false (platform default; attribute absent)",
+  instead of "?". An absent `android:allowBackup` likewise states
+  the default for the app's target SDK, labeled as a default.
+  Split stub manifests still print "?": their values live in the
+  base APK and are not invented here.
+- `nar-doctor.sh`: the jadx check runs `jadx --version` for real.
+  A jadx that exists but will not start (its launcher needs a JDK)
+  is reported as a warning with the fix (set JAVA_HOME to a
+  JDK 17+) instead of OK, and counts against the core verdict.
+- `references/manifest-and-resources.md`: note that some system
+  apktool builds garble fragments of decoded manifest XML, and
+  that `nar-perms.py`'s own parser plus `aapt2 dump xmltree` are
+  the cross-check; when the three disagree, trust the two that
+  agree.
+
 ## 1.0.2 (2026-11-23)
 
 Fixes and one new tool, all found by running the skill end to end on

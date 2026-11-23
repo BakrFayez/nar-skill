@@ -33,6 +33,14 @@ aapt2 dump badging app.apk
 attribute resource IDs. It never writes a tree, so it is the fastest
 route to one manifest answer.
 
+One caution on decoded output: some system apktool builds garble
+fragments of the decoded manifest XML (attributes merged into one
+another, stray entities), so a decoded manifest can look subtly wrong
+even when the APK is fine. Cross-check before trusting it:
+`nar-perms.py` parses the binary manifest with its own parser, and
+`aapt2 dump xmltree` reads it independently. When the three disagree,
+trust the two that agree.
+
 ## AndroidManifest.xml: what to extract
 
 - Identity: `package`, `android:versionCode`, `android:versionName`.
