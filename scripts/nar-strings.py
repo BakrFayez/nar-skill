@@ -53,6 +53,13 @@ KEY_ASSIGN_RE = re.compile(
 KEY_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9_\-\.]{16,}")
 KEY_TOKEN_RE = re.compile(
     r"(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z0-9_\-+=.]{32,}")
+# Long hex runs are tokens or hashes: MD5 (32), SHA-1 (40), SHA-256 (64).
+# Lowercase-only hex is common for API keys and must not be missed.
+KEY_HEX_RE = re.compile(r"[0-9a-f]{32,}", re.IGNORECASE)
+# Keyword-prefixed tokens: demo_token_<hex>, api_key_<...>, secret-<...>.
+KEY_PREFIXED_RE = re.compile(
+    r"(?i)\b(api[_-]?key|apikey|secret|token|passwd|password|auth[_-]?key|"
+    r"access[_-]?key|private[_-]?key|client[_-]?secret)[_-][A-Za-z0-9_\-.]{16,}")
 # Tokens longer than this are almost always concatenated runs in .so
 # binaries, not real tokens. Percent-encoded tables are data, not keys.
 MAX_TOKEN_LEN = 256
@@ -106,6 +113,12 @@ def _looks_like_key(s):
         return True
     if PERCENT_TABLE_RE.search(s):
         return False
+    m = KEY_PREFIXED_RE.search(s)
+    if m and len(m.group(0)) <= MAX_TOKEN_LEN:
+        return True
+    m = KEY_HEX_RE.search(s)
+    if m and len(m.group(0)) <= MAX_TOKEN_LEN:
+        return True
     m = KEY_TOKEN_RE.search(s)
     return bool(m) and len(m.group(0)) <= MAX_TOKEN_LEN
 

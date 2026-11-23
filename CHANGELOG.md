@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1 (2026-11-23)
+
+- `nar-strings.py`: the key-pattern matcher now catches lowercase hex
+  tokens (32+ hex characters, e.g. MD5-style API keys) and
+  keyword-prefixed tokens (`token_<hex>`, `api_key_<...>`). Found by
+  the demo run: the previous matcher required mixed case and missed
+  a planted lowercase hex token.
+- `nar-triage.py`: `.aab` bundles now report package, version, and SDK
+  levels from `bundletool dump manifest`. Previously triage reported
+  those fields as unreadable for bundles.
+
 ## 1.0.0 (2026-11-23)
 
 First release. NAR (Nirous Android Reversing) is an AI-agent skill for

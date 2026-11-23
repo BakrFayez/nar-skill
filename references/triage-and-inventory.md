@@ -21,8 +21,9 @@ badging` when available), ZIP entry count, DEX files with sizes, native
 libraries per ABI, `META-INF` and signing files, assets / `res/` counts,
 game-engine hints, and asset-bundle inventory.
 
-When `aapt2` cannot read badging (missing binary, or an `.aab` file), the
-package fields report why instead of inventing values. Fall back to
+When `aapt2` cannot read badging (missing binary), the
+package fields report why instead of inventing values. For `.aab` files
+triage reads the manifest with `bundletool dump manifest` instead. Fall back to
 `apktool d` and read the decoded `AndroidManifest.xml` directly.
 
 ## What to read from a triage
@@ -123,9 +124,10 @@ Triage a set as a set:
 3. For an `.apks` file, unzip it first (it is a plain ZIP), then triage
    each contained APK.
 4. For an `.aab`, triage works directly: NAR reads `base/dex/`,
-   `base/manifest/`, `base/res/`, and `base/assets/`. `aapt2 dump
-   badging` cannot read an AAB; use `bundletool dump manifest` to
-   inspect it, or `bundletool build-apks` to convert it to APKs.
+   `base/manifest/`, `base/res/`, and `base/assets/`, and takes the
+   package, version, and SDK levels from the bundle manifest with
+   `bundletool dump manifest` (`aapt2 dump badging` cannot read an
+   AAB). Use `bundletool build-apks` to convert it to APKs.
 5. Version comparison across a set means comparing base-to-base and
    split-to-split with matching split names. See the
    [version compare guide](version-compare-and-feature-map.md).

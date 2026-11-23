@@ -373,13 +373,83 @@ def apksigner_verify(apk_path):
     return info, "ok"
 
 
+def _find_bundletool():
+    """Locate bundletool. Returns the command prefix list, or None.
+
+    Prefers a PATH binary, then $BUNDLETOOL_JAR, then the jar under the
+    usual tools directory (run with java -jar)."""
+    tool = shutil.which("bundletool")
+    if tool:
+        return [tool]
+    jar = os.environ.get("BUNDLETOOL_JAR")
+    if jar and os.path.isfile(jar):
+        return ["java", "-jar", jar]
+    for pattern in (
+        os.path.expanduser("~/workspace/tools/bundletool/bundletool-all-*.jar"),
+        os.path.expanduser("~/tools/bundletool/bundletool-all-*.jar"),
+    ):
+        for cand in sorted(glob.glob(pattern), reverse=True):
+            return ["java", "-jar", cand]
+    return None
+
+
+def bundletool_manifest(aab_path):
+    """Package identity for .aab bundles via `bundletool dump manifest`.
+
+    Returns (info_dict, status) like aapt2_badging. aapt2 cannot read
+    AAB badging at all, so bundles take this path instead.
+    """
+    cmd = _find_bundletool()
+    if not cmd:
+        return {}, "not-found"
+    try:
+        out = subprocess.run(
+            cmd + ["dump", "manifest", "--bundle", aab_path],
+            capture_output=True, text=True, timeout=120, env=_tool_env(),
+        )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+        return {}, "unreadable"
+    if out.returncode != 0:
+        return {}, "unreadable"
+    xml = out.stdout
+    info = {}
+    m = re.search(r"<manifest[^>]*\bpackage=\"([^\"]+)\"", xml)
+    if m:
+        info["package"] = m.group(1)
+    m = re.search(r"android:versionCode=\"([^\"]+)\"", xml)
+    if m:
+        info["version_code"] = m.group(1)
+    m = re.search(r"android:versionName=\"([^\"]+)\"", xml)
+    if m:
+        info["version_name"] = m.group(1)
+    m = re.search(r"<uses-sdk[^>]*android:minSdkVersion=\"([^\"]+)\"", xml)
+    if m:
+        info["min_sdk"] = m.group(1)
+    m = re.search(r"<uses-sdk[^>]*android:targetSdkVersion=\"([^\"]+)\"", xml)
+    if m:
+        info["target_sdk"] = m.group(1)
+    perms = sorted(set(
+        re.findall(r"<uses-permission[^>]*android:name=\"([^\"]+)\"", xml)))
+    if perms:
+        info["permissions"] = perms
+    m = re.search(r"<application[^>]*android:label=\"([^\"]+)\"", xml)
+    if m and not m.group(1).startswith("@"):
+        info["app_label"] = m.group(1)
+    if not info:
+        return {}, "unreadable"
+    return info, "ok"
+
+
 def aapt2_badging(apk_path):
     """Best-effort package identity via aapt2.
 
     Returns (info_dict, status) where status is one of "ok", "not-found",
-    or "unreadable" (aapt2 ran but could not read badging. Expected for
-    .aab bundles, which need bundletool instead).
+    or "unreadable" (aapt2 ran but could not read badging). For .aab
+    bundles, identity comes from `bundletool dump manifest` instead,
+    because aapt2 cannot read AAB badging at all.
     """
+    if apk_path.lower().endswith(".aab"):
+        return bundletool_manifest(apk_path)
     aapt2 = shutil.which("aapt2")
     if not aapt2:
         # Look in common Android SDK locations.
@@ -668,8 +738,8 @@ def human(report):
     elif report.get("badging_status") == "not-found":
         lines.append("Package: unknown (aapt2 not found. See nar-doctor.sh)")
     elif report.get("is_aab"):
-        lines.append("Package: unknown (aapt2 cannot read .aab badging;"
-                     " use bundletool to inspect the manifest)")
+        lines.append("Package: unknown (bundletool could not read the .aab manifest;"
+                     " see nar-doctor.sh)")
     else:
         lines.append("Package: unknown (aapt2 could not read badging for this file)")
     lines += [
