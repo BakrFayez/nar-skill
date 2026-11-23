@@ -1,5 +1,55 @@
 # Changelog
 
+## 2.1.0 (2026-11-23)
+
+Gap-closure release. Every item below was verified by
+execution in the reference environment; the full evidence
+is recorded in NAR_TEST_MATRIX.md (2.1.0 addendum).
+
+- CI truth: the nar-ci workflow has executed on GitHub
+  Actions (3 runs, all successful). Documentation that
+  called it "authored, not executed" was corrected.
+- IoStore entry-level parsing (new narlib/iostore):
+  .utoc containers are parsed end to end — header, chunk
+  IDs / offsets / lengths, compression blocks and method
+  names, directory index (chunk -> file path), per-chunk
+  meta — across the current and legacy layout eras, with
+  a layout accepted only when its section walk consumes
+  the file exactly. nar-unreal inventories containers for
+  APK and bare .utoc targets; nar-analyze embeds counts
+  as engines.unreal_iostore. Chunk extraction supports
+  the None and Zlib methods; other methods (e.g. Oodle)
+  are named, not decoded, and encrypted containers are
+  inventoried, never decrypted.
+- Cpp2IL is now an optional second IL2CPP backend in
+  nar-il2cpp (--backend cpp2il or $NAR_IL2CPP_BACKEND);
+  Il2CppDumper remains the default. Its registry entry
+  flips from unavailable to a probed CLI entry, the
+  doctor probes it, and its dummy-DLL output is
+  summarized by a new ECMA-335-lite reader
+  (narlib/dotnetmeta: TypeDef / MethodDef counts and
+  namespaces). Extracted-pair targets refuse with the
+  precise reason (Cpp2IL's force-path options require a
+  Unity version a bare pair does not carry).
+- nar-dex performance on very large targets (~1.9x on a
+  273 MB multi-DEX fixture): --json emission uses the
+  compact C encoder (an indent argument forces CPython's
+  pure-Python encoder; the parsed document is
+  field-identical), and the code scan unpacks the
+  instruction stream in one pass.
+- Fixed: narlib field enumeration started its class_data
+  walk two ULEB128s early (it never skipped the header's
+  two method counts), shifting every field list onto
+  wrong field ids. The corrected walk is verified
+  against the Android SDK's dexdump (9,949 classes,
+  0 mismatches).
+- Runtime verification was attempted on an emulator and
+  remains IMPLEMENTED_BUT_UNVERIFIED: with no /dev/kvm
+  on the reference host, the API-34 image never reached
+  boot completion under QEMU TCG within the time box.
+  The precise blocker is recorded in the test matrix and
+  the troubleshooting guide.
+
 ## 2.0.0 (2026-11-23)
 
 NAR 2.0 — NIROUS ANDROID INTELLIGENCE. Everything from 1.x is
@@ -69,9 +119,10 @@ doctor hint, and the tool registry.
 - Schemas for all standardized outputs in schemas/;
   pytest unit suite in tests/unit/ (synthetic DEX/ELF/format
   builders, no binary fixtures); benchmark runner in
-  tests/benchmarks/; pyproject.toml; CI workflow authored
-  for GitHub Actions (not executed in the build
-  environment).
+  tests/benchmarks/; pyproject.toml; CI workflow for
+  GitHub Actions (executed there since the 2.0.0 release —
+  runs #1–#3 all passed; see the 2.1.0 addendum in
+  NAR_TEST_MATRIX.md).
 - Fix carried from the audit: nar-analyze Markdown no longer
   renders structured string hits as raw JSON blobs.
 - The five 1.1.1 wide-sweep fixes are included (they landed

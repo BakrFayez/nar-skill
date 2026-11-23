@@ -483,6 +483,62 @@ if need input-duplicates "$DEMO"; then
   else bad "input-duplicates" "identical copies not grouped"; fi
 else skip "input-duplicates" "demo fixture absent"; fi
 
+# ------------------------------------------------- unreal iostore (2.1.0)
+# Synthetic container built byte-exact by the unit-test builder;
+# parsed back through nar-unreal in bare and in-APK modes.
+$PY - "$SKILL" "$TMP" <<'PYEOF'
+import sys, zipfile
+skill, tmp = sys.argv[1], sys.argv[2]
+sys.path.insert(0, skill + "/tests/unit")
+sys.path.insert(0, skill + "/scripts")
+import test_iostore
+utoc, ucas = test_iostore.build_current()
+open(tmp + "/case.utoc", "wb").write(utoc)
+open(tmp + "/case.ucas", "wb").write(ucas)
+with zipfile.ZipFile(tmp + "/iostore.apk", "w") as zf:
+    zf.writestr("assets/case.utoc", utoc)
+    zf.writestr("assets/case.ucas", ucas)
+PYEOF
+if [ -f "$TMP/case.utoc" ]; then
+  $PY "$SCRIPTS/nar-unreal.py" "$TMP/case.utoc" --json > "$TMP/iostore.json" 2>&1
+  $PY "$SCRIPTS/nar-unreal.py" "$TMP/iostore.apk" --json > "$TMP/iostore-apk.json" 2>&1
+  if $PY - "$TMP" <<'PYEOF'
+import json, sys
+tmp = sys.argv[1]
+r = json.load(open(tmp + "/iostore.json"))
+c = r["iostore_containers"][0]
+assert c["entry_count"] == 3, c.get("entry_count")
+paths = {e.get("file") or "" for e in c["entries"]}
+assert any(p.endswith("Content/ChunkA.uasset") for p in paths), paths
+r2 = json.load(open(tmp + "/iostore-apk.json"))
+assert r2["iostore_containers"], r2.get("iostore_containers")
+assert r2["iostore_containers"][0]["entry_count"] == 3
+PYEOF
+  then ok "unreal-iostore: synthetic container parsed (bare + APK)"
+  else bad "unreal-iostore" "container inventory mismatch"; fi
+else skip "unreal-iostore" "synthetic container build failed"; fi
+
+# ------------------------------------------------- il2cpp cpp2il (2.1.0)
+CPP2IL_BIN="${NAR_CPP2IL:-}"
+[ -z "$CPP2IL_BIN" ] && [ -x "$HOME/workspace/tools/cpp2il/Cpp2IL" ] \
+  && CPP2IL_BIN="$HOME/workspace/tools/cpp2il/Cpp2IL"
+[ -z "$CPP2IL_BIN" ] && command -v Cpp2IL >/dev/null 2>&1 \
+  && CPP2IL_BIN="$(command -v Cpp2IL)"
+if need il2cpp-cpp2il "${FIX_UNITY:-}" && [ -n "$CPP2IL_BIN" ]; then
+  $PY "$SCRIPTS/nar-il2cpp.py" "$FIX_UNITY" --backend cpp2il --json \
+    > "$TMP/il2cpp-cpp2il.json" 2>&1
+  if $PY - "$TMP" <<'PYEOF'
+import json, sys
+r = json.load(open(sys.argv[1] + "/il2cpp-cpp2il.json"))
+assert r["backend"] == "cpp2il", r.get("backend")
+s = r["summary"]
+assert s and s["types"] > 1000, s
+assert s["method_count_basis"].startswith("MethodDef"), s
+PYEOF
+  then ok "il2cpp-cpp2il: Cpp2IL backend summary on Unity fixture"
+  else bad "il2cpp-cpp2il" "backend summary missing or implausible"; fi
+else skip "il2cpp-cpp2il" "Cpp2IL binary or FIX_UNITY absent"; fi
+
 # ---------------------------------------------------------------- frida
 if command -v node >/dev/null 2>&1; then
   FRIDA_OK=1

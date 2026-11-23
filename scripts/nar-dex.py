@@ -21,6 +21,14 @@ DEX parser and reports:
   disassembly index, each version-checked through the
   registry before it runs (--jadx / --baksmali).
 
+Performance note (2.1.0): --json output is emitted with
+the compact C encoder. An indent argument forces
+CPython's pure-Python encoder, which profiling on a very
+large multi-DEX target showed costing more than the
+analysis itself; the parsed document is field-identical
+either way, and every consumer of this output parses it
+as JSON. Human-readable output remains the default.
+
 Usage:
     python3 nar-dex.py app.apk [--json] [--out DIR]
                        [--jadx] [--baksmali]
@@ -277,7 +285,7 @@ def baksmali_index(dex_bytes_path, out_dir):
 
 def analyze(target, out_dir=None, use_jadx=False,
             use_baksmali=False):
-    report = {"tool": "nar-dex", "version": "2.0.0",
+    report = {"tool": "nar-dex", "version": "2.1.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
     totals = {"classes": 0, "methods": 0, "fields": 0,
@@ -391,7 +399,7 @@ def main(argv=None):
                   "w", encoding="utf-8") as fh:
             json.dump({"methods": methods}, fh, indent=1)
     if args.json:
-        print(json.dumps(report, indent=2))
+        print(json.dumps(report))
     else:
         human(report)
     return 0

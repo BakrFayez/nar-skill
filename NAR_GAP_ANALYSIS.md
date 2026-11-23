@@ -254,3 +254,34 @@ mapped against the audited v1.1.0 implementation. Statuses:
 | GitHub Actions (test/lint/type/security/schema/docs) | M | No workflows exist |
 | pyproject.toml / lock strategy | M | Absent (scripts are intentionally stdlib-only; packaging metadata still required by the brief) |
 | Versioned releases + changelog + compatibility matrix | PI | Changelog disciplined; no compatibility matrix document |
+
+## 2.1.0 status addendum (2026-11-23)
+
+The tables above remain the Phase-Zero audit of v1.1.0 —
+a historical baseline, not edited. The 2.0 program closed
+most rows (see NAR_IMPLEMENTATION_PLAN.md and the 2.0.0
+test matrix). The 2.1.0 gap-closure cycle moved these
+further; evidence in NAR_TEST_MATRIX.md (2.1.0 addendum):
+
+- §22 GitHub Actions: the workflow exists (added with
+  2.0.0) and has EXECUTED on GitHub Actions — 3 runs,
+  all successful. Row status now IT.
+- §3.1 Unreal IoStore: entry-level parsing shipped
+  (narlib/iostore, two layout eras, directory index,
+  chunk inventory + None/Zlib extraction in nar-unreal
+  and nar-analyze). Row status now IT for chunk-level
+  inventory; UAsset/UExport-level inspection (§13)
+  remains PI — FModel/UAssetAPI are still absent on the
+  host, registered unavailable, never faked.
+- §11 IL2CPP tooling: Cpp2IL integrated as an optional
+  second backend (probed registry entry, doctor probe,
+  ECMA-335-lite summary); Il2CppDumper remains default.
+- §20 Performance: nar-dex ~1.9x on the 273 MB fixture
+  (emission + scan); the same cycle fixed a field
+  enumeration defect the equivalence proof exposed.
+- Runtime rows (§16): UNCHANGED at
+  IMPLEMENTED_BUT_UNVERIFIED. The 2.1.0 emulator attempt
+  was blocked by the host (no /dev/kvm; the API-34 image
+  never reached boot completion under QEMU TCG inside
+  the time box). A KVM-capable host or a physical device
+  is required to move these rows.

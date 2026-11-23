@@ -45,7 +45,7 @@ sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as NAR_VERSION
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.0.0"
+    NAR_VERSION = "2.1.0"
 
 # One entry per bundled-tool run, in execution order. main()
 # turns this into execution-log.json (2.0 orchestrator record).
@@ -168,6 +168,7 @@ def zip_entry_flags(names):
                      or "libgodot" in n
                      or n.startswith("assets/.godot/") for n in names),
         "paks": [n for n in names if n.lower().endswith(".pak")],
+        "utocs": [n for n in names if n.lower().endswith(".utoc")],
     }
 
 
@@ -519,6 +520,31 @@ def analyze(target, work_dir, out_dir=None):
                 " 3 were listed")
         if pak_reports:
             engines["unreal_pak"] = pak_reports
+        utoc_reports = []
+        utoc_sources = [(scan_path, n) for n in flags["utocs"]]
+        for src_zip, entry in utoc_sources[:3]:
+            with zipfile.ZipFile(src_zip) as zf:
+                utoc_path = extract_entry(
+                    zf, entry, os.path.join(
+                        work_dir, "utoc", os.path.basename(entry)))
+            data, err = run_json_tool("nar-unreal.py", [utoc_path])
+            containers = (data or {}).get("iostore_containers") or []
+            if containers:
+                summary = dict(containers[0])
+                summary.pop("entries", None)  # per-chunk detail is
+                # one nar-unreal run away; counts/totals stay here
+                summary["contained_in"] = os.path.basename(src_zip)
+                summary["entry"] = entry
+                utoc_reports.append(summary)
+            else:
+                utoc_reports.append({"error": err or "no container"
+                                     " parsed", "entry": entry})
+        if len(utoc_sources) > 3:
+            report["limitations"].append(
+                f"{len(utoc_sources)} .utoc containers found; only"
+                " the first 3 were parsed")
+        if utoc_reports:
+            engines["unreal_iostore"] = utoc_reports
     report["engines"] = engines
 
     # 2.0 module stages (fingerprint / engine fusion / DEX /
@@ -546,6 +572,10 @@ def analyze(target, work_dir, out_dir=None):
             dumper = section.get("dumper") or {}
             if dumper.get("error"):
                 lim.append(f"IL2CPP dump degraded: {dumper['error']}")
+            cpp2il = section.get("cpp2il") or {}
+            if cpp2il.get("error"):
+                lim.append("IL2CPP dump degraded (Cpp2IL): "
+                           f"{cpp2il['error']}")
     for pak in engines.get("unreal_pak", []):
         if pak.get("encrypted_entry_count"):
             lim.append(f"Pak {pak.get('entry')}: "
@@ -712,13 +742,18 @@ def render_md(report):
             lines.append(f"- Metadata version: {meta.get('version')}"
                          f" (magic ok: {meta.get('magic_ok')})")
             if summary:
+                basis = summary.get("method_count_basis") \
+                    or "RVA-marked methods"
                 lines.append(f"- Dump: {summary.get('types')} types,"
-                             f" {summary.get('methods')} RVA-marked"
-                             f" methods; top namespaces:"
+                             f" {summary.get('methods')} methods"
+                             f" ({basis}); top namespaces:"
                              f" {json.dumps(summary.get('top_namespaces'))}")
             dumper = section.get("dumper") or {}
             if dumper.get("error"):
                 lines.append(f"- Dumper: {dumper['error']}")
+            cpp2il = section.get("cpp2il") or {}
+            if cpp2il.get("error"):
+                lines.append(f"- Cpp2IL: {cpp2il['error']}")
         elif name == "flutter":
             lines.append(f"- Dart: {section.get('dart_version')};"
                          f" Flutter: {section.get('flutter_version')};"

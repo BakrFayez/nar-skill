@@ -278,7 +278,7 @@ def fuse(apk_path, deep=False, work_dir=None):
             if v["engine"] == "React Native" and v["detected"]:
                 v["variant"] = "new architecture (Fabric/TurboModules)"
     verdicts.sort(key=lambda v: -v["score"])
-    return {"tool": "nar-engines", "version": "2.0.0",
+    return {"tool": "nar-engines", "version": "2.1.0",
             "target": os.path.abspath(apk_path),
             "target_sha256": sha256_of(apk_path),
             "verdicts": verdicts, "ambiguities": ambiguities}

@@ -5,7 +5,8 @@
 # Usage: bash nar-doctor.sh [--json]
 # Exit 0 when all CORE tools are present, 1 otherwise.
 # Optional tools (adb, frida, ghidra, kuna, bundletool, il2cppdumper,
-# mitmproxy, tshark, godotpcktool, gdre, hermes-dec) never fail the check.
+# cpp2il, mitmproxy, tshark, godotpcktool, gdre, hermes-dec) never
+# fail the check.
 set -u
 
 JSON=0
@@ -228,6 +229,22 @@ elif [ -f "$HOME/workspace/tools/il2cppdumper/Il2CppDumper.dll" ]; then
   IL2CPP_DETAIL="il2cppdumper (tools path; run with dotnet)"
 fi
 check "il2cppdumper" "optional" "$IL2CPP_BIN" "$IL2CPP_DETAIL" "Optional (Unity IL2CPP dumps): https://github.com/Perfare/Il2CppDumper/releases (needs .NET 6+)"
+
+# --- cpp2il (optional; second IL2CPP backend for nar-il2cpp) ---
+CPP2IL_BIN="${NAR_CPP2IL:-}"
+CPP2IL_DETAIL=""
+if [ -n "$CPP2IL_BIN" ] && [ ! -x "$CPP2IL_BIN" ]; then CPP2IL_BIN=""; fi
+if [ -z "$CPP2IL_BIN" ]; then
+  CPP2IL_BIN="$(command -v Cpp2IL || command -v cpp2il || true)"
+fi
+if [ -z "$CPP2IL_BIN" ] && [ -x "$HOME/workspace/tools/cpp2il/Cpp2IL" ]; then
+  CPP2IL_BIN="$HOME/workspace/tools/cpp2il/Cpp2IL"
+fi
+if [ -n "$CPP2IL_BIN" ]; then
+  CPP2IL_VER="$("$CPP2IL_BIN" --version 2>/dev/null | grep -oE 'Version [^ ]+' | head -1)"
+  CPP2IL_DETAIL="cpp2il ($CPP2IL_BIN) ${CPP2IL_VER:-version unknown}"
+fi
+check "cpp2il" "optional" "$CPP2IL_BIN" "$CPP2IL_DETAIL" "Optional (second Unity IL2CPP backend): https://github.com/SamboyCoding/Cpp2IL/releases (or set NAR_CPP2IL)"
 
 # --- mitmproxy (optional) ---
 MITM_BIN="$(command -v mitmdump || command -v mitmproxy || true)"

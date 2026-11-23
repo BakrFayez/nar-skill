@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.0.0
+Version 2.1.0
 
 Research by Bakr Fayez
 
@@ -68,7 +68,7 @@ or standalone, exactly as in 1.x.
   across 18 engine/framework families, with optional deep-dive
   confirmation (`nar-engines.py --deep`), plus dedicated
   Unity (`nar-unity.py`, optional UnityPy census) and Unreal
-  (`nar-unreal.py`, IoStore inventory) deep dives.
+  (`nar-unreal.py`, IoStore entry-level parsing) deep dives.
 - **DEX and native intelligence**: a built-in DEX parser
   (classes, methods, fields, call edges, reflection and
   dynamic-loading evidence, Kotlin inventory, jadx/baksmali
@@ -96,7 +96,7 @@ or standalone, exactly as in 1.x.
   honest limitations; unavailable tools are registered as
   unavailable, never faked.
 
-`nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-analyze.py` runs the whole static workup in one command and writes a single evidence report (`report.md` + `report.json`). `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists and extracts Unreal `.pak` archives. `nar-il2cpp.py`, `nar-flutter.py`, `nar-godot.py`, and `nar-rn.py` handle the Unity IL2CPP, Flutter/Dart, Godot, and React Native deep dives.
+`nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-analyze.py` runs the whole static workup in one command and writes a single evidence report (`report.md` + `report.json`). `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists and extracts Unreal `.pak` archives. `nar-il2cpp.py` (Il2CppDumper by default, Cpp2IL as an optional second backend), `nar-flutter.py`, `nar-godot.py`, and `nar-rn.py` handle the Unity IL2CPP, Flutter/Dart, Godot, and React Native deep dives.
 
 Then open `SKILL.md` and follow the routing table for your question.
 

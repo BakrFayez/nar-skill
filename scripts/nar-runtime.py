@@ -105,7 +105,7 @@ def status():
                                 "ro.build.version.release")})
     verified = bool(devices)
     return {
-        "tool": "nar-runtime", "version": "2.0.0",
+        "tool": "nar-runtime", "version": "2.1.0",
         "adb": adb, "frida": frida,
         "devices": device_info,
         "device_error": err,
@@ -153,7 +153,7 @@ def plan(apk_path):
          "evidence": "app-private file inventory for the "
                      "case workspace"},
     ]
-    return {"tool": "nar-runtime", "version": "2.0.0",
+    return {"tool": "nar-runtime", "version": "2.1.0",
             "target": os.path.abspath(apk_path),
             "package_hint": package_hint,
             "verification_status": st["verification_status"],

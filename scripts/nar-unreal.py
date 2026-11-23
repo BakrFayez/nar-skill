@@ -8,17 +8,20 @@ For an APK (or a bare .pak / IoStore container):
   (.utoc/.ucas) presence as the UE5-era packaging indicator,
 - every bundled .pak parsed with nar-pak: version, entry
   count, encryption flags, mount point, content statistics,
-- IoStore containers inventoried honestly: the .utoc index
-  format is parsed for its header facts only where the layout
-  is verifiable; entry-level IoStore parsing is NOT claimed
-  (no FModel/UAssetAPI-class tool is integrated — see the
-  capability registry),
+- IoStore containers parsed at entry level by narlib.iostore
+  (pure Python, public TOC layout): header, chunk IDs /
+  offsets / lengths, compression block table, compression
+  method names, directory index (chunk -> file path), and
+  per-chunk SHA-1 meta. Compression methods other than
+  None/Zlib (e.g. Oodle) are named, not decoded; encrypted
+  containers are inventoried, never decrypted,
 - config and content signals: .uasset/.umap counts from pak
   listings, Engine/Game config file presence.
 
 Usage:
     python3 nar-unreal.py app.apk [--json]
     python3 nar-unreal.py content.pak [--json]
+    python3 nar-unreal.py content.utoc [--json]
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
@@ -32,8 +35,14 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib.hashing import sha256_of  # noqa: E402
+from narlib.iostore import IoStoreError, parse_utoc  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Per-container chunk detail kept in JSON output; counts and
+# totals always cover every chunk.
+ENTRY_CAP = 250
+CONTAINER_CAP = 5
 
 
 def run_json_tool(script, args, timeout=1200):
@@ -66,8 +75,31 @@ def pak_summary(data_path):
     }
 
 
+def iostore_summary(utoc_bytes, name, ucas_name=None,
+                    ucas_size=None):
+    """Parse one .utoc into a presentation-ready container
+    record (chunk detail capped; counts/totals complete)."""
+    try:
+        parsed = parse_utoc(utoc_bytes, name)
+    except IoStoreError as e:
+        return {"entry": name, "error": f"IoStore parse failed: {e}"}
+    parsed.pop("_blocks", None)
+    entries = parsed.pop("entries")
+    total = len(entries)
+    parsed["entries"] = entries[:ENTRY_CAP]
+    if total > ENTRY_CAP:
+        parsed["entries_capped"] = (
+            f"chunk detail capped at {ENTRY_CAP} of {total}; "
+            "counts and totals cover every chunk")
+    parsed["entry"] = name
+    if ucas_name:
+        parsed["ucas_entry"] = ucas_name
+        parsed["ucas_size"] = ucas_size
+    return parsed
+
+
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unreal", "version": "2.0.0",
+    report = {"tool": "nar-unreal", "version": "2.1.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     lower = target.lower()
@@ -75,13 +107,44 @@ def analyze(target, work_dir=None):
         report["verdict"] = "pak-container"
         report["paks"] = [pak_summary(target)]
         return report
+    if lower.endswith(".utoc"):
+        sibling = target[:-5] + ".ucas"
+        ucas_name = ucas_size = None
+        if os.path.exists(sibling):
+            ucas_name = os.path.basename(sibling)
+            ucas_size = os.path.getsize(sibling)
+        with open(target, "rb") as fh:
+            container = iostore_summary(
+                fh.read(), os.path.basename(target),
+                ucas_name, ucas_size)
+        report["verdict"] = "iostore-container"
+        report["generation"] = "UE5-era (IoStore packaging)"
+        report["iostore_files"] = [os.path.basename(target)]
+        report["iostore_containers"] = [container]
+        report["limitations"] = _iostore_limitations()
+        return report
+    if lower.endswith(".ucas"):
+        report["verdict"] = "iostore-data"
+        report["limitations"] = [
+            "A .ucas data file carries no index; parse its "
+            "sibling .utoc instead.",
+        ]
+        return report
     triage = run_json_tool("nar-triage.py", [target])
     versions = (triage or {}).get("engine_versions") or {}
     hints = (triage or {}).get("engine_hints") or []
     unreal_hint = any(h["engine"] == "Unreal Engine" for h in hints)
     paks, iostore, configs = [], [], []
+    containers = []
     with zipfile.ZipFile(target) as zf:
         names = zf.namelist()
+        infos = {i.filename: i for i in zf.infolist()}
+        ucas_by_prefix = {}
+        for name in names:
+            if name.lower().endswith(".ucas"):
+                ucas_by_prefix[name[:-5].lower()] = name
+        utoc_names = [n for n in names
+                      if n.lower().endswith(".utoc")]
         for name in names:
             ln = name.lower()
             if ln.endswith(".pak"):
@@ -102,11 +165,28 @@ def analyze(target, work_dir=None):
                 iostore.append(name)
             elif "/config/" in ln and ln.endswith(".ini"):
                 configs.append(name)
+        for name in utoc_names[:CONTAINER_CAP]:
+            ucas_name = ucas_by_prefix.get(name[:-5].lower())
+            ucas_size = (infos[ucas_name].file_size
+                         if ucas_name else None)
+            containers.append(iostore_summary(
+                zf.read(name), name, ucas_name, ucas_size))
+        if len(utoc_names) > CONTAINER_CAP:
+            containers.append({
+                "note": f"{len(utoc_names)} .utoc containers "
+                        f"found; only the first {CONTAINER_CAP} "
+                        "were parsed"})
     generation = None
     if iostore:
         generation = "UE5-era (IoStore packaging)"
     elif versions.get("unreal_engine"):
         generation = versions["unreal_engine"]
+    limitations = [
+        "Encrypted pak entries are counted, never decrypted "
+        "(key extraction is out of scope).",
+    ]
+    if containers:
+        limitations = _iostore_limitations() + limitations
     report.update({
         "verdict": "unreal" if (unreal_hint or paks or iostore)
                    else "absent",
@@ -115,16 +195,22 @@ def analyze(target, work_dir=None):
                              if k.startswith("unreal")},
         "paks": paks,
         "iostore_files": iostore,
+        "iostore_containers": containers,
         "config_files": configs[:25],
-        "limitations": [
-            "IoStore entry-level parsing is not integrated (no "
-            "FModel/UAssetAPI-class tool available); containers "
-            "are inventoried, not unpacked.",
-            "Encrypted pak entries are counted, never decrypted "
-            "(key extraction is out of scope).",
-        ],
+        "limitations": limitations,
     })
     return report
+
+
+def _iostore_limitations():
+    return [
+        "IoStore chunk payloads are inventoried, not "
+        "extracted, in APK mode; extraction is a narlib "
+        "capability exercised by the unit suite.",
+        "IoStore compression methods other than None/Zlib "
+        "(e.g. Oodle) are named, not decoded; containers "
+        "flagged Encrypted are inventoried, never decrypted.",
+    ]
 
 
 def human(report):
@@ -149,6 +235,28 @@ def human(report):
             print(f"    ERROR: {pak['error']}")
     if report.get("iostore_files"):
         print(f"IoStore files: {report['iostore_files']}")
+    for c in report.get("iostore_containers", []):
+        if c.get("error"):
+            print(f"- utoc {c.get('entry', '')}: {c['error']}")
+            continue
+        if c.get("note"):
+            print(f"- utoc: {c['note']}")
+            continue
+        h = c.get("header", {})
+        di = c.get("directory_index") or {}
+        print(f"- utoc {c.get('entry', '')}: TOC "
+              f"v{h.get('version')} ({h.get('version_name')}), "
+              f"{c.get('entry_count')} chunks, "
+              f"{c.get('total_chunk_bytes')} bytes in "
+              f"{c.get('total_stored_bytes')} stored, methods "
+              f"{c.get('compression_methods')}, types "
+              f"{c.get('entries_by_type')}")
+        if di:
+            print(f"    directory index: mount "
+                  f"{di.get('mount_point')!r}, "
+                  f"{di.get('files_named')} files named")
+        if c.get("entries_capped"):
+            print(f"    {c['entries_capped']}")
     for lim in report.get("limitations", []):
         print(f"limitation: {lim}")
 

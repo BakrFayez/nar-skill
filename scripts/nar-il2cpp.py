@@ -12,9 +12,19 @@ When Il2CppDumper (or the .NET runtime it needs) is missing, the pair
 and the metadata version are still reported and the missing piece is
 named plainly; nothing is invented.
 
+An optional second backend, Cpp2IL, can be selected with
+--backend cpp2il (or $NAR_IL2CPP_BACKEND=cpp2il); Il2CppDumper
+remains the default. Cpp2IL's dummy-DLL output is summarized
+by narlib's own ECMA-335 reader (TypeDef / MethodDef row
+counts), so its summary has the same shape with one stated
+difference: its method count is MethodDef rows (all declared
+methods), while Il2CppDumper's is RVA-marked methods (methods
+with native bodies).
+
 Usage:
     python3 nar-il2cpp.py game.apk [--json] [--out DIR]
     python3 nar-il2cpp.py extracted-dir/ [--json] [--out DIR]
+    python3 nar-il2cpp.py game.apk --backend cpp2il [--json]
 
 The extracted pair and the dump are written under --out (default: a
 nar-il2cpp-<name> directory in the system temp dir); the paths are
@@ -26,6 +36,7 @@ MIT License. See LICENSE in the repo root.
 """
 import argparse
 import collections
+import glob
 import json
 import os
 import re
@@ -35,6 +46,9 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib.dotnetmeta import DotNetMetaError, summarize_dlls  # noqa: E402
 
 METADATA_MAGIC = 0xFAB11BAF
 DUMP_TIMEOUT = 1800  # seconds; big games dump slowly
@@ -68,6 +82,113 @@ def find_dumper():
         if cand:
             return "binary", cand
     return None, None
+
+
+CPP2IL_VERSION_RE = re.compile(r"Version (\S+)")
+
+
+def find_cpp2il():
+    """Return (path, version): probe $NAR_CPP2IL, the tools
+    dir, then PATH; version from the tool's own banner."""
+    candidates = []
+    env = os.environ.get("NAR_CPP2IL")
+    if env:
+        candidates.append(env)
+    candidates.append(os.path.expanduser(
+        "~/workspace/tools/cpp2il/Cpp2IL"))
+    for name in ("Cpp2IL", "cpp2il"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    for cand in candidates:
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+            version = None
+            try:
+                proc = subprocess.run(
+                    [cand, "--version"], capture_output=True,
+                    text=True, timeout=30)
+                m = CPP2IL_VERSION_RE.search(
+                    (proc.stdout or "") + (proc.stderr or ""))
+                if m:
+                    version = m.group(1)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            return cand, version
+    return None, None
+
+
+def run_cpp2il(target, out_dir):
+    """Run the Cpp2IL backend; returns the backend block
+    (and fills summary/outputs on the caller's report)."""
+    block = {"found": False, "path": None, "version": None,
+             "ran": False, "exit_code": None, "error": None}
+    path, version = find_cpp2il()
+    block["path"] = path
+    block["version"] = version
+    if not path:
+        block["error"] = (
+            "Cpp2IL not found (looked at $NAR_CPP2IL,"
+            " ~/workspace/tools/cpp2il/Cpp2IL, and PATH)."
+            " Il2CppDumper remains available as the default"
+            " backend.")
+        return block, None, None
+    block["found"] = True
+    if os.path.isdir(target):
+        # Cpp2IL discovers its inputs from a game layout or
+        # an APK; its force-path options additionally demand
+        # a Unity version, which a bare extracted pair does
+        # not carry (the metadata version is not the Unity
+        # version, and guessing one would fabricate input).
+        block["error"] = (
+            "Cpp2IL backend needs an APK target: it discovers"
+            " the IL2CPP pair and Unity version from the game"
+            " package, and a bare extracted pair carries no"
+            " Unity version to give its force-path options."
+            " Use the default Il2CppDumper backend for"
+            " extracted pairs.")
+        return block, None, None
+    cpp_dir = os.path.join(out_dir, "cpp2il")
+    os.makedirs(cpp_dir, exist_ok=True)
+    cmd = [path, "--game-path", target,
+           "--output-as", "dll_default",
+           "--output-to", cpp_dir]
+    try:
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True,
+                              timeout=DUMP_TIMEOUT)
+        block["ran"] = True
+        block["exit_code"] = proc.returncode
+        tail = (proc.stdout or "") + (proc.stderr or "")
+        block["output_tail"] = tail.strip()[-500:]
+        if proc.returncode != 0:
+            block["error"] = (
+                f"Cpp2IL exited {proc.returncode}; see output_tail")
+            return block, None, None
+    except subprocess.TimeoutExpired:
+        block["error"] = (
+            f"Cpp2IL did not finish within {DUMP_TIMEOUT}s")
+        return block, None, None
+    except OSError as e:
+        block["error"] = f"could not start Cpp2IL: {e}"
+        return block, None, None
+    dlls = sorted(glob.glob(os.path.join(cpp_dir, "**", "*.dll"),
+                            recursive=True))
+    if not dlls:
+        block["error"] = "Cpp2IL ran but produced no DLL output"
+        return block, None, None
+    try:
+        summary = summarize_dlls(dlls)
+    except DotNetMetaError as e:
+        block["error"] = f"could not summarize Cpp2IL output: {e}"
+        return block, None, None
+    summary["dump_cs_lines"] = None
+    summary["method_count_basis"] = (
+        "MethodDef rows (all declared methods)")
+    outputs = {"dir": os.path.abspath(cpp_dir),
+               "assemblies": summary.pop("assemblies"),
+               "dll_glob": os.path.join(
+                   os.path.abspath(cpp_dir), "*.dll")}
+    return block, summary, outputs
 
 
 def metadata_version(blob):
@@ -136,9 +257,17 @@ def summarize_dump(dump_dir):
     return summary
 
 
-def analyze(target, out_dir):
+def analyze(target, out_dir, backend=None):
     report = {"tool": "nar-il2cpp", "target": os.path.abspath(target),
               "is_il2cpp": False}
+    backend = (backend or os.environ.get("NAR_IL2CPP_BACKEND")
+               or "il2cppdumper")
+    if backend not in ("il2cppdumper", "cpp2il"):
+        report["error"] = (
+            f"unknown IL2CPP backend {backend!r} (expected"
+            " 'il2cppdumper' or 'cpp2il')")
+        return report
+    report["backend"] = backend
     if not os.path.exists(target):
         raise FileNotFoundError(f"not found: {target}")
     os.makedirs(out_dir, exist_ok=True)
@@ -192,6 +321,13 @@ def analyze(target, out_dir):
         "abi": abi,
         "size_bytes": os.path.getsize(so_src),
     }
+    if backend == "cpp2il":
+        block, summary, outputs = run_cpp2il(target, out_dir)
+        report["cpp2il"] = block
+        if summary is not None:
+            report["summary"] = summary
+            report["outputs"] = outputs
+        return report
     kind, dumper_path = find_dumper()
     dotnet = find_dotnet() if kind == "dotnet-dll" else None
     report["dumper"] = {"found": bool(dumper_path), "path": dumper_path,
@@ -254,6 +390,27 @@ def human(report):
         lines.append(f"  note: {meta['note']}")
     lines.append(f"Binary:   {binary['source']} ({binary['size_bytes']:,}"
                  f" bytes, ABI {binary['abi'] or 'unknown'})")
+    if report.get("backend") == "cpp2il":
+        cpp = report["cpp2il"]
+        if not cpp["found"]:
+            lines.append(f"Cpp2IL: NOT FOUND. {cpp['error']}")
+        elif report.get("summary"):
+            s = report["summary"]
+            lines.append(
+                f"Cpp2IL {cpp.get('version') or ''}: ran "
+                f"(exit {cpp['exit_code']})")
+            lines.append(f"Types: {s['types']:,}   Methods "
+                         f"(MethodDef rows): {s['methods']:,}")
+            lines.append("Top namespaces by type count:")
+            for item in s["top_namespaces"]:
+                lines.append(f"  {item['namespace']}: {item['types']:,}")
+            lines.append(f"Assemblies: "
+                         f"{report['outputs']['assemblies']} in "
+                         f"{report['outputs']['dir']}")
+        else:
+            lines.append(
+                f"Cpp2IL: {cpp.get('error') or 'ran but produced no summary'}")
+        return "\n".join(lines)
     dumper = report["dumper"]
     if not dumper["found"]:
         lines.append(f"Il2CppDumper: NOT FOUND. {dumper['error']}")
@@ -281,13 +438,17 @@ def main(argv=None):
                    help="machine-readable JSON output")
     p.add_argument("--out", metavar="DIR",
                    help="work/output directory (default: temp dir)")
+    p.add_argument("--backend", choices=("il2cppdumper", "cpp2il"),
+                   default=None,
+                   help="dump backend (default: il2cppdumper, or"
+                        " $NAR_IL2CPP_BACKEND)")
     args = p.parse_args(argv)
     stem = os.path.splitext(os.path.basename(
         os.path.abspath(args.target).rstrip("/")))[0] or "target"
     out_dir = args.out or os.path.join(
         tempfile.gettempdir(), f"nar-il2cpp-{stem}")
     try:
-        report = analyze(args.target, out_dir)
+        report = analyze(args.target, out_dir, backend=args.backend)
     except FileNotFoundError as e:
         print(f"nar-il2cpp: {e}", file=sys.stderr)
         return 2

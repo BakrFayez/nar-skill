@@ -28,8 +28,8 @@ output) wherever the tool supports it.
   degrades to an explicit note when the tool is absent. It
   never fabricates the missing tool's output.
 - Tools that are not installed in the build environment
-  (Cpp2IL, Il2CppInspector, AssetRipper, UABEA, FModel,
-  UAssetAPI, UnrealPak, CFR, Procyon, dex2jar) are registered
+  (Il2CppInspector, AssetRipper, UABEA, FModel, UAssetAPI,
+  UnrealPak, CFR, Procyon, dex2jar) are registered
   with kind `unavailable` and an honest limitation line.
   Registering a tool is not claiming it ran.
 - Optional Python modules (UnityPy, androguard) are probed

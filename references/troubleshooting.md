@@ -78,3 +78,20 @@ accept one) and clear old scratch dirs.
 The dashboard renders the companions that exist. If a stage
 degraded (see report.json `limitations` and the execution
 log), its section is absent rather than empty-faked.
+
+## Emulator never finishes booting on a KVM-less host
+
+nar-runtime's device steps need a booted device. On a host
+without /dev/kvm, the Android emulator falls back to QEMU
+TCG software emulation (it refuses `-accel off` unless
+ANDROID_I_WANT_MY_TCG=yes is set), and a modern google_apis
+image may not reach `sys.boot_completed=1` within any
+practical time box on a small shared-CPU VM — adb can show
+state `device` and a stopped boot animation while the guest
+is still crawling. That is an environment limit, not a NAR
+defect: the runtime subsystem stays IMPLEMENTED_BUT_UNVERIFIED
+until it is run against a booted emulator on a KVM-capable
+host or a physical device. Related traps on hand-assembled
+SDKs: avdmanager may refuse AVD creation when the emulator
+package lacks package.xml (write the AVD config by hand), and
+an unknown `skin.name` in config.ini is fatal even headless.

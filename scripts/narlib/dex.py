@@ -185,6 +185,13 @@ class Dex:
         off = class_data_off
         static_n, off = _uleb128(data, off)
         instance_n, off = _uleb128(data, off)
+        # The class_data header carries four counts; the
+        # encoded fields start only after the two method
+        # counts. (Fixed in 2.1.0: this walk previously
+        # started two ULEB128s early, so field lists were
+        # shifted onto the wrong field ids.)
+        _direct_n, off = _uleb128(data, off)
+        _virtual_n, off = _uleb128(data, off)
         types, strings = self.types(), self.strings()
         for kind, count in (("static", static_n),
                             ("instance", instance_n)):
@@ -254,49 +261,53 @@ class Dex:
     # -- code scan -------------------------------------------------
     def scan_code(self, code_off):
         """Scan one code item. Returns {invokes: [(method_idx,
-        kind)], string_refs: [string_idx], dynamic: [kinds]}."""
+        kind)], string_refs: [string_idx], dynamic: [kinds]}.
+        The instruction stream is unpacked in one C pass and
+        walked by index — per-unit struct calls were the
+        second-hottest path in the DEX profile."""
         data = self.data
         if code_off + 16 > len(data):
             return {"invokes": [], "string_refs": [], "dynamic": []}
         insns_size = struct.unpack_from("<I", data, code_off + 12)[0]
         start = code_off + 16
         end = min(len(data), start + insns_size * 2)
+        n_units = (end - start) // 2
+        units = struct.unpack_from(f"<{n_units}H", data, start) \
+            if n_units else ()
         invokes, string_refs, dynamic = [], [], []
-        pos = start
-        while pos + 2 <= end:
-            unit = struct.unpack_from("<H", data, pos)[0]
+        i = 0
+        while i < n_units:
+            unit = units[i]
             op = unit & 0xFF
             if op == 0x00:
                 # Payload pseudo-instructions carry their own size.
-                if unit == 0x0100 and pos + 4 <= end:  # packed-switch
-                    sz = struct.unpack_from("<H", data, pos + 2)[0]
-                    pos += (4 + sz * 2) * 2
+                if unit == 0x0100 and i + 1 < n_units:  # packed-switch
+                    sz = units[i + 1]
+                    i += 4 + sz * 2
                     continue
-                if unit == 0x0200 and pos + 4 <= end:  # sparse-switch
-                    sz = struct.unpack_from("<H", data, pos + 2)[0]
-                    pos += (2 + sz * 4) * 2
+                if unit == 0x0200 and i + 1 < n_units:  # sparse-switch
+                    sz = units[i + 1]
+                    i += 2 + sz * 4
                     continue
-                if unit == 0x0300 and pos + 8 <= end:  # fill-array-data
-                    width = struct.unpack_from("<H", data, pos + 2)[0]
-                    sz = struct.unpack_from("<I", data, pos + 4)[0]
-                    pos += (4 + (width * sz + 1) // 2) * 2
+                if unit == 0x0300 and i + 3 < n_units:  # fill-array-data
+                    width = units[i + 1]
+                    sz = units[i + 2] | (units[i + 3] << 16)
+                    i += 4 + (width * sz + 1) // 2
                     continue
-                pos += 2
+                i += 1
                 continue
             if op in INVOKE_OPS:
-                if pos + 4 <= end:
-                    midx = struct.unpack_from("<H", data, pos + 2)[0]
-                    invokes.append((midx, INVOKE_OPS[op]))
+                if i + 1 < n_units:
+                    invokes.append((units[i + 1], INVOKE_OPS[op]))
             elif op in DYNAMIC_OPS:
                 dynamic.append(DYNAMIC_OPS[op])
             elif op == 0x1A:  # const-string
-                if pos + 4 <= end:
-                    string_refs.append(
-                        struct.unpack_from("<H", data, pos + 2)[0])
+                if i + 1 < n_units:
+                    string_refs.append(units[i + 1])
             elif op == 0x1B:  # const-string/jumbo
-                if pos + 6 <= end:
+                if i + 2 < n_units:
                     string_refs.append(
-                        struct.unpack_from("<I", data, pos + 2)[0])
-            pos += OP_WIDTH[op] * 2
+                        units[i + 1] | (units[i + 2] << 16))
+            i += OP_WIDTH[op]
         return {"invokes": invokes, "string_refs": string_refs,
                 "dynamic": dynamic}
