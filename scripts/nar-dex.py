@@ -20,6 +20,17 @@ DEX parser and reports:
 - optional adapters: jadx decompile index and baksmali
   disassembly index, each version-checked through the
   registry before it runs (--jadx / --baksmali).
+- targeted bytecode disassembly with NAR's own disassembler
+  (narlib.dexdis): --disassemble decodes the instruction
+  stream of the methods selected by --disasm-class and/or
+  --disasm-method (substring match), with every reference
+  resolved. --disasm-all selects every method that has code
+  and must be requested explicitly — it is the expensive
+  mode. A method whose stream cannot be decoded faithfully
+  is reported as failed with the precise reason and offset,
+  never guessed. This is the fallback for methods jadx
+  fails on: the listing is ground truth, not an
+  approximation.
 
 Performance note (2.1.0): --json output is emitted with
 the compact C encoder. An indent argument forces
@@ -32,6 +43,8 @@ as JSON. Human-readable output remains the default.
 Usage:
     python3 nar-dex.py app.apk [--json] [--out DIR]
                        [--jadx] [--baksmali]
+                       [--disassemble --disasm-class TEXT
+                        [--disasm-method TEXT] | --disasm-all]
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
@@ -46,6 +59,7 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import registry as reg_mod  # noqa: E402
+from narlib import dexdis  # noqa: E402
 from narlib.dex import Dex, DexError  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 
@@ -87,7 +101,7 @@ def load_dexes(target):
                 yield name, zf.read(name)
 
 
-def analyze_dex(name, data):
+def analyze_dex(name, data, disasm=None):
     dex = Dex(data, name)
     strings = dex.strings()
     types = dex.types()
@@ -197,6 +211,13 @@ def analyze_dex(name, data):
         "invoke_custom_ops": dynamic_ops,
     }
     kotlin_types = [t for t in type_set if t.startswith("Lkotlin")]
+    if disasm is not None:
+        report["disassembly"] = dexdis.disassemble(
+            dex,
+            class_pattern=disasm.get("class_pattern"),
+            method_pattern=disasm.get("method_pattern"),
+            want_all=disasm.get("all", False),
+            limit=disasm.get("limit", 500))
     report["kotlin"] = {
         "metadata_annotation_present":
             "kotlin/Metadata" in strings,
@@ -284,8 +305,8 @@ def baksmali_index(dex_bytes_path, out_dir):
 
 
 def analyze(target, out_dir=None, use_jadx=False,
-            use_baksmali=False):
-    report = {"tool": "nar-dex", "version": "2.1.0",
+            use_baksmali=False, disasm=None):
+    report = {"tool": "nar-dex", "version": "2.2.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
     totals = {"classes": 0, "methods": 0, "fields": 0,
@@ -293,7 +314,7 @@ def analyze(target, out_dir=None, use_jadx=False,
     first_dex_path = None
     for name, data in load_dexes(target):
         try:
-            dex_report = analyze_dex(name, data)
+            dex_report = analyze_dex(name, data, disasm)
         except DexError as e:
             report["dex_files"].append({"name": name,
                                         "error": str(e)})
@@ -354,6 +375,23 @@ def human(report):
     print(f"Totals: {t['classes']} classes, {t['methods']} "
           f"methods, {t['fields']} fields, {t['call_edges']:,} "
           f"call edges, {t['native_methods']} native methods")
+    for d in report["dex_files"]:
+        dis = d.get("disassembly")
+        if not dis:
+            continue
+        print(f"Disassembly ({d['name']}, {dis['mode']}): "
+              f"{dis['methods_decoded']} decoded, "
+              f"{dis['methods_failed']} failed, "
+              f"{dis['methods_selected']} selected of "
+              f"{dis['methods_with_code']} methods with code")
+        for f in dis["failures"][:10]:
+            print(f"  FAILED {f['class']}->{f['signature']}: "
+                  f"{f['reason']} (at {f['offset_units']:#06x})")
+        if dis["mode"] == "targeted":
+            for m in dis["methods"]:
+                print(f"  {m['class']}->{m['signature']}")
+                for e in m["instructions"]:
+                    print(f"    {e['addr']:04x}: {e['text']}")
     for key in ("jadx", "baksmali"):
         if key in report:
             print(f"{key}: {json.dumps(report[key])[:300]}")
@@ -363,7 +401,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(
         description="Deep DEX intelligence: enumeration, call "
                     "edges, reflection/dynamic evidence, Kotlin "
-                    "inventory, optional jadx/baksmali adapters.")
+                    "inventory, targeted bytecode disassembly, "
+                    "optional jadx/baksmali adapters.")
     p.add_argument("target", help="path to an .apk or .dex file")
     p.add_argument("--json", action="store_true")
     p.add_argument("--out", metavar="DIR",
@@ -373,10 +412,39 @@ def main(argv=None):
     p.add_argument("--baksmali", action="store_true",
                    help="also run the baksmali adapter on the "
                         "first DEX")
+    p.add_argument("--disassemble", action="store_true",
+                   help="decode method bytecode with the "
+                        "narlib disassembler; needs a scope: "
+                        "--disasm-class and/or --disasm-method, "
+                        "or --disasm-all")
+    p.add_argument("--disasm-class", metavar="TEXT",
+                   help="only disassemble methods of classes "
+                        "whose descriptor contains TEXT")
+    p.add_argument("--disasm-method", metavar="TEXT",
+                   help="only disassemble methods whose name "
+                        "contains TEXT")
+    p.add_argument("--disasm-all", action="store_true",
+                   help="disassemble every method that has "
+                        "code (expensive; explicit opt-in)")
+    p.add_argument("--disasm-limit", type=int, default=500,
+                   metavar="N",
+                   help="cap on method listings emitted "
+                        "(counts stay complete; default 500)")
     args = p.parse_args(argv)
+    disasm = None
+    if args.disassemble:
+        if not (args.disasm_class or args.disasm_method
+                or args.disasm_all):
+            p.error("--disassemble needs a scope: "
+                    "--disasm-class, --disasm-method, or "
+                    "--disasm-all")
+        disasm = {"class_pattern": args.disasm_class,
+                  "method_pattern": args.disasm_method,
+                  "all": args.disasm_all,
+                  "limit": args.disasm_limit}
     try:
         report = analyze(args.target, args.out, args.jadx,
-                         args.baksmali)
+                         args.baksmali, disasm)
     except (FileNotFoundError, zipfile.BadZipFile) as e:
         print(f"nar-dex: {e}", file=sys.stderr)
         return 2

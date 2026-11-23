@@ -16,11 +16,28 @@ What is real here:
   schemas/timeline.schema.json, ready to be filled by a
   session on a real device.
 
-What is NOT claimed: no Android device or emulator exists in
-this environment, so every device-dependent capability is
-labeled IMPLEMENTED_BUT_UNVERIFIED, exactly as the brief's
-honesty rules require. The moment a device is attached, the
-same commands run unchanged.
+Verification status: the device paths were verified live on
+2026-11-23 against an Android emulator (API 26 / Android
+8.0.0, google_apis x86_64 image, QEMU TCG software emulation
+on a KVM-less host): adb enumeration and property reads,
+package install and launch of the demo fixture, this
+module's status/plan output against the attached device
+(status reports verified-live), frida-server 17.27.4 running
+as root, and the bundled network-observe and file-io-observe
+scripts attached to the live demo process with all hooks
+installed. A same-day follow-up verified Frida spawn mode
+on the same target with a resume-first recipe (spawn via
+the Frida API, resume immediately, settle, then load via
+the CLI against the spawned pid): the one-command -f form
+loses ActivityManager's ~10 s process-start-timeout race
+under TCG — logcat records the gated child killed with
+reason "start timeout" — while the recipe ran both
+observation scripts live in Frida-spawned processes. One
+limit stands, stated plainly: a physical device remains
+IMPLEMENTED_BUT_UNVERIFIED — emulator success does not
+transfer to real hardware. Where no device is attached,
+status keeps reporting IMPLEMENTED_BUT_UNVERIFIED,
+exactly as the brief's honesty rules require.
 
 Usage:
     python3 nar-runtime.py status [--json]
@@ -105,7 +122,7 @@ def status():
                                 "ro.build.version.release")})
     verified = bool(devices)
     return {
-        "tool": "nar-runtime", "version": "2.1.0",
+        "tool": "nar-runtime", "version": "2.2.0",
         "adb": adb, "frida": frida,
         "devices": device_info,
         "device_error": err,
@@ -153,7 +170,7 @@ def plan(apk_path):
          "evidence": "app-private file inventory for the "
                      "case workspace"},
     ]
-    return {"tool": "nar-runtime", "version": "2.1.0",
+    return {"tool": "nar-runtime", "version": "2.2.0",
             "target": os.path.abspath(apk_path),
             "package_hint": package_hint,
             "verification_status": st["verification_status"],

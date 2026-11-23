@@ -32,6 +32,13 @@ output) wherever the tool supports it.
   UnrealPak, CFR, Procyon, dex2jar) are registered
   with kind `unavailable` and an honest limitation line.
   Registering a tool is not claiming it ran.
+- Unreal package inspection does not depend on the
+  unavailable tools above: `narlib/uasset.py` implements
+  the documented package layout directly (summary, name /
+  import / export / depends tables, best-effort property
+  tags). FModel/UAssetAPI stay registered `unavailable`;
+  class-specific export data decoding remains out of
+  scope for the built-in parser.
 - Optional Python modules (UnityPy, androguard) are probed
   by import; absence is a documented degradation, not an
   error. UnityPy powers the optional bundle census in

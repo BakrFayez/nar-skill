@@ -16,12 +16,24 @@ For an APK (or a bare .pak / IoStore container):
   None/Zlib (e.g. Oodle) are named, not decoded; encrypted
   containers are inventoried, never decrypted,
 - config and content signals: .uasset/.umap counts from pak
-  listings, Engine/Game config file presence.
+  listings, Engine/Game config file presence,
+- UAsset-level inspection by narlib.uasset (pure Python,
+  public package layout): FPackageFileSummary with UE4/UE5
+  version gating, name/import/export/depends tables with
+  references resolved to readable names, soft package
+  references and searchable names, cooked .uexp/.ubulk
+  awareness, and a best-effort FPropertyTag stream parse
+  whose every result carries a confidence note. Packages
+  are parsed loose in an APK, inside IoStore containers
+  (directory-indexed ExportBundleData chunks), and inside
+  .pak files when --work extraction is enabled; a bare
+  .uasset/.umap file is a target of its own.
 
 Usage:
-    python3 nar-unreal.py app.apk [--json]
+    python3 nar-unreal.py app.apk [--json] [--work DIR]
     python3 nar-unreal.py content.pak [--json]
     python3 nar-unreal.py content.utoc [--json]
+    python3 nar-unreal.py asset.uasset [--json]
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
@@ -35,7 +47,9 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib.hashing import sha256_of  # noqa: E402
-from narlib.iostore import IoStoreError, parse_utoc  # noqa: E402
+from narlib.iostore import (IoStoreError, extract_chunk,  # noqa: E402
+                            parse_utoc)
+from narlib.uasset import UAssetError, parse_package  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -43,6 +57,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # totals always cover every chunk.
 ENTRY_CAP = 250
 CONTAINER_CAP = 5
+# Packages fully parsed per source (loose / IoStore / pak);
+# counts always cover every package found.
+PACKAGE_CAP = 5
+NAME_CAP = 500
 
 
 def run_json_tool(script, args, timeout=1200):
@@ -63,6 +81,7 @@ def pak_summary(data_path):
     return {
         "pak_version": out.get("pak_version"),
         "supported": out.get("supported"),
+        "index_encrypted": out.get("index_encrypted"),
         "mount_point": out.get("mount_point"),
         "entry_count": out.get("entry_count"),
         "encrypted_entries": sum(1 for e in entries
@@ -98,30 +117,205 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
     return parsed
 
 
+def package_summary(data, name, uexp_data=None):
+    """Parse one package into a presentation-ready record
+    (name/import/export detail capped; counts complete)."""
+    try:
+        parsed = parse_package(data, name, uexp_data)
+    except UAssetError as e:
+        return {"entry": name, "error": f"package parse failed: {e}"}
+    total_names = len(parsed["names"])
+    if total_names > NAME_CAP:
+        parsed["names"] = parsed["names"][:NAME_CAP]
+        parsed["names_capped"] = (
+            f"name detail capped at {NAME_CAP} of {total_names}; "
+            "counts cover every name")
+    for key in ("imports", "exports", "depends"):
+        total = len(parsed[key])
+        if total > ENTRY_CAP:
+            parsed[key] = parsed[key][:ENTRY_CAP]
+            parsed[key + "_capped"] = (
+                f"{key} detail capped at {ENTRY_CAP} of {total}; "
+                "counts cover every entry")
+    searchable = parsed["searchable_names"]
+    if len(searchable) > 100:
+        parsed["searchable_names"] = dict(
+            list(searchable.items())[:100])
+        parsed["searchable_names_capped"] = (
+            f"searchable-names detail capped at 100 of "
+            f"{len(searchable)}; counts cover every entry")
+    parsed["entry"] = name
+    return parsed
+
+
+def _package_generation(pkg):
+    if not pkg or pkg.get("error"):
+        return None
+    s = pkg.get("summary") or {}
+    if s.get("file_version_ue5"):
+        return (f"UE5-era (UE5 object version "
+                f"{s['file_version_ue5']})")
+    if s.get("unversioned"):
+        return "unversioned package (engine version not recorded)"
+    if s.get("file_version_ue4"):
+        return (f"UE4-era (UE4 object version "
+                f"{s['file_version_ue4']})")
+    return None
+
+
+def _package_limitations():
+    return [
+        "Package property streams are parsed best-effort: "
+        "values are decoded only for primitive types whose "
+        "encoding is version-stable, and class-specific data "
+        "after the tag stream is reported by size, not "
+        "decoded.",
+        "Packages flagged PKG_UnversionedProperties need a "
+        ".usmap mapping file to read properties; their "
+        "property streams are reported as unparsed, with "
+        "the reason.",
+        "UE5 property tag extensions (UE5 object version "
+        ">= 1011) are reported as unsupported rather than "
+        "guessed at.",
+    ]
+
+
+def iostore_packages(utoc_bytes, ucas_bytes, container_name):
+    """Extract and parse the packages a container's
+    directory index names (.uasset/.umap chunks)."""
+    out = []
+    if ucas_bytes is None:
+        return out
+    try:
+        container = parse_utoc(utoc_bytes, container_name)
+    except IoStoreError:
+        return out
+    for entry in container["entries"]:
+        path = entry.get("file") or ""
+        if not path.lower().endswith((".uasset", ".umap")):
+            continue
+        if len(out) >= PACKAGE_CAP:
+            break
+        try:
+            blob = extract_chunk(container, ucas_bytes,
+                                 entry["index"])
+        except IoStoreError as e:
+            out.append({"entry": path, "container": container_name,
+                        "error": f"IoStore extraction failed: {e}"})
+            continue
+        record = package_summary(blob, path)
+        record["container"] = container_name
+        out.append(record)
+    return out
+
+
+def pak_packages(pak_path, out_dir):
+    """Extract and parse a pak's .uasset/.umap entries.
+
+    Uses nar-pak's own extractor entry by entry (exact-name
+    matches, .uexp siblings included); extraction failures
+    (encrypted, unsupported compression) are recorded per
+    package, never fatal.
+    """
+    listing = run_json_tool("nar-pak.py", [pak_path])
+    if not listing or not listing.get("supported"):
+        return [], 0
+    entries = listing.get("entries") or []
+    asset_names = [e["name"] for e in entries
+                   if e["name"].lower().endswith(
+                       (".uasset", ".umap"))]
+    by_lower = {e["name"].lower(): e["name"] for e in entries}
+    out = []
+    for name in asset_names[:PACKAGE_CAP]:
+        stem = name.rsplit(".", 1)[0]
+        wanted = [name]
+        uexp_name = by_lower.get((stem + ".uexp").lower())
+        if uexp_name:
+            wanted.append(uexp_name)
+        blobs = {}
+        failure = None
+        for want in wanted:
+            rep = run_json_tool(
+                "nar-pak.py",
+                [pak_path, "--extract", want, "--out", out_dir])
+            extracted = (rep or {}).get("extracted") or []
+            errors = (rep or {}).get("extract_errors") or []
+            if extracted:
+                with open(extracted[0]["out_path"], "rb") as fh:
+                    blobs[want] = fh.read()
+            elif errors:
+                failure = errors[0].get("error")
+        if name not in blobs:
+            out.append({"entry": name,
+                        "error": "pak extraction failed: "
+                                 f"{failure or 'entry not extracted'}"})
+            continue
+        record = package_summary(
+            blobs[name], name,
+            blobs.get(uexp_name) if uexp_name else None)
+        out.append(record)
+    return out, len(asset_names)
+
+
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unreal", "version": "2.1.0",
+    report = {"tool": "nar-unreal", "version": "2.2.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     lower = target.lower()
+    if lower.endswith((".uasset", ".umap")):
+        stem = target.rsplit(".", 1)[0]
+        uexp_data = None
+        if os.path.exists(stem + ".uexp"):
+            with open(stem + ".uexp", "rb") as fh:
+                uexp_data = fh.read()
+        with open(target, "rb") as fh:
+            pkg = package_summary(
+                fh.read(), os.path.basename(target), uexp_data)
+        report["verdict"] = "package"
+        report["generation"] = _package_generation(pkg)
+        report["packages"] = [pkg]
+        report["limitations"] = _package_limitations()
+        return report
     if lower.endswith(".pak"):
         report["verdict"] = "pak-container"
         report["paks"] = [pak_summary(target)]
+        if work_dir:
+            pkgs, total = pak_packages(
+                target, os.path.join(work_dir, "pak-assets"))
+            report["pak_packages"] = pkgs
+            report["pak_package_file_count"] = total
+            report["limitations"] = _package_limitations()
+        else:
+            report["limitations"] = [
+                "Asset-level parsing inside a .pak needs "
+                "--work DIR (entries are extracted there "
+                "first).",
+            ]
         return report
     if lower.endswith(".utoc"):
         sibling = target[:-5] + ".ucas"
         ucas_name = ucas_size = None
+        ucas_bytes = None
         if os.path.exists(sibling):
             ucas_name = os.path.basename(sibling)
             ucas_size = os.path.getsize(sibling)
+            with open(sibling, "rb") as fh:
+                ucas_bytes = fh.read()
         with open(target, "rb") as fh:
-            container = iostore_summary(
-                fh.read(), os.path.basename(target),
-                ucas_name, ucas_size)
+            utoc_bytes = fh.read()
+        container = iostore_summary(
+            utoc_bytes, os.path.basename(target),
+            ucas_name, ucas_size)
         report["verdict"] = "iostore-container"
         report["generation"] = "UE5-era (IoStore packaging)"
         report["iostore_files"] = [os.path.basename(target)]
         report["iostore_containers"] = [container]
         report["limitations"] = _iostore_limitations()
+        pkgs = iostore_packages(
+            utoc_bytes, ucas_bytes, os.path.basename(target))
+        if pkgs:
+            report["iostore_packages"] = pkgs
+            report["limitations"] += _package_limitations()
         return report
     if lower.endswith(".ucas"):
         report["verdict"] = "iostore-data"
@@ -136,9 +330,14 @@ def analyze(target, work_dir=None):
     unreal_hint = any(h["engine"] == "Unreal Engine" for h in hints)
     paks, iostore, configs = [], [], []
     containers = []
+    asset_names = []
+    extracted_paks = []
+    packages = []
+    io_packages = []
     with zipfile.ZipFile(target) as zf:
         names = zf.namelist()
         infos = {i.filename: i for i in zf.infolist()}
+        by_lower = {n.lower(): n for n in names}
         ucas_by_prefix = {}
         for name in names:
             if name.lower().endswith(".ucas"):
@@ -155,6 +354,7 @@ def analyze(target, work_dir=None):
                     with open(tmp, "wb") as fh:
                         fh.write(zf.read(name))
                     summary = pak_summary(tmp)
+                    extracted_paks.append((name, tmp))
                 else:
                     summary = {"entry": name,
                                "note": "pass --work DIR to parse "
@@ -163,6 +363,8 @@ def analyze(target, work_dir=None):
                 paks.append(summary)
             elif ln.endswith((".utoc", ".ucas")):
                 iostore.append(name)
+            elif ln.endswith((".uasset", ".umap")):
+                asset_names.append(name)
             elif "/config/" in ln and ln.endswith(".ini"):
                 configs.append(name)
         for name in utoc_names[:CONTAINER_CAP]:
@@ -176,19 +378,63 @@ def analyze(target, work_dir=None):
                 "note": f"{len(utoc_names)} .utoc containers "
                         f"found; only the first {CONTAINER_CAP} "
                         "were parsed"})
+        for name in asset_names[:PACKAGE_CAP]:
+            stem = name.rsplit(".", 1)[0]
+            uexp_entry = by_lower.get((stem + ".uexp").lower())
+            packages.append(package_summary(
+                zf.read(name), name,
+                zf.read(uexp_entry) if uexp_entry else None))
+        for name in utoc_names[:2]:
+            ucas_name = ucas_by_prefix.get(name[:-5].lower())
+            if not ucas_name:
+                continue
+            io_packages.extend(iostore_packages(
+                zf.read(name), zf.read(ucas_name), name))
+            if len(io_packages) >= PACKAGE_CAP:
+                io_packages = io_packages[:PACKAGE_CAP]
+                break
+    pak_pkgs = []
+    pak_pkg_total = 0
+    if work_dir:
+        for entry_name, tmp in extracted_paks:
+            pkgs, total = pak_packages(
+                tmp, os.path.join(
+                    work_dir, "pak-assets",
+                    os.path.basename(entry_name)))
+            pak_pkg_total += total
+            for rec in pkgs:
+                rec["container"] = entry_name
+            pak_pkgs.extend(pkgs)
+            if len(pak_pkgs) >= PACKAGE_CAP:
+                pak_pkgs = pak_pkgs[:PACKAGE_CAP]
+                break
     generation = None
     if iostore:
         generation = "UE5-era (IoStore packaging)"
     elif versions.get("unreal_engine"):
         generation = versions["unreal_engine"]
+    if not generation:
+        for pkg in packages + io_packages + pak_pkgs:
+            generation = _package_generation(pkg)
+            if generation:
+                break
     limitations = [
         "Encrypted pak entries are counted, never decrypted "
         "(key extraction is out of scope).",
     ]
     if containers:
         limitations = _iostore_limitations() + limitations
+    if packages or io_packages or pak_pkgs:
+        limitations += _package_limitations()
+    if paks and not work_dir:
+        limitations.append(
+            "Asset-level parsing inside .pak files needs "
+            "--work DIR (entries are extracted there first); "
+            "loose and IoStore-resident packages are parsed "
+            "in place.")
     report.update({
-        "verdict": "unreal" if (unreal_hint or paks or iostore)
+        "verdict": "unreal" if (unreal_hint or paks or iostore
+                                or asset_names)
                    else "absent",
         "generation": generation,
         "version_evidence": {k: v for k, v in versions.items()
@@ -197,6 +443,12 @@ def analyze(target, work_dir=None):
         "iostore_files": iostore,
         "iostore_containers": containers,
         "config_files": configs[:25],
+        "package_files": asset_names[:25],
+        "package_file_count": len(asset_names),
+        "packages": packages,
+        "iostore_packages": io_packages,
+        "pak_packages": pak_pkgs,
+        "pak_package_file_count": pak_pkg_total,
         "limitations": limitations,
     })
     return report
@@ -257,15 +509,55 @@ def human(report):
                   f"{di.get('files_named')} files named")
         if c.get("entries_capped"):
             print(f"    {c['entries_capped']}")
+    pkg_groups = (("packages", report.get("packages")),
+                  ("iostore_packages",
+                   report.get("iostore_packages")),
+                  ("pak_packages", report.get("pak_packages")))
+    for _label, group in pkg_groups:
+        for pkg in group or []:
+            _human_package(pkg)
+    if report.get("package_file_count"):
+        print(f"Package files in target: "
+              f"{report['package_file_count']}")
     for lim in report.get("limitations", []):
         print(f"limitation: {lim}")
+
+
+def _human_package(pkg):
+    entry = pkg.get("entry", "")
+    if pkg.get("error"):
+        print(f"- package {entry}: {pkg['error']}")
+        return
+    s = pkg.get("summary", {})
+    if s.get("file_version_ue5"):
+        ver = f"UE5 object version {s['file_version_ue5']}"
+    elif s.get("unversioned"):
+        ver = "unversioned"
+    else:
+        ver = f"UE4 object version {s.get('file_version_ue4')}"
+    counts = pkg.get("counts", {})
+    print(f"- package {entry}: {ver}, {counts.get('names')} "
+          f"names, {counts.get('imports')} imports, "
+          f"{counts.get('exports')} exports")
+    for exp in pkg.get("exports", []):
+        props = exp.get("properties") or {}
+        print(f"    export {exp.get('object_name')}: class "
+              f"{exp.get('class_resolved')}, "
+              f"{exp.get('serial_size')} bytes in "
+              f"{(exp.get('data_location') or {}).get('file')}, "
+              f"properties {props.get('status')}"
+              + (f" ({props.get('tag_count')} tags)"
+                 if props.get("tag_count") is not None else ""))
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="Unreal deep dive: generation evidence, pak "
-                    "inventory/encryption, IoStore inventory.")
-    p.add_argument("target", help="path to an .apk or .pak file")
+                    "inventory/encryption, IoStore parsing, and "
+                    "UAsset-level package inspection.")
+    p.add_argument("target",
+                   help="path to an .apk, .pak, .utoc, .uasset "
+                        "or .umap file")
     p.add_argument("--json", action="store_true")
     p.add_argument("--work", metavar="DIR",
                    help="extraction dir for parsing bundled paks")

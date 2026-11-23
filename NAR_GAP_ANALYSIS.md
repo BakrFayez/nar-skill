@@ -285,3 +285,65 @@ further; evidence in NAR_TEST_MATRIX.md (2.1.0 addendum):
   never reached boot completion under QEMU TCG inside
   the time box). A KVM-capable host or a physical device
   is required to move these rows.
+
+### Post-2.1.0 addendum — runtime verification (2026-11-23)
+
+The §16 runtime rows moved, on emulator evidence only:
+a lean API 26 (Android 8.0.0) google_apis x86_64 image
+booted to completion under the same QEMU TCG conditions
+that defeated the API-34 image, and the full runtime
+workflow ran against it — adb discovery/inspection,
+install and launch of the demo fixture, nar-runtime
+status reporting verified-live, frida-server 17.27.4 as
+root, and the bundled network-observe and file-io-observe
+scripts attached to the live demo process with all hooks
+installed. The adb and Frida-attach rows are therefore
+IMPLEMENTED_AND_TESTED (emulator scope). Still
+IMPLEMENTED_BUT_UNVERIFIED at that point: every
+physical-device row, and Frida spawn mode, which
+repeatedly lost its session during script load under TCG.
+
+A follow-up attempt the same day (2026-11-23) closed the
+spawn row as well. The failures were root-caused from
+logcat: Android's ActivityManager kills a started process
+that does not attach within its ~10 s process-start
+timeout, and a Frida-gated spawn child cannot attach
+while gated — under TCG the load-before-resume sequence
+always loses that race. With the verified recipe —
+spawn via the Frida API, resume in the very next call,
+let the process settle, then load the bundled script
+with the standard CLI path against the spawned pid —
+both observation scripts ran live in Frida-spawned
+processes, so the spawn row is also
+IMPLEMENTED_AND_TESTED (emulator scope, hybrid recipe;
+the one-command load-while-gated form remains unusable
+under TCG). Every physical-device row stays
+IMPLEMENTED_BUT_UNVERIFIED. Evidence is summarized in
+the matching NAR_TEST_MATRIX.md addenda.
+
+## Unreleased status addendum (2026-11-23)
+
+- §3.1 / §13 Unreal UAsset-level inspection: SHIPPED as
+  narlib/uasset (original implementation of the public
+  package layout) — FPackageFileSummary with UE4/UE5
+  version gating, name / import / export / depends
+  tables with resolved references, soft package
+  references, UE5 soft object paths, searchable names,
+  cooked .uexp/.ubulk awareness, and a best-effort
+  FPropertyTag reader (primitive values, struct
+  recursion, per-export confidence note). nar-unreal
+  parses packages loose, in IoStore containers, and in
+  .pak files under --work; nar-analyze lifts summaries
+  into the engine companions. FModel/UAssetAPI remain
+  registered unavailable — they are no longer the
+  blocker for package inspection. What remains out of
+  scope, stated plainly: class-specific export data
+  decoding (meshes, textures, Blueprints as object
+  graphs), property reading for PKG_UnversionedProperties
+  packages (needs a .usmap), and the UE5 tag-extension
+  layouts (object version >= 1011). Verification:
+  synthetic byte-exact fixtures (unit suite + harness)
+  plus a real-asset rung over a locally held cooked
+  UE4-era corpus, including independent manual spec
+  accounting on one small package — see
+  NAR_TEST_MATRIX.md (unreleased addendum).

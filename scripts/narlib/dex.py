@@ -258,6 +258,34 @@ class Dex:
                 ref = self.method_ref(method_idx)
                 yield (ref[1] if ref else "?", flags, code_off, kind)
 
+    def class_methods_indexed(self, class_data_off):
+        """Yield (method_idx, name, access_flags, code_off, kind)
+        for a class. The class_methods walk with the method-table
+        index kept, for callers that need full signatures
+        (narlib.dexdis). class_methods itself is unchanged."""
+        if not class_data_off:
+            return
+        data = self.data
+        off = class_data_off
+        static_n, off = _uleb128(data, off)
+        instance_n, off = _uleb128(data, off)
+        direct_n, off = _uleb128(data, off)
+        virtual_n, off = _uleb128(data, off)
+        for _ in range(static_n + instance_n):
+            _delta, off = _uleb128(data, off)
+            _flags, off = _uleb128(data, off)
+        for kind, count in (("direct", direct_n),
+                            ("virtual", virtual_n)):
+            method_idx = 0
+            for _ in range(count):
+                delta, off = _uleb128(data, off)
+                flags, off = _uleb128(data, off)
+                code_off, off = _uleb128(data, off)
+                method_idx += delta
+                ref = self.method_ref(method_idx)
+                yield (method_idx, ref[1] if ref else "?",
+                       flags, code_off, kind)
+
     # -- code scan -------------------------------------------------
     def scan_code(self, code_off):
         """Scan one code item. Returns {invokes: [(method_idx,

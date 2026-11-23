@@ -1,5 +1,101 @@
 # Changelog
 
+## Unreleased
+
+## 2.2.0 (2026-11-23)
+
+Verification-and-depth release: the runtime layer was
+verified live on an emulator (attach mode, then spawn
+mode), Unreal support gained UAsset-level package
+inspection verified on real cooked UE4 packages, nar-dex
+gained an own DEX bytecode disassembler cross-checked
+against the Android SDK disassembler with full agreement,
+and nar-pak now diagnoses AES-sealed pak indexes
+explicitly. The full evidence is recorded in
+NAR_TEST_MATRIX.md (post-2.1.0 and unreleased addenda).
+
+- Runtime layer verified live: against an Android emulator
+  (API 26 / Android 8.0.0, google_apis x86_64, QEMU TCG
+  on a KVM-less host), the adb adapter, package install
+  and launch, nar-runtime's verified-live status, and
+  Frida attach-mode observation (bundled network-observe
+  and file-io-observe scripts, frida-server 17.27.4)
+  all ran against a real target. This supersedes the
+  2.1.0 entry's runtime note for emulator scope. At this
+  stage Frida spawn mode still failed repeatedly under
+  TCG (closed by the follow-up directly below), and a
+  physical device remains IMPLEMENTED_BUT_UNVERIFIED.
+  Full record in NAR_TEST_MATRIX.md (post-2.1.0 runtime
+  addendum) and references/troubleshooting.md.
+- Frida spawn mode verified live: the spawn failures above were
+  root-caused (ActivityManager's ~10 s process-start
+  timeout kills the Frida-gated child under TCG) and a
+  resume-first recipe — spawn via the Frida API, resume
+  immediately, settle, then load via the CLI against the
+  spawned pid — ran both bundled observation scripts
+  live in Frida-spawned processes on the same emulator.
+  Spawn mode is now IMPLEMENTED_AND_TESTED for emulator
+  scope with that recipe; the one-command gated form
+  remains unusable under TCG, and a physical device
+  remains IMPLEMENTED_BUT_UNVERIFIED. Full record in
+  NAR_TEST_MATRIX.md (spawn-mode addendum) and
+  references/frida-scripts.md.
+- DEX bytecode disassembler (new narlib/dexdis): nar-dex
+  gains a targeted disassembly mode (`--disassemble` with
+  `--disasm-class` / `--disasm-method` selection, or
+  `--disasm-all` for an explicit full decode). Method code
+  items are decoded instruction by instruction with operands
+  resolved through the DEX's own tables (strings, types,
+  fields, methods, prototypes, call sites, method handles),
+  covering every documented format family and the switch /
+  fill-array payloads, with DEX 038+ forms gated on the file
+  header version. A method that cannot be decoded fails its
+  own listing with the precise reason and code-unit offset —
+  never a guessed instruction. Cross-checked against the
+  Android SDK disassembler on the demo fixture and real-world
+  DEX files from the local test corpus (773,166 instructions
+  compared, full agreement) and against an independent smali
+  disassembler for the gated DEX 038/039 forms.
+- UAsset-level inspection (new narlib/uasset): Unreal
+  packages (.uasset / .umap) are parsed in full at the
+  header and table level — FPackageFileSummary with UE4
+  (object versions 434–522) and UE5 (1000+) version
+  gating, name / import / export / depends tables with
+  package indices and FNames resolved to readable
+  references, soft package references, the UE5 soft
+  object path list, and searchable names. Cooked layout
+  is honoured: export serial ranges are located in the
+  package or its sibling .uexp, and bulk data is reported
+  against the .ubulk. A best-effort FPropertyTag reader
+  decodes primitive values and recurses into struct
+  values under an explicit per-export confidence note;
+  unversioned-property packages and the UE5 tag-extension
+  layouts are reported as unparsed, with the reason.
+  nar-unreal parses packages loose in an APK, inside
+  IoStore containers, and inside .pak files under --work
+  extraction, and accepts a bare package as a target;
+  nar-analyze lifts the summaries into its engine
+  companions. Verified on synthetic byte-exact fixtures
+  (UE4-era, UE5-era, and unversioned layouts) in the unit
+  suite and the end-to-end harness, and on real cooked
+  packages from a locally held UE4-era corpus checked
+  against independent manual spec accounting; that
+  real-asset rung also caught and fixed the property-tag
+  reader skipping the documented array-inner-type and
+  property-GUID tag-header fields (UE4 object versions
+  500 / 503).
+- Real-asset verification, UE5: a lawfully obtained
+  free UE5 title's containers were inspected — all of
+  its pak archives (format version 11) seal their
+  indexes with AES encryption and register Oodle as
+  the sole compression method, so no package could be
+  extracted under the skill's no-key-extraction
+  boundary and the UAsset parser remains unverified
+  on real UE5 packages. nar-pak now surfaces the
+  footer index-encryption flag for v7+ paks (passed
+  through by nar-unreal), so a sealed modern pak
+  reports both of its blockers plainly.
+
 ## 2.1.0 (2026-11-23)
 
 Gap-closure release. Every item below was verified by

@@ -164,7 +164,7 @@ def inventory(target):
     for a in assets:
         by_category[a["category"]] = \
             by_category.get(a["category"], 0) + 1
-    return {"tool": "nar-assets", "version": "2.1.0",
+    return {"tool": "nar-assets", "version": "2.2.0",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "assets": assets, "total_assets": len(assets),

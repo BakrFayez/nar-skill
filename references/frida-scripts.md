@@ -5,10 +5,17 @@ They watch a running app and log what it does. They never modify
 arguments, return values, or app behavior, and they never print
 credentials, tokens, or file contents.
 
-Runtime execution of these scripts is UNTESTED: no device or
-emulator was attached when they were written. What was verified is
-syntax and bundling (see "Verification" below). Run them first on a
-test app you own before trusting them on a real target.
+Runtime execution status (2026-11-23): network-observe.js and
+file-io-observe.js have been executed live on an Android
+emulator (API 26, QEMU TCG), with frida-server 17.27.4 as
+root — both attached to a running demo app and, in a later
+session, loaded into Frida-spawned demo processes with the
+resume-first recipe under "Running a script" below; every
+hook installed and the scripts' own output was captured
+(see "Verification" below). jni-trace.js and java-api-trace.js
+have not yet run live in either mode. Nothing here has run
+on a physical device yet. Run the scripts first on a test
+app you own before trusting them on a real target.
 
 ## Running a script
 
@@ -20,6 +27,21 @@ frida -U -f <package> -l scripts/frida/java-api-trace.js
 `-l` loads the script. The app resumes once the script loads. Run
 one script at a time; loading several at once mixes their output
 and multiplies the slowdown.
+
+On very slow emulation (QEMU TCG without KVM), the one-command
+spawn above cannot work: Android's ActivityManager kills a
+started process that does not attach within its ~10 s
+process-start timeout, and a Frida-gated child cannot attach
+while gated, so the child is killed during script load
+("the connection is closed"). The verified recipe on such
+hosts is resume-first: spawn the app with the Frida API
+(`device.spawn`), resume it in the very next call, let the
+process settle for ~40-50 s, then load the script against
+the spawned pid with the command form
+`frida -U -p <spawned pid> -l <script>`. Hooks then install
+seconds after the app starts instead of before its first
+instruction. Both observation scripts below were verified
+live this way (and by plain attach) on an API 26 emulator.
 
 Before running anything, check that a device is actually visible:
 
@@ -45,8 +67,10 @@ frida-compile --version
 
 Both printed `17.27.4`. The device needs frida-server 17.27.4 for
 its CPU architecture (usually `android-arm64`). Downloading the
-server, pushing it to the device, and starting it are standard
-setup steps, untested here because no device was attached.
+server, pushing it to the device, and starting it were exercised
+on 2026-11-23 against an x86_64 emulator (server build
+`android-x86_64`, started as root after `adb root`); the same
+steps on a physical arm64 device remain untested.
 
 ## Rooted device vs emulator
 
@@ -191,8 +215,23 @@ harness then ran each script in plain Node with fake Frida globals
 behave: missing classes are logged and skipped, and no script throws
 uncaught at load time.
 
-None of this proves the scripts work against a real app on a real
-device. The JNI function-table index, the OkHttp API surface, and
-the IoBridge hook points are standard, documented Frida and Android
-behavior, but only a device run confirms them for a given app and
-Android version. That run is still untested.
+Device-run addendum (2026-11-23): two of the four scripts have
+since run against a real app process — network-observe.js and
+file-io-observe.js, on the bundled demo app on an API 26
+emulator (frida-server 17.27.4 as root, QEMU TCG host), first
+attached to the running app and later loaded into
+Frida-spawned processes using the resume-first recipe under
+"Running a script" (the one-command gated spawn loses
+ActivityManager's ~10 s process-start-timeout race under
+TCG; logcat records the kill as "start timeout"). Every hook
+they install took effect in the live processes
+(URL/HttpURLConnection/Socket for network-observe; the stream
+constructors, File operations, and libcore.io.IoBridge.open for
+file-io-observe; OkHttp was absent in the demo and skipped
+gracefully, as written). The demo app opens no connections and
+does no Java-layer file I/O by design, so the sessions captured
+hook installation rather than connection/file events; event
+capture against an app that performs such operations is still
+outstanding. jni-trace.js and java-api-trace.js remain unrun
+live in either mode, and no script has run on a physical
+device.

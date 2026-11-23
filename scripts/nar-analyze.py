@@ -45,7 +45,7 @@ sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as NAR_VERSION
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.1.0"
+    NAR_VERSION = "2.2.0"
 
 # One entry per bundled-tool run, in execution order. main()
 # turns this into execution-log.json (2.0 orchestrator record).
@@ -169,6 +169,8 @@ def zip_entry_flags(names):
                      or n.startswith("assets/.godot/") for n in names),
         "paks": [n for n in names if n.lower().endswith(".pak")],
         "utocs": [n for n in names if n.lower().endswith(".utoc")],
+        "uassets": [n for n in names
+                    if n.lower().endswith((".uasset", ".umap"))],
     }
 
 
@@ -545,6 +547,37 @@ def analyze(target, work_dir, out_dir=None):
                 " the first 3 were parsed")
         if utoc_reports:
             engines["unreal_iostore"] = utoc_reports
+        if flags["paks"] or flags["utocs"] or flags["uassets"]:
+            # One nar-unreal run over the APK lifts the
+            # UAsset-level package inspections (loose, IoStore
+            # and --work-extracted pak packages) into the
+            # companions; name strings are dropped here (the
+            # counts stay complete) and export detail is
+            # capped harder than in a direct nar-unreal run.
+            data, err = run_json_tool(
+                "nar-unreal.py",
+                [scan_path, "--work",
+                 os.path.join(work_dir, "unreal")])
+            for key, out_key in (
+                    ("packages", "unreal_packages"),
+                    ("iostore_packages",
+                     "unreal_iostore_packages"),
+                    ("pak_packages", "unreal_pak_packages")):
+                pkgs = (data or {}).get(key) or []
+                trimmed = []
+                for pkg in pkgs:
+                    pkg = dict(pkg)
+                    pkg.pop("names", None)
+                    exps = pkg.get("exports") or []
+                    if len(exps) > 25:
+                        pkg["exports"] = exps[:25]
+                        pkg["exports_capped"] = (
+                            f"export detail capped at 25 of "
+                            f"{len(exps)} in the analyze "
+                            "companion; counts are complete")
+                    trimmed.append(pkg)
+                if trimmed:
+                    engines[out_key] = trimmed
     report["engines"] = engines
 
     # 2.0 module stages (fingerprint / engine fusion / DEX /

@@ -2,7 +2,7 @@
 name: nar
 description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis.
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # NAR: Nirous Android Reversing
@@ -76,6 +76,7 @@ investigation with triage unless the question already names a deeper target.
 | A fingerprint I can diff/track, with provenance | `python3 scripts/nar-fingerprint.py app.apk` (every property carries source tool + confidence) | [output schema](references/output-schema.md) |
 | Engine verdict with a confidence score | `python3 scripts/nar-engines.py game.apk [--deep]` (multi-indicator fusion; --deep confirms with the engine's own deep-dive tool) | [triage and inventory](references/triage-and-inventory.md) |
 | Deep DEX facts: classes, call edges, reflection, dynamic loading | `python3 scripts/nar-dex.py app.apk` (own DEX parser; `--jadx` / `--baksmali` adapters) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
+| Instruction-level bytecode listing for one class/method (jadx failed, obfuscated or protected method) | `python3 scripts/nar-dex.py app.apk --disassemble --disasm-class '<substr>'` (own disassembler; `--disasm-all` for an explicit full decode) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | Deep native facts: dependencies, JNI exports, hardening | `python3 scripts/nar-native.py app.apk` (own ELF parser, readelf cross-check with `--work`) | [native libs and JNI](references/native-libs-and-jni.md) |
 | Which endpoints does it talk to (statically)? | `python3 scripts/nar-network.py app.apk` (classified endpoint inventory, services, network security config) | [network traffic](references/network-traffic.md) |
 | Security review with severities and fixes | `python3 scripts/nar-security.py app.apk [--deep]` (findings in the NAR-SEC schema: evidence, impact, remediation) | [output schema](references/output-schema.md), [safety and authorization](references/safety-and-authorization.md) |
@@ -91,6 +92,7 @@ investigation with triage unless the question already names a deeper target.
 | Unity IL2CPP game: what is the game logic? | `python3 scripts/nar-il2cpp.py game.apk` (locates the pair, runs Il2CppDumper, summarizes), then Ghidra | [Unity IL2CPP](references/unity-il2cpp.md) |
 | Godot game: what is in the `.pck` and the scripts? | `python3 scripts/nar-godot.py game.apk` (pack listing + encryption flag), GodotPckTool extract, GDRE Tools decompile | [native libs and JNI](references/native-libs-and-jni.md) |
 | Unreal game: what is inside the `.pak` packs? | Extract the `.pak`, then `python3 scripts/nar-pak.py game.pak` (list, or `--extract` entries) | [native libs and JNI](references/native-libs-and-jni.md) |
+| Unreal game: what is inside a `.uasset` / `.umap` package? | `python3 scripts/nar-unreal.py asset.uasset` (summary + name/import/export tables, resolved references, best-effort property tags), or the APK / `.utoc` / `.pak` holding it | [native libs and JNI](references/native-libs-and-jni.md) |
 | React Native app: what is in the JS bundle? | `python3 scripts/nar-rn.py app.apk` (Hermes vs JSC, bytecode version, counts), then hermes-dec decompile | [React Native](references/react-native.md) |
 | Flutter/Dart app: what is in `libapp.so`? | `python3 scripts/nar-flutter.py app.apk` (Dart/Flutter versions, AOT markers), then Dart AOT strings and symbols | [Flutter and Dart](references/flutter-dart.md) |
 | What does it do on the network? | mitmproxy capture, tshark pcap reading | [network traffic](references/network-traffic.md) |

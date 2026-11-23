@@ -95,3 +95,34 @@ host or a physical device. Related traps on hand-assembled
 SDKs: avdmanager may refuse AVD creation when the emulator
 package lacks package.xml (write the AVD config by hand), and
 an unknown `skin.name` in config.ini is fatal even headless.
+
+Resolution (verified 2026-11-23 on the same KVM-less host):
+image choice is the lever. A lean older image — API 26
+(Android 8.0.0) google_apis x86_64, 1536 MB RAM, 4 cores,
+`-accel off -gpu swiftshader_indirect -no-window -no-audio
+-no-boot-anim -no-snapshot` — reached `sys.boot_completed=1`
+in about 9 minutes under TCG and ran the full runtime
+workflow (adb, install/launch, frida-server as root, Frida
+observation by attach). The modern API-34 image remains a
+dead end on such hosts; do not generalize its failure to the
+runtime layer. Two more traps from the same session: when
+sdkmanager's repository view is frozen, the system-image zip
+can be fetched directly from dl.google.com and installed by
+hand (verify the SHA-1 from the repository XML and write a
+package.xml modeled on an installed image's); and Frida
+spawn mode (`frida -U -f`) repeatedly lost its session
+during script load under TCG even though the app launched —
+attach (`-p <pid>`) to the already-running process instead.
+The spawn failure was later root-caused and resolved:
+logcat shows ActivityManager killing the spawned process
+with reason "start timeout" — a started process must
+attach to ActivityManager within ~10 s, a Frida-gated
+child cannot attach while gated, and the load-before-
+resume sequence cannot beat that clock under TCG. The
+verified resolution is the resume-first recipe: spawn
+with the Frida API (`device.spawn`), resume in the very
+next call, let the process settle ~40-50 s, then load
+the script with `frida -U -p <spawned pid> -l <script>`;
+both bundled observation scripts were verified live in
+Frida-spawned processes this way (see
+references/frida-scripts.md).

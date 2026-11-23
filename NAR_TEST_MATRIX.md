@@ -362,3 +362,394 @@ Full battery on the final tree (2026-11-23):
   pushes. Note the Phase A ci.yml header change lives
   under .github/workflows/ and must route via the web UI
   like the original workflow commit.
+
+## Post-2.1.0 addendum — runtime verification (2026-11-23)
+
+A renewed, multi-method attempt to verify the runtime layer
+(nar-runtime: adb + Frida), ordered after the 2.1.0 Phase B
+attempt failed on the API-34 image. Environment first:
+docker is absent and the kernel exposes no binder/ashmem
+devices, so container/VM-translation routes (redroid,
+Waydroid) are impossible on this host; QEMU TCG (no
+/dev/kvm) is the only emulation path.
+
+Method that succeeded — lean SDK emulator image:
+
+- The API 26 (Android 8.0.0) google_apis x86_64 system
+  image (r16; zip fetched directly from dl.google.com
+  because this SDK's sdkmanager repository view is
+  frozen, SHA-1 verified against the repository XML,
+  installed with a hand-written package.xml; the SDK's
+  emulator package needed one too before avdmanager
+  would create an AVD).
+- AVD: 1536 MB RAM, 4 cores, 2 GB data partition.
+  Emulator 37.3.6 flags: `-accel off` with
+  ANDROID_I_WANT_MY_TCG=yes, `-gpu swiftshader_indirect`,
+  `-no-window -no-audio -no-boot-anim -no-snapshot`,
+  first boot with `-wipe-data`.
+- Boot result: adb showed the target as `device` within
+  seconds; the package manager answered at ~6 minutes;
+  `sys.boot_completed=1` at ~9 minutes — the same TCG
+  conditions under which the API-34 image never completed
+  in 25 minutes during Phase B.
+
+Runtime checks executed against the booted target:
+
+- `adb devices` lists the emulator; getprop reads return
+  model "Android SDK built for x86_64", Android 8.0.0,
+  API 26, abi x86_64; `pm list packages` answers
+  (97 packages).
+- Install + launch of the demo fixture. One adaptation,
+  recorded plainly: the shipped fixture carries only an
+  arm64-v8a native library and the x86_64 target refused
+  it (INSTALL_FAILED_NO_MATCHING_ABIS). The identical
+  demo was rebuilt from its own source — the same JNI C
+  file compiled for x86_64 with the same NDK and added
+  as a second ABI beside the original arm64 library,
+  re-signed with the demo's own test keystore (same
+  package, same signer; the fixture file itself is
+  untouched). Install succeeded; launch via the plan's
+  monkey step; the process ran, its activity resumed,
+  and the UI showed the native greeting, proving the
+  x86_64 library loads and the JNI call works.
+- nar-runtime itself: `status` enumerated the attached
+  device and reported **verified-live** (the first time
+  this status was produced by a real run); `plan` and
+  `timeline-template` ran clean. (CLI note: `--json`
+  must precede the subcommand.)
+- Frida: `adb root` works on this image. frida-server
+  17.27.4 (android-x86_64, matching host frida-tools
+  17.27.4) was pushed to /data/local/tmp and started as
+  root; `frida-ps -U` listed the demo process.
+  - network-observe.js attached to the live demo
+    process: hooks installed for URL.openConnection,
+    HttpURLConnection.connect/.getResponseCode, and
+    Socket.connect; OkHttp absent and skipped
+    gracefully, as the script is written to do.
+  - file-io-observe.js attached in a second session:
+    hooks installed for the FileInputStream/
+    FileOutputStream/RandomAccessFile constructors,
+    File.delete/mkdir/mkdirs/renameTo, and
+    libcore.io.IoBridge.open.
+  - The sessions captured hook installation, not
+    connection/file events: the demo app, by its own
+    source, never opens a network connection (its
+    endpoint string is only logged) and performs no
+    Java-layer file I/O, so zero event lines is the
+    truthful observation for this fixture.
+
+What did NOT verify in this attempt:
+
+- Frida spawn mode: three `frida -U -f` sessions
+  (jni-trace.js) each launched the app — the process
+  appeared and ran — but the session died during script
+  load ("error sending data: Broken pipe"; twice "the
+  connection is closed"). Attach mode worked in both
+  sessions it was tried. Under QEMU TCG, spawn is the
+  fragile path; attach is the verified path.
+- jni-trace.js and java-api-trace.js have still not
+  executed live (jni-trace was the spawn-mode script).
+- No physical device was involved; all physical-device
+  runtime rows remain IMPLEMENTED_BUT_UNVERIFIED.
+- Android-x86 in plain QEMU (the next method in line)
+  was not needed and not attempted; its ISO was staged
+  only.
+
+Status change recorded by this addendum: the runtime
+rows for adb discovery/inspection, install/launch, and
+Frida attach-mode observation are IMPLEMENTED_AND_TESTED
+**for emulator targets**; the subsystem as a whole keeps
+the IMPLEMENTED_BUT_UNVERIFIED label for physical
+devices and for Frida spawn mode. Full session evidence
+(command outputs) is kept with the attempt log outside
+this repository.
+
+## Post-2.1.0 addendum — Frida spawn-mode verification (2026-11-23)
+
+A dedicated retry of the one sub-mode the runtime
+addendum above left unverified: Frida spawn mode, on the
+same emulator target (API 26 / Android 8.0.0, google_apis
+x86_64, QEMU TCG, frida-server 17.27.4 as root).
+
+Root cause of the original failures, established from
+logcat: ActivityManager logs "Process ... failed to
+attach" and kills the spawned demo process with reason
+"start timeout" ~10 s after process start. A
+Frida-gated child cannot call attachApplication while
+gated, and under TCG the host-side spawn -> attach ->
+script-load sequence cannot finish inside that ~10 s
+window, so the child is killed mid-load ("the connection
+is closed"). A no-attach lifetime probe confirmed the
+gated child vanishes on its own at ~13.5 s. Script
+weight is not the cause: a no-op script loses the same
+race, including via the canonical `frida -U -f` CLI
+path on a warm, settled system.
+
+Verified recipe (hybrid), executed twice with pid
+continuity polled throughout:
+
+1. Frida API: `device.spawn([package])`, then
+   `device.resume(pid)` as the very next call (<=0.3 s),
+   shrinking the gated window to ~zero so the child
+   attaches to ActivityManager inside its start timeout.
+2. Settle ~40-50 s, polling that the spawned pid
+   persists unchanged.
+3. Load the bundled script through the standard CLI
+   path, `frida -U -p <spawned pid> -l <script>` (the
+   CLI session provides the Java bridge, which raw API
+   script loads in Frida 17 do not).
+
+Results: network-observe.js ran in the Frida-spawned
+demo process (spawned pid 6400; hooks installed for
+URL.openConnection, HttpURLConnection.connect/
+.getResponseCode, and Socket.connect; OkHttp absent and
+skipped gracefully), and file-io-observe.js ran in a
+second Frida-spawned process (spawned pid 6718; hooks
+installed for the stream constructors, File.delete/
+mkdir/mkdirs/renameTo, and libcore.io.IoBridge.open).
+Both sessions ended by clean detach/exit. As in attach
+mode, the sessions captured hook installation, not
+events: the demo app performs no network or Java-layer
+file activity by design.
+
+Precise scope of this verification: Frida spawn mode is
+IMPLEMENTED_AND_TESTED **for emulator targets** with
+the hybrid recipe above. The textbook one-command form
+(load while gated, resume after load) remains unusable
+under TCG for the root-caused reason above; with the
+recipe, hooks install seconds after the app starts
+rather than before its first instruction. jni-trace.js
+and java-api-trace.js have still not executed live in
+either mode. No physical device was involved; all
+physical-device runtime rows remain
+IMPLEMENTED_BUT_UNVERIFIED. Full session evidence
+(spawn retry log and command outputs) is kept with the
+runtime attempt log outside this repository.
+
+## Unreleased addendum (2026-11-23) — DEX bytecode disassembler
+
+New module narlib/dexdis (pure-Python instruction decoder
+over the existing narlib.dex primitives) plus a targeted
+nar-dex mode (`--disassemble` with `--disasm-class` /
+`--disasm-method` selection, `--disasm-all` for an explicit
+full decode, `--disasm-limit` on listings). Built and
+verified on its own branch; not yet released.
+
+### Unit tests
+
+- tests/unit/test_dexdis.py: 17 tests over a spec-shaped
+  synthetic DEX builder — every format family, switch and
+  fill-array payloads consumed in-stream, jumbo strings,
+  wide literals, DEX 038 gates (pass at 039, clean failure
+  at 035), and the failure discipline (unknown opcode,
+  truncated stream, out-of-range string/method/call-site
+  indices, payload-identifier mismatch, absent call-site
+  table) asserting per-method failure with reason + offset.
+- The decoder's operand-width table was cross-checked
+  against narlib.dex's independent OP_WIDTH table: 0
+  mismatches across all 224 assigned opcodes.
+
+### Oracle cross-check (SDK disassembler as oracle)
+
+An independent comparator (throwaway, outside the repo)
+parsed the SDK disassembler's output and compared, per
+method: instruction and payload counts for the whole file,
+and per instruction the address, mnemonic, resolved
+reference index, branch target, and integer literal.
+Formatting was normalized; semantics never.
+
+- Demo fixture DEX (037): 12 methods, 91 instructions,
+  full agreement.
+- Corpus app DEX A (035): 8,507 methods, 230,836
+  instructions, 709 payloads — full agreement.
+- Corpus app DEX A, second file (035): 4,271 methods,
+  64,316 instructions, 526 payloads — full agreement.
+- Corpus app DEX B (035): 28,035 methods, 477,822
+  instructions, 1,128 payloads — full agreement.
+- Toolchain-built DEX 038 file (compiled from source with
+  the SDK's own compiler/dexer for this check; carries a
+  real invoke-polymorphic): 12 methods, 99 instructions —
+  full agreement.
+- Totals: 40,837 methods, 773,166 instructions and 2,363
+  payloads compared; 0 semantic mismatches; 0 decode
+  failures on any real file.
+- The DEX 038/039 gated forms (invoke-custom and its range
+  form, const-method-handle for method and field handles,
+  const-method-type) were additionally rendered by an
+  independent smali disassembler from the spec-built gated
+  unit-test file: all seven gated instructions agree
+  exactly, including the full call-site rendering. No
+  real-world file in the local corpus (59 packages probed)
+  uses invoke-custom, so that form's evidence is the
+  spec-built file plus unit tests — stated plainly rather
+  than rounded up.
+- Findings fixed during the cross-check: prototype
+  parameter descriptors are concatenated with no separator
+  (three render sites corrected); invoke-custom text now
+  renders the whole call site; const-method-handle uses
+  the kind@target form; register ranges always render in
+  {vF .. vL} form. All were rendering issues — indices,
+  targets, and literals already agreed.
+
+### Performance
+
+Full-corpus decode at library level: the largest corpus
+DEX (9.1 MB, 56,073 methods, 1,217,078 instructions)
+decodes in ~6.2 s with 0 failures (~197k instructions/s);
+a second large DEX (8.4 MB, 48,854 methods, 615,746
+instructions) in ~3.5 s. No pathological cost observed.
+
+### Battery on the branch
+
+- pytest: 58/58 (41 at 2.1.0 + 17 new).
+- tests/run_e2e.sh: 45 passed, 0 failed, 0 skipped (43 at
+  2.1.0 + 2 new: targeted disassembly decodes and resolves
+  references on the demo fixture; unscoped --disassemble
+  is refused).
+- py_compile sweep over scripts/, narlib/, tests/: clean.
+- nar-doctor: core toolchain READY.
+
+## Unreleased addendum — UAsset-level inspection (2026-11-23)
+
+New module `narlib/uasset.py` (original code, public
+package layout), integrated into nar-unreal (bare package,
+loose-in-APK, IoStore-chunk and --work pak modes) and into
+nar-analyze's engine companions. Verification ladder, as
+executed:
+
+- Synthetic fixtures (unit suite, tests/unit/
+  test_uasset.py, 10 tests): three packages built
+  byte-exactly from the documented layout — UE4-era
+  (legacy file version -6, UE4 object version 513), UE5-era
+  (legacy -8, UE4 522, UE5 object version 1010), and an
+  unversioned package (legacy -7, object versions zero,
+  read under the parser's stated final-UE4 assumption).
+  Round-trip assertions cover the summary fields and
+  version gates, name/import/export resolution (including
+  FName number suffixes), the depends map, preload
+  dependency indices, soft package references, the UE5
+  soft object path list, searchable names, the property
+  stream (scalar values, a nested struct with float
+  members, bool/enum/byte/name/object tags, a UE5 array
+  tag with inner type), and a split .uasset + .uexp pair
+  whose export data resolves into the .uexp. Error cases:
+  bad magic, legacy file version -2 (enum custom
+  versions), a pre-434 UE4 object version, and a truncated
+  package all raise clean, reasoned errors.
+- End-to-end harness (tests/run_e2e.sh, case
+  unreal-uasset): the same synthetic packages parsed back
+  through nar-unreal in four modes — bare, split pair,
+  loose inside an APK, and as an ExportBundleData chunk
+  of a synthetic IoStore container (stored chunk, directory
+  index naming the package) in bare .utoc mode.
+- Real-asset rung (EXECUTED 2026-11-23, with the owner's
+  explicit approval to process the local corpus): cooked
+  packages were extracted from a locally held UE4-era
+  (4.16-generation) game pak (1,598 entries, 387
+  packages) and parsed bare and through the in-pak path.
+  The packages are unversioned (legacy file version -7,
+  both object versions zero) and were read under the
+  parser's stated final-UE4 assumption. Results: a small
+  physical-material package (638-byte package, 16-byte
+  .uexp): 9 names / 3 imports / 1 export; a small font
+  package (641 B): 11 / 3 / 1; a large gameplay Blueprint
+  package (~41 KB package, ~18 KB .uexp): 365 / 138 /
+  212; the largest map package (~100 KB package, ~116 KB
+  .uexp): 872 / 421 / 488. One further package was parsed
+  both bare and through the in-pak path with identical
+  counts, names, and property outcomes; the in-pak
+  path's presentation cap covers the first 5 of the 387
+  packages, and all 5 parsed cleanly.
+- Independent oracle (EXECUTED): the small package's
+  summary and tables were re-walked byte by byte with a
+  throwaway script written from the documented layout
+  (no code shared with the parser): the summary walk
+  ends exactly at the name offset, the name walk exactly
+  at the import offset, the import walk (28-byte
+  FilterEditorOnly entries) exactly at the export
+  offset, and the export walk (104-byte entries) exactly
+  at the depends offset; every name, import field, and
+  export field agreed with the parser, and the export's
+  serial range lands in the .uexp opening on the
+  expected terminating name. No third-party oracle tool
+  was run; the manual accounting is the oracle of
+  record.
+- Defect found by this rung and fixed in-cycle: the
+  property-tag reader skipped two documented tag-header
+  fields — the array inner type (UE4 object version
+  >= 500) and the property-GUID field (UE4 object
+  version >= 503) — so any real tag stream holding a
+  non-trivial tag desynchronized after its first tag;
+  the synthetic fixtures had been built to the same
+  incomplete layout and could not catch it. On the real
+  corpus the fix moved the large Blueprint package from
+  196/212 to 212/212 property streams parsed and the
+  font package from failed to parsed with its string
+  value decoded. The synthetic builders now serialize
+  the documented fields, and a regression assertion
+  covers a tag that carries a property GUID. The
+  struct-GUID version gate was also corrected to the
+  documented 441 while this code was open (no effect at
+  or above 441).
+- Scope proven: package summary and tables in full;
+  property streams best-effort under the per-export
+  confidence note (primitive values, struct recursion);
+  class-specific export data is reported by size, never
+  decoded. Packages flagged PKG_UnversionedProperties and
+  UE5 tag-extension layouts (object version >= 1011)
+  report their property streams as unparsed, with the
+  reason.
+- Real-asset rung, UE5 (EXECUTED 2026-11-23 — sample
+  obtained; containers sealed): a free UE5 Android
+  title was lawfully obtained with the owner's explicit
+  approval (a ~2.6 GB bundle: split APKs, an install-
+  time asset pack, and an OBB) and its containers were
+  located and inspected. The UE5 generation is
+  confirmed from the data itself: the engine binary
+  carries UE5 console-variable category strings and a
+  help string referencing UE 5.4.2, and every content
+  container is pak format version 11. Seven paks in
+  total (six in the install-time asset pack, one
+  inside the OBB) were footer-checked individually:
+  all seven set the footer index-encryption flag, the
+  footer index SHA-1 does not match the stored index
+  bytes, and the index regions measure ~8 bits/byte of
+  entropy — the indexes are AES-encrypted. The only
+  compression method registered in any footer is
+  Oodle. No entry can therefore be listed or extracted
+  through the pak path, and key extraction is outside
+  this skill's scope by design, so no cooked package
+  could be obtained for narlib.uasset: the parser
+  remains unexercised on real UE5 packages, and the
+  UE5 evidence of record is unchanged (the UE5-era
+  synthetic fixture, object version 1010, and the
+  exact section accounting previously done on real
+  IoStore TOC containers). The rung's question stays
+  open, with the blocker now precisely identified:
+  this title's containers are sealed, so a future
+  attempt needs a UE5 title that ships unencrypted
+  pak indexes or IoStore containers.
+- In-cycle change from this rung: nar-pak now surfaces
+  the v7+ footer index-encryption flag (report field
+  index_encrypted, an explicit sentence in the v8+
+  unsupported error, a human-output line, and a
+  nar-unreal pak-summary passthrough), so a sealed
+  modern pak states both of its blockers instead of
+  only the index-layout one. Covered by
+  tests/unit/test_pak.py on synthetic byte-exact
+  footers (v11 encrypted / v11 plain / v5 no-field).
+
+## Addendum (2026-11-23) — merged 2.2.0 tree battery
+
+- The dex-disassembler, uasset-inspection, and runtime/spawn
+  workstreams were merged into main for the 2.2.0 release.
+  On the merged tree, re-run end to end by the reviewer:
+  pytest 72/72, end-to-end harness 46 passed / 0 failed /
+  0 skipped, nar-doctor core toolchain READY, py_compile
+  clean. The unit total is the exact union of the branch
+  suites (41 base + 17 disassembler + 10 uasset + 4 pak);
+  the end-to-end total is 43 base + 2 disassembler cases
+  + 1 UAsset case. A pre-release consistency pass also
+  corrected the capability registry's FModel entry, whose
+  limitations text still called UAsset-level inspection a
+  documented limitation after narlib.uasset shipped.

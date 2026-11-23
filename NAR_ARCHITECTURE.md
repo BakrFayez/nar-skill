@@ -128,8 +128,15 @@ builder that turns captured logcat/Frida observation output
 into the timeline schema. All device-touching verbs require
 an explicit `--device` target and print the authorization
 reminder from `references/safety-and-authorization.md`.
-In an environment with no device, the module is complete and
-its device paths are `IMPLEMENTED_BUT_UNVERIFIED`.
+In an environment with no device, the module reports its
+device paths as `IMPLEMENTED_BUT_UNVERIFIED`. Those paths
+were exercised live on 2026-11-23 against an emulator
+(API 26, QEMU TCG): adb discovery and inspection, package
+install/launch, Frida attach-mode observation, and Frida
+spawn-mode observation (resume-first recipe; the gated
+one-command form loses ActivityManager's process-start-
+timeout race under TCG) all ran; physical-device paths
+remain unverified.
 
 ## Compatibility contract
 

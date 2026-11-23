@@ -518,6 +518,104 @@ PYEOF
   else bad "unreal-iostore" "container inventory mismatch"; fi
 else skip "unreal-iostore" "synthetic container build failed"; fi
 
+# ------------------------------------------------ unreal uasset (unreleased)
+# Synthetic packages built byte-exact by the unit-test builders;
+# parsed back through nar-unreal as a bare package, as a split
+# .uasset+.uexp pair, loose inside an APK, and as an
+# ExportBundleData chunk inside a synthetic IoStore container.
+$PY - "$SKILL" "$TMP" <<'PYEOF'
+import struct, sys, zipfile
+skill, tmp = sys.argv[1], sys.argv[2]
+sys.path.insert(0, skill + "/tests/unit")
+sys.path.insert(0, skill + "/scripts")
+import test_uasset
+from narlib.uasset import parse_package
+
+ue4 = test_uasset.build_ue4()
+ue5 = test_uasset.build_ue5()
+open(tmp + "/pkg-ue4.uasset", "wb").write(ue4)
+ths = parse_package(ue4)["summary"]["total_header_size"]
+open(tmp + "/pkg-split.uasset", "wb").write(ue4[:ths])
+open(tmp + "/pkg-split.uexp", "wb").write(ue4[ths:])
+with zipfile.ZipFile(tmp + "/uasset.apk", "w") as zf:
+    zf.writestr("assets/Content/PkgUE4.uasset", ue4)
+    zf.writestr("assets/Content/PkgUE5.uasset", ue5)
+
+def fstring(s):
+    raw = s.encode() + b"\x00"
+    return struct.pack("<i", len(raw)) + raw
+
+INV = 0xFFFFFFFF
+dir_index = b"".join([
+    fstring("../../../PkgGame/"),
+    struct.pack("<I", 2),
+    fstring(""), struct.pack("<III", 1, INV, INV),
+    fstring("Content"), struct.pack("<III", INV, 0, INV),
+    struct.pack("<I", 1),
+    fstring("SynthMesh.uasset"), struct.pack("<II", INV, 0),
+])
+hdr = bytearray()
+hdr += b"-==--==--==--==-"
+hdr += bytes([6, 0]) + struct.pack("<H", 0)      # version 6
+hdr += struct.pack("<I", 144)                    # TocHeaderSize
+hdr += struct.pack("<I", 1)                      # entry count
+hdr += struct.pack("<I", 1)                      # block count
+hdr += struct.pack("<I", 12)                     # block entry size
+hdr += struct.pack("<I", 0)                      # method names
+hdr += struct.pack("<I", 32)                     # method name len
+hdr += struct.pack("<I", 65536)                  # block size
+hdr += struct.pack("<I", len(dir_index))
+hdr += struct.pack("<I", 1)                      # partitions
+hdr += struct.pack("<Q", 0x1234)                 # container id
+hdr += b"\x00" * 16                              # encryption GUID
+hdr += bytes([0x08, 0]) + struct.pack("<H", 0)   # flags: Indexed
+hdr += struct.pack("<I", 0)                      # hash seeds
+hdr += struct.pack("<Q", 0xFFFFFFFFFFFFFFFF)     # partition size
+hdr += struct.pack("<I", 0)                      # without-hash
+hdr += struct.pack("<I", 0) + b"\x00" * 40       # reserved
+assert len(hdr) == 144, len(hdr)
+chunk_id = struct.pack("<Q", 0xABC) + (0).to_bytes(2, "big") \
+    + b"\x00" + bytes([1])                       # ExportBundleData
+offsets = (0).to_bytes(5, "big") + len(ue4).to_bytes(5, "big")
+block = (0).to_bytes(5, "little") \
+    + len(ue4).to_bytes(3, "little") \
+    + len(ue4).to_bytes(3, "little") + bytes([0])
+utoc = bytes(hdr) + chunk_id + offsets + block + dir_index \
+    + b"\x00" * 33                               # one meta record
+open(tmp + "/pkg.utoc", "wb").write(utoc)
+open(tmp + "/pkg.ucas", "wb").write(ue4)
+PYEOF
+if [ -f "$TMP/pkg-ue4.uasset" ]; then
+  $PY "$SCRIPTS/nar-unreal.py" "$TMP/pkg-ue4.uasset" --json > "$TMP/uasset.json" 2>&1
+  $PY "$SCRIPTS/nar-unreal.py" "$TMP/pkg-split.uasset" --json > "$TMP/uasset-split.json" 2>&1
+  $PY "$SCRIPTS/nar-unreal.py" "$TMP/uasset.apk" --json > "$TMP/uasset-apk.json" 2>&1
+  $PY "$SCRIPTS/nar-unreal.py" "$TMP/pkg.utoc" --json > "$TMP/uasset-iostore.json" 2>&1
+  if $PY - "$TMP" <<'PYEOF'
+import json, sys
+tmp = sys.argv[1]
+r = json.load(open(tmp + "/uasset.json"))
+assert r["verdict"] == "package", r.get("verdict")
+p = r["packages"][0]
+assert p["counts"]["names"] == 33, p["counts"]
+assert p["counts"]["imports"] == 3 and p["counts"]["exports"] == 2
+tags = {t["name"]: t for t in p["exports"][0]["properties"]["tags"]}
+assert tags["MaxHealth"]["value"] == 250
+r = json.load(open(tmp + "/uasset-split.json"))
+assert r["packages"][0]["exports"][0]["data_location"]["file"] \
+    == "uexp"
+r = json.load(open(tmp + "/uasset-apk.json"))
+assert r["package_file_count"] == 2, r.get("package_file_count")
+assert len(r["packages"]) == 2
+r = json.load(open(tmp + "/uasset-iostore.json"))
+ip = r["iostore_packages"]
+assert len(ip) == 1, ip
+assert ip[0]["counts"]["names"] == 33, ip[0].get("counts")
+assert ip[0]["entry"].endswith("Content/SynthMesh.uasset")
+PYEOF
+  then ok "unreal-uasset: synthetic packages parsed (bare, split, APK, IoStore)"
+  else bad "unreal-uasset" "package inspection mismatch"; fi
+else skip "unreal-uasset" "synthetic package build failed"; fi
+
 # ------------------------------------------------- il2cpp cpp2il (2.1.0)
 CPP2IL_BIN="${NAR_CPP2IL:-}"
 [ -z "$CPP2IL_BIN" ] && [ -x "$HOME/workspace/tools/cpp2il/Cpp2IL" ] \
@@ -538,6 +636,36 @@ PYEOF
   then ok "il2cpp-cpp2il: Cpp2IL backend summary on Unity fixture"
   else bad "il2cpp-cpp2il" "backend summary missing or implausible"; fi
 else skip "il2cpp-cpp2il" "Cpp2IL binary or FIX_UNITY absent"; fi
+
+# ------------------------------------------------- dex disassembly
+# Targeted disassembly of the demo fixture through nar-dex's
+# own disassembler (narlib.dexdis): selection must decode,
+# an invoke target must come back resolved, and the unscoped
+# form must refuse (full-corpus disassembly is opt-in only).
+if need dex-disasm "$DEMO"; then
+  $PY "$SCRIPTS/nar-dex.py" --json --disassemble \
+    --disasm-class nardemo "$DEMO" > "$TMP/dexdis.json" 2>/dev/null
+  if $PY - "$TMP" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1] + "/dexdis.json"))
+dis = d["dex_files"][0]["disassembly"]
+assert dis["mode"] == "targeted", dis["mode"]
+assert dis["methods_decoded"] > 0, dis
+assert dis["methods_failed"] == 0, dis["failures"]
+texts = [e["text"] for m in dis["methods"]
+         for e in m["instructions"]]
+assert any(t.startswith("invoke-") and "->" in t
+           for t in texts), texts[:5]
+PYEOF
+  then ok "dex-disasm: targeted disassembly decodes + resolves on demo"
+  else bad "dex-disasm" "targeted disassembly missing or unresolved"; fi
+  if $PY "$SCRIPTS/nar-dex.py" "$DEMO" --disassemble \
+       > /dev/null 2>&1; then
+    bad "dex-disasm-scope" "unscoped --disassemble did not refuse"
+  else
+    ok "dex-disasm: unscoped disassembly refused"
+  fi
+else skip "dex-disasm" "demo fixture absent"; fi
 
 # ---------------------------------------------------------------- frida
 if command -v node >/dev/null 2>&1; then

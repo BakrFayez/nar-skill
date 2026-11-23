@@ -291,7 +291,7 @@ def review(target, deep=False, work_dir=None):
                     "content in a bridged WebView.",
                     "The bridge may only serve first-party "
                     "bundled pages.")
-    return {"tool": "nar-security", "version": "2.1.0",
+    return {"tool": "nar-security", "version": "2.2.0",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "findings": findings.items,

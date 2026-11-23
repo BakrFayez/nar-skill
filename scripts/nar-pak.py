@@ -8,7 +8,10 @@ unpacked sizes, compression method, and encryption flag, plus
 grouped totals (by file extension and by top-level folder).
 Versions 8+ use a different
 (FName-based, path-hash) index and are reported as unsupported,
-plainly: this tool never guesses or invents entries.
+plainly: this tool never guesses or invents entries. For v7+
+footers the report also surfaces the footer's index-encryption
+flag, so a modern pak whose index is AES-encrypted says so even
+though its index layout is not parsed.
 
 Usage:
     python3 nar-pak.py game.pak [--json] [--limit N]
@@ -83,19 +86,40 @@ class Reader:
         return raw.rstrip(b"\x00\x00").decode("utf-16-le", "replace")
 
 
-def find_footer(data):
-    """Locate FPakInfo: magic, version, index offset, index size."""
+def _locate_magic(data):
+    """Absolute offset of the FPakInfo magic in the file tail."""
     tail = data[-FOOTER_SCAN:] if len(data) > FOOTER_SCAN else data
     idx = tail.rfind(PAK_MAGIC_BYTES)
     if idx < 0:
         raise PakError("no .pak footer magic found in the last "
                        f"{FOOTER_SCAN} bytes: not an Unreal .pak file "
                        "(or a truncated one)")
-    base = len(data) - len(tail) + idx
+    return len(data) - len(tail) + idx
+
+
+def find_footer(data):
+    """Locate FPakInfo: magic, version, index offset, index size."""
+    base = _locate_magic(data)
     if base + 24 > len(data):
         raise PakError("footer is truncated")
     version, index_offset, index_size = struct.unpack_from("<IQQ", data, base + 4)
     return version, index_offset, index_size
+
+
+def index_encrypted(data, version):
+    """The footer's index-encryption flag, or None when absent.
+
+    Pak v7+ writes a 16-byte encryption-key GUID and a 1-byte
+    bEncryptedIndex flag immediately before the magic. Older
+    footers have no such prefix, so the flag does not exist there
+    and None is returned rather than a guessed value.
+    """
+    if version < 7:
+        return None
+    base = _locate_magic(data)
+    if base == 0:
+        return None
+    return data[base - 1] != 0
 
 
 def parse_entries(data, version, index_offset, index_size,
@@ -224,12 +248,20 @@ def list_pak(path):
         "index_offset": index_offset,
         "index_size_bytes": index_size,
     }
+    encrypted = index_encrypted(data, version)
+    if encrypted is not None:
+        report["index_encrypted"] = encrypted
     if version >= 8:
         report["supported"] = False
         report["error"] = (
             f"pak format version {version} uses the FName-based index"
             " (path-hash directory), which this stdlib lister does not"
             " parse. No entries are shown rather than guessed ones.")
+        if encrypted:
+            report["error"] += (
+                " The index is additionally flagged encrypted (AES),"
+                " so its entries could not be read without the pak"
+                " encryption key even if the index layout were parsed.")
         return report
     if index_offset + index_size > len(data):
         report["supported"] = False
@@ -392,6 +424,9 @@ def human(report, limit):
     lines.append(f"Size: {report['size_bytes']:,} bytes")
     lines.append(f"Pak format version: {report['pak_version']}")
     if not report.get("supported"):
+        if report.get("index_encrypted"):
+            lines.append("Index encryption: AES (the index itself is "
+                         "flagged encrypted)")
         lines.append(f"UNSUPPORTED: {report.get('error', 'unknown problem')}")
         return "\n".join(lines)
     lines.append(f"Mount point: {report['mount_point']}")

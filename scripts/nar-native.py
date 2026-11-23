@@ -68,7 +68,7 @@ def analyze_elf(name, data, cross_check_path=None):
 
 
 def analyze(target, only_lib=None, work_dir=None):
-    report = {"tool": "nar-native", "version": "2.1.0",
+    report = {"tool": "nar-native", "version": "2.2.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     libs = []  # (display_name, data, temp_path_for_crosscheck)

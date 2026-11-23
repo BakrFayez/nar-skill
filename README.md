@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.1.0
+Version 2.2.0
 
 Research by Bakr Fayez
 
@@ -68,7 +68,8 @@ or standalone, exactly as in 1.x.
   across 18 engine/framework families, with optional deep-dive
   confirmation (`nar-engines.py --deep`), plus dedicated
   Unity (`nar-unity.py`, optional UnityPy census) and Unreal
-  (`nar-unreal.py`, IoStore entry-level parsing) deep dives.
+  (`nar-unreal.py`, IoStore entry-level parsing and
+  UAsset-level package inspection) deep dives.
 - **DEX and native intelligence**: a built-in DEX parser
   (classes, methods, fields, call edges, reflection and
   dynamic-loading evidence, Kotlin inventory, jadx/baksmali
@@ -89,8 +90,12 @@ or standalone, exactly as in 1.x.
   (schemas in `schemas/`) and a single-file offline HTML
   dashboard (dark/light, filterable, zero external requests).
 - **Runtime subsystem**: adb/Frida adapters, session plans,
-  and a timeline schema — device-dependent parts labeled
-  IMPLEMENTED_BUT_UNVERIFIED until a device proves them.
+  and a timeline schema — device paths verified live on an
+  emulator (API 26, QEMU TCG) on 2026-11-23: adb, install/
+  launch, and Frida observation in both attach mode and
+  spawn mode (hybrid resume-first recipe; see
+  references/frida-scripts.md) all ran against a real
+  target; a physical device is still unverified.
 - **Capability registry**: every orchestrated tool declared
   in `scripts/registry.json` with availability probing and
   honest limitations; unavailable tools are registered as

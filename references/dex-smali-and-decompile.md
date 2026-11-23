@@ -37,6 +37,70 @@ Hard-won NAR notes (from building DEX parsers by hand):
   in small ways (for example, hidden-API flags). Parse by the header
   version, not by assumption.
 
+## Instruction-level disassembly (built in)
+
+nar-dex can decode method bytecode itself
+(`scripts/narlib/dexdis.py`, pure Python, no external tool) for the
+cases where the orchestrated decompilers are the wrong instrument:
+a jadx failure on one obfuscated or protected method, a quick
+instruction-level check while triaging, or a DEX whose structure
+the structural parser already reads but that no decompiler run has
+covered yet.
+
+```bash
+python3 scripts/nar-dex.py app.apk --disassemble \
+    --disasm-class 'Lcom/example/Pay;' --disasm-method 'verify'
+python3 scripts/nar-dex.py app.apk --disassemble --disasm-all
+```
+
+Discipline, by design:
+
+- **Targeted, not a dump.** A selection is required: a class
+  and/or method substring pattern, or `--disasm-all` to request
+  the full corpus explicitly. Unscoped `--disassemble` is
+  refused. Listings are capped (`--disasm-limit`, default 500);
+  selection and decode counts always stay complete.
+- **Resolved operands.** Every reference is rendered through the
+  DEX's own tables: string contents, type names, field and
+  method signatures, prototypes (parameter descriptors
+  concatenated with no separator, per DEX convention),
+  call sites in full smali form
+  (`call_site_N("name", proto, args...)@bootstrap`), and method
+  handles as `kind@target`.
+- **Full format coverage.** All documented instruction formats
+  and the switch / fill-array payload pseudo-instructions
+  (payloads are consumed in-stream and reported as payloads,
+  never mistaken for opcodes). DEX 038+ forms (invoke-custom,
+  invoke-polymorphic, const-method-handle, const-method-type)
+  decode only in files whose header version allows them.
+- **Clean failure, never a guess.** An unknown opcode, an
+  out-of-range reference index, a truncated stream, or a gated
+  opcode in an older file fails THAT method's listing with the
+  precise reason and code-unit offset; the rest of the file is
+  unaffected. Switch/fill target mismatches are warnings, not
+  failures. A single wrong operand width would corrupt every
+  following instruction, so width correctness is treated as
+  the core risk and is oracle-verified (see below).
+- **Scope limit.** The listing covers instructions and
+  payloads. It does not build a control-flow graph, does not
+  decode try/catch handler tables or debug info, and is not a
+  decompiler — for Java-level reading, jadx stays the tool.
+
+Verification: the decoder was cross-checked instruction by
+instruction against the Android SDK disassembler over the demo
+fixture DEX and three real-world DEX files from the local test
+corpus (DEX 035/037; 40,837 methods, 773,166 instructions and
+2,363 payloads compared on address, mnemonic, resolved
+reference, branch target, and literal — full agreement, zero
+failures), against a toolchain-built DEX 038 file carrying a
+real invoke-polymorphic (full agreement), and against an
+independent smali disassembler for the DEX 038/039 gated forms
+on a spec-built file (rendering identical). A full-corpus
+decode of the largest corpus DEX (56,073 methods, 1,217,078
+instructions) completes in about 6 seconds. No local real-world
+file uses invoke-custom, so that form's real-file coverage
+rests on the spec-built file plus its unit tests.
+
 ## smali
 
 apktool decodes DEX to smali (one `.smali` file per class), the
