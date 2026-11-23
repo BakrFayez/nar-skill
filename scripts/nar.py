@@ -75,7 +75,6 @@ COMMANDS = {
 
 IDENTITY = f"""NAR {VERSION} — NIROUS ANDROID INTELLIGENCE
 Understand Every Layer. Follow Every Evidence.
-Developed by Nirous Labs. Created by Bakr Fayez.
 Research by Bakr Fayez. MIT License."""
 
 

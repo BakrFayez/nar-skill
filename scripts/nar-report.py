@@ -174,8 +174,7 @@ padding:6px 12px;cursor:pointer}
 <body>
 <main>
 <h1>NAR 2.0 — NIROUS ANDROID INTELLIGENCE</h1>
-<p class="sub">Case report · Developed by Nirous Labs ·
-Created by Bakr Fayez ·
+<p class="sub">Case report · Research by Bakr Fayez ·
 <button onclick="toggleTheme()">Toggle theme</button></p>
 <!--BODY-->
 </main>

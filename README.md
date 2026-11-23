@@ -4,9 +4,6 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Developed by Nirous Labs.
-Created by Bakr Fayez.
-
 Version 2.0.0
 
 Research by Bakr Fayez
