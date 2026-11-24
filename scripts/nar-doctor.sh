@@ -303,16 +303,34 @@ NAR_SCRIPTS_DETAIL=""
 if [ -n "$PY_BIN" ]; then
   NAR_SCRIPTS_OK="ok"
   NAR_SCRIPTS_DETAIL="all bundled scripts compile"
+  # Compile into a throwaway dir: py_compile otherwise writes
+  # __pycache__ next to every script in the tree.
+  PYC_DIR="$(mktemp -d 2>/dev/null || echo "")"
   for s in nar-triage.py nar-strings.py nar-perms.py nar-compare.py nar-pak.py nar-analyze.py nar-il2cpp.py nar-flutter.py nar-godot.py nar-rn.py; do
     if [ ! -f "$SCRIPT_DIR/$s" ]; then
       NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="missing scripts/$s"; break
     fi
-    if ! "$PY_BIN" -m py_compile "$SCRIPT_DIR/$s" 2>/dev/null; then
+    if [ -n "$PYC_DIR" ]; then
+      COMPILE_OK="$("$PY_BIN" -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' "$SCRIPT_DIR/$s" "$PYC_DIR/$s.pyc" 2>/dev/null && echo 1)"
+    else
+      COMPILE_OK="$("$PY_BIN" -m py_compile "$SCRIPT_DIR/$s" 2>/dev/null && echo 1)"
+    fi
+    if [ -z "$COMPILE_OK" ]; then
       NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="scripts/$s does not compile"; break
     fi
   done
+  [ -n "$PYC_DIR" ] && rm -rf "$PYC_DIR"
 fi
 check "nar-scripts" "core" "$NAR_SCRIPTS_OK" "$NAR_SCRIPTS_DETAIL" "The scripts bundled with the skill are missing or broken; reinstall the skill"
+
+# --- protection signature database (core: nar-triage loads it) ---
+SIG_DB="$SCRIPT_DIR/protection-signatures.json"
+SIG_OK=""; SIG_DETAIL=""
+if [ -n "$PY_BIN" ] && [ -f "$SIG_DB" ]; then
+  SIG_DETAIL="$("$PY_BIN" -c 'import json,sys; d=json.load(open(sys.argv[1])); print("protection signatures DB v%s (%d packers, %d categories, schema %s)" % (d["database_version"], len(d.get("packers",[])), len(d.get("categories",[])), d.get("schema")))' "$SIG_DB" 2>/dev/null)"
+  if [ -n "$SIG_DETAIL" ]; then SIG_OK="ok"; fi
+fi
+check "protection-signatures" "core" "$SIG_OK" "$SIG_DETAIL" "scripts/protection-signatures.json is missing or unreadable; nar-triage cannot run its protection scan without it — reinstall the skill"
 
 # --- verdict ---
 CORE_OK=1

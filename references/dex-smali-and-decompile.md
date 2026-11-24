@@ -82,9 +82,15 @@ Discipline, by design:
   following instruction, so width correctness is treated as
   the core risk and is oracle-verified (see below).
 - **Scope limit.** The listing covers instructions and
-  payloads. It does not build a control-flow graph, does not
-  decode try/catch handler tables or debug info, and is not a
-  decompiler — for Java-level reading, jadx stays the tool.
+  payloads; it is not a decompiler — for Java-level
+  reading, jadx stays the tool. Adjacent structure is
+  covered elsewhere in the tool, not in the listing:
+  nar-dex reports each DEX's try/catch handler tables
+  and debug-info presence (parsed by narlib.dex), and
+  the disassembler library computes a control-flow
+  block summary (block boundaries, branch edges, try
+  ranges) — a rendered control-flow graph and debug
+  line/local decoding remain unimplemented.
 
 Verification: the decoder was cross-checked instruction by
 instruction against the Android SDK disassembler over the demo

@@ -38,6 +38,81 @@ SNAPSHOT_MARKERS = (
 SCAN_CAP = 64 * 1024 * 1024  # bytes per library; versions sit early
 
 
+_ASSET_TYPES = (
+    ("image", (".png", ".jpg", ".jpeg", ".webp", ".gif",
+               ".svg", ".bmp", ".ico")),
+    ("font", (".ttf", ".otf", ".ttc")),
+    ("audio", (".mp3", ".ogg", ".wav", ".m4a", ".flac",
+               ".aac")),
+    ("video", (".mp4", ".webm", ".mov")),
+    ("shader", (".frag", ".vert", ".glsl", ".spv")),
+    ("data", (".json", ".yaml", ".yml", ".txt", ".md",
+              ".csv", ".xml", ".html")),
+)
+
+
+def _asset_type(rel_path):
+    low = rel_path.lower()
+    if low in ("assetmanifest.json", "assetmanifest.bin"):
+        return "asset manifest"
+    if low in ("kernel_blob.bin", "vm_snapshot_data",
+               "isolate_snapshot_data"):
+        return "dart snapshot/kernel"
+    if low == "fontmanifest.json":
+        return "font manifest"
+    if low.startswith("notices"):
+        return "licenses"
+    for kind, exts in _ASSET_TYPES:
+        if low.endswith(exts):
+            return kind
+    return "other"
+
+
+def flutter_asset_inventory(zf, names):
+    """Real inventory of assets/flutter_assets: every entry
+    with its size and a type (classified by file name /
+    extension — labeled as such; the engine's own
+    AssetManifest is parsed for the declared asset keys
+    when the JSON form ships)."""
+    prefix = "assets/flutter_assets/"
+    entries = []
+    by_type = {}
+    total = 0
+    manifest = {"json_present": False, "bin_present": False,
+                "declared_assets": None}
+    for name in names:
+        if not name.startswith(prefix) or name.endswith("/"):
+            continue
+        rel = name[len(prefix):]
+        size = zf.getinfo(name).file_size
+        kind = _asset_type(rel)
+        entries.append({"path": rel, "size_bytes": size,
+                        "type": kind})
+        by_type[kind] = by_type.get(kind, 0) + 1
+        total += size
+        if rel == "AssetManifest.json":
+            manifest["json_present"] = True
+            try:
+                doc = json.loads(zf.read(name).decode(
+                    "utf-8", "replace"))
+                if isinstance(doc, dict):
+                    manifest["declared_assets"] = len(doc)
+            except ValueError:
+                pass
+        elif rel == "AssetManifest.bin":
+            manifest["bin_present"] = True
+    entries.sort(key=lambda e: e["path"])
+    return {
+        "entry_count": len(entries),
+        "total_bytes": total,
+        "by_type": dict(sorted(by_type.items())),
+        "entries": entries[:200],
+        "entries_truncated": len(entries) > 200,
+        "asset_manifest": manifest,
+        "type_evidence": "file name / extension",
+    }
+
+
 def _first_version(data, patterns):
     for pat in patterns:
         m = pat.search(data)
@@ -68,6 +143,9 @@ def fingerprint(apk_path):
         report["app_libs"] = app
         report["has_flutter_assets"] = any(
             n.startswith("assets/flutter_assets/") for n in names)
+        if report["has_flutter_assets"]:
+            report["flutter_assets"] = flutter_asset_inventory(
+                zf, names)
         report["kernel_blob"] = any(
             n.endswith("kernel_blob.bin") for n in names)
         if not engine and not app:
@@ -119,6 +197,11 @@ def human(report):
     lines.append(f"AOT snapshot markers: "
                  f"{', '.join(report['snapshot_markers']) or 'none'}")
     lines.append(f"Build mode: {report['build_mode']}")
+    inv = report.get("flutter_assets")
+    if inv:
+        lines.append(f"Flutter assets: {inv['entry_count']} "
+                     f"entries, {inv['total_bytes']:,} bytes; "
+                     f"by type: {inv['by_type']}")
     return "\n".join(lines)
 
 

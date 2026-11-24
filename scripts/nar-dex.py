@@ -96,6 +96,13 @@ REFLECTION_METHOD_NAMES = {"forName", "loadClass", "defineClass",
                            "newInstance", "invoke"}
 MAX_CALL_EDGES = 200000
 MAX_STRING_CLASSES = 5000
+# @Metadata "k" element values, per the public Kotlin
+# metadata format: the kind of declaration the annotated
+# class represents.
+KOTLIN_METADATA_KINDS = {
+    1: "class", 2: "file facade", 3: "synthetic class",
+    4: "multi-file class facade", 5: "multi-file class part",
+}
 
 
 def load_dexes(target):
@@ -209,6 +216,19 @@ def analyze_dex(name, data, disasm=None):
     dynamic_ops = 0
     reflection_method_refs = set()
     suspend_candidates = 0
+    methods_with_code = 0
+    methods_with_tries = 0
+    try_items_total = 0
+    handler_entries_total = 0
+    methods_with_debug = 0
+    metadata_count = 0
+    metadata_samples = []
+    # The @Metadata annotation type lives in the TYPE table
+    # (descriptor Lkotlin/Metadata;); the bare string
+    # "kotlin/Metadata" appears in the string table only when
+    # something references it as a literal, which release
+    # builds usually do not — gating on it under-reports.
+    has_metadata_type = "Lkotlin/Metadata;" in type_set
     super_map = {}
     defs = dex.class_defs()
     for cdef in defs:
@@ -226,6 +246,22 @@ def analyze_dex(name, data, disasm=None):
             if is_native:
                 native_methods.append({"class": cls, "name": mname})
             if code_off:
+                methods_with_code += 1
+                try:
+                    cinfo = dex.code_item_info(code_off)
+                except Exception:
+                    cinfo = None
+                if cinfo:
+                    if cinfo["has_debug_info"]:
+                        methods_with_debug += 1
+                    if cinfo["tries"]:
+                        methods_with_tries += 1
+                        try_items_total += len(cinfo["tries"])
+                        handler_entries_total += sum(
+                            len(t["handlers"])
+                            + (1 if t["catch_all_addr"] is not None
+                               else 0)
+                            for t in cinfo["tries"])
                 scan = dex.scan_code(code_off)
                 dynamic_ops += len(scan["dynamic"])
                 for midx, ikind in scan["invokes"]:
@@ -249,6 +285,23 @@ def analyze_dex(name, data, disasm=None):
         fields = [{"name": fname, "type": ftype, "kind": fkind}
                   for fname, ftype, _fl, fkind
                   in dex.class_fields(cdef["class_data_off"])]
+        if has_metadata_type:
+            for annotation in dex.class_annotations(cdef):
+                if annotation["type"] != "Lkotlin/Metadata;":
+                    continue
+                metadata_count += 1
+                if len(metadata_samples) < 50:
+                    elements = annotation.get("elements") or {}
+                    mv = elements.get("mv")
+                    kind = elements.get("k")
+                    metadata_samples.append({
+                        "class": cls,
+                        "metadata_version": (
+                            ".".join(str(x) for x in mv)
+                            if isinstance(mv, list) else mv),
+                        "kind": kind,
+                        "kind_name": KOTLIN_METADATA_KINDS.get(kind)
+                        if isinstance(kind, int) else None})
         classes.append({
             "class": cls, "superclass": cdef["superclass"],
             "interfaces": cdef["interfaces"],
@@ -301,8 +354,7 @@ def analyze_dex(name, data, disasm=None):
             want_all=disasm.get("all", False),
             limit=disasm.get("limit", 500))
     report["kotlin"] = {
-        "metadata_annotation_present":
-            "kotlin/Metadata" in strings,
+        "metadata_annotation_present": has_metadata_type,
         "kotlin_type_count": len(kotlin_types),
         "coroutines_types": len([t for t in kotlin_types
                                  if t.startswith(
@@ -313,9 +365,25 @@ def analyze_dex(name, data, disasm=None):
                                     if t.startswith(
                                         "Lkotlinx/serialization/")]),
         "suspend_candidates": suspend_candidates,
+        "metadata": {
+            "classes_with_metadata": metadata_count,
+            "samples": metadata_samples,
+            "note": "metadata version (mv) and declaration "
+                    "kind (k) are parsed from the @Metadata "
+                    "annotation payload; kind names follow "
+                    "the public Kotlin metadata format. "
+                    "Data/sealed/companion classification of "
+                    "individual classes is not claimed.",
+        },
         "note": "Feature presence is observed from type/method "
-                "tables; data/sealed/companion classification "
-                "needs metadata parsing and is not claimed here.",
+                "tables and @Metadata payloads where present.",
+    }
+    report["try_catch"] = {
+        "methods_with_code": methods_with_code,
+        "methods_with_tries": methods_with_tries,
+        "try_items": try_items_total,
+        "handler_entries": handler_entries_total,
+        "methods_with_debug_info": methods_with_debug,
     }
     return report
 
@@ -388,7 +456,7 @@ def baksmali_index(dex_bytes_path, out_dir):
 
 def analyze(target, out_dir=None, use_jadx=False,
             use_baksmali=False, disasm=None):
-    report = {"tool": "nar-dex", "version": "2.4.0",
+    report = {"tool": "nar-dex", "version": "2.5.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
     artifact = compiled_artifact_info(target)
@@ -470,6 +538,14 @@ def human(report):
         print(f"    call edges: {d['call_edge_count']:,}; "
               f"native methods: {len(d['native_methods'])}; "
               f"entry points: {len(d['entry_points'])}")
+        tc = d.get("try_catch") or {}
+        if tc:
+            print(f"    try/catch: {tc['methods_with_tries']} of "
+                  f"{tc['methods_with_code']} coded methods, "
+                  f"{tc['try_items']} try items, "
+                  f"{tc['handler_entries']} handler entries; "
+                  f"debug info on {tc['methods_with_debug_info']} "
+                  f"methods")
         r = d["reflection"]
         print(f"    reflection types: "
               f"{len(r['reflection_types_present'])}, loaders: "

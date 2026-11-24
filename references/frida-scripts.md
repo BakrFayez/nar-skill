@@ -131,6 +131,21 @@ the native function for entry calls.
 [jni-entry] com.example.NativeLib.process thread=1234 at libnative.so!process +0x1234 (0x...)
 ```
 
+Event path verified live (2026-11-24, Evolution Phase 6):
+against a fixture variant whose library binds its method
+only through `RegisterNatives` in `JNI_OnLoad`, the full
+chain — class line, per-method line with the resolved
+symbol, and the `[jni-entry]` call trace — was captured on
+the API 26 emulator in attach mode, and the class-level
+event in spawn mode (Frida 17.27.4). The live run also
+caught a real defect: the per-method read used
+`Memory.readPointer`/`Memory.readUtf8String` statics that
+Frida 17 removed; it now uses the `NativePointer` instance
+methods. A statically bound target (a `Java_*` export)
+registers nothing at runtime, so no event is the correct
+output for such targets — the absence of events is only
+meaningful against a dynamic registrar.
+
 Set `TRACE_NATIVE_ENTRY` to false to log registrations only, and
 `MAX_ENTRY_CALLS` (default 500) to cap entry logging. Register the
 script with `-f` so it loads before the app: natives registered

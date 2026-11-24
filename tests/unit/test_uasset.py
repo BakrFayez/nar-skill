@@ -318,10 +318,13 @@ UE5_NAMES = [
     "None", "/Script/Engine", "Package", "Texture2D",
     "TestTexture", "Width", "IntProperty", "ArrayProperty",
     "Tags", "NameProperty", "Alpha", "Beta",
+    "FloatProperty", "BoolProperty", "bEnabled",
+    "StructProperty", "Vector", "Pos", "X", "Y", "Health",
 ]
 (V_NONE, V_ENGINE, V_PACKAGE, V_TEX2D, V_TESTTEX, V_WIDTH,
  V_INT, V_ARRAY, V_TAGS, V_NAMEPROP, V_ALPHA,
- V_BETA) = range(len(UE5_NAMES))
+ V_BETA, V_FLOAT, V_BOOL, V_BENABLED, V_STRUCT, V_VECTOR,
+ V_POS, V_X, V_Y, V_HEALTH) = range(len(UE5_NAMES))
 
 
 def _ue5_export_data():
@@ -337,15 +340,16 @@ def _ue5_export_data():
     return d.bytes()
 
 
-def build_ue5():
+def build_ue5(ue5_version=1010, data0=None):
     """UE5-era package: legacy -8, UE4 522, UE5 1010."""
-    data0 = _ue5_export_data()
+    if data0 is None:
+        data0 = _ue5_export_data()
     b = _B()
     b.u32(MAGIC)
     b.i32(-8)
     b.i32(864)
     b.i32(522)
-    b.i32(1010)                     # UE5 object version
+    b.i32(ue5_version)              # UE5 object version
     b.i32(0)
     b.i32(1)                        # custom versions
     b.guid(0x55)
@@ -918,3 +922,126 @@ def test_truncated_package():
         pass
     else:
         raise AssertionError("truncated package accepted")
+
+
+# ---------------------------------------------------------------------
+# UE5 tag-extension layouts (1011 / 1012+): SYNTHETIC packages
+# built to the documented format. No real package with a
+# recorded UE5 object version >= 1011 exists in the corpus
+# (shipped UE5 titles strip versions or use Zen), so these
+# layouts are verified synthetically and labeled as such —
+# the parser reports the same labeling in its output.
+# ---------------------------------------------------------------------
+
+def _tag1011(b, name_idx, type_idx, data, ext=0, op=0,
+             xlogic=0):
+    """Classic tag + the 1011 extension tail (extension
+    byte after the GUID flag byte; overridable payload
+    when the 0x02 bit is set)."""
+    b.fname(name_idx)
+    b.fname(type_idx)
+    b.i32(len(data))
+    b.i32(0)
+    b.u8(0)                         # no property GUID
+    b.u8(ext)
+    if ext & 0x02:
+        b.u8(op)
+        b.i32(xlogic)
+    return b.raw(data)
+
+
+def _ue5_1011_export_data():
+    d = _B()
+    _tag1011(d, V_WIDTH, V_INT, struct.pack("<i", 1024), ext=0)
+    _tag1011(d, V_HEALTH, V_INT, struct.pack("<i", 77),
+             ext=2, op=3, xlogic=1)
+    d.fname(V_NONE)
+    return d.bytes()
+
+
+def test_ue5_1011_tag_extension_synthetic():
+    r = parse_package(build_ue5(1011, _ue5_1011_export_data()),
+                      "synthetic-ue5-1011.uasset")
+    props = r["exports"][0]["properties"]
+    assert props["status"] == "parsed", props
+    assert props["tag_layout"] == "ue5-tag-extension"
+    assert "synthetic" in props["verification"]
+    tags = {t["name"]: t for t in props["tags"]}
+    assert tags["Width"]["value"] == 1024
+    assert tags["Width"]["tag_extensions"] == 0
+    assert tags["Health"]["value"] == 77
+    assert tags["Health"]["tag_extensions"] == 2
+    assert tags["Health"]["override_operation"] == 3
+    assert tags["Health"]["experimental_overridable_logic"] \
+        is True
+
+
+def _ctn_tag(b, name_idx, nodes, data, flags=0, ext=None):
+    """One >= 1012 complete-type-name tag: name FName,
+    type-name node list, size, flags byte, then the
+    flag-gated array index / GUID / extension tail."""
+    b.fname(name_idx)
+    for idx, inner in nodes:
+        b.fname(idx)
+        b.i32(inner)
+    b.i32(len(data))
+    b.u8(flags)
+    if flags & 0x01:
+        b.i32(0)                    # array index
+    if flags & 0x02:
+        b.guid(0x42)                # property GUID
+    if flags & 0x04:
+        e, op, xl = ext
+        b.u8(e)
+        if e & 0x02:
+            b.u8(op)
+            b.i32(xl)
+    return b.raw(data)
+
+
+def _ue5_1012_export_data():
+    d = _B()
+    _ctn_tag(d, V_WIDTH, [(V_INT, 0)], struct.pack("<i", 1024))
+    _ctn_tag(d, V_BENABLED, [(V_BOOL, 0)], b"", flags=0x10)
+    arr = _B()
+    arr.i32(2)
+    arr.fname(V_ALPHA)
+    arr.fname(V_BETA)
+    _ctn_tag(d, V_TAGS, [(V_ARRAY, 1), (V_NAMEPROP, 0)],
+             arr.bytes())
+    inner = _B()
+    _ctn_tag(inner, V_X, [(V_FLOAT, 0)], struct.pack("<f", 1.5))
+    _ctn_tag(inner, V_Y, [(V_FLOAT, 0)], struct.pack("<f", 2.5))
+    inner.fname(V_NONE)
+    _ctn_tag(d, V_POS, [(V_STRUCT, 1), (V_VECTOR, 0)],
+             inner.bytes())
+    _ctn_tag(d, V_HEALTH, [(V_INT, 0)], struct.pack("<i", 77),
+             flags=0x02 | 0x04, ext=(2, 1, 0))
+    d.fname(V_NONE)
+    return d.bytes()
+
+
+def test_ue5_1012_complete_type_name_synthetic():
+    r = parse_package(build_ue5(1012, _ue5_1012_export_data()),
+                      "synthetic-ue5-1012.uasset")
+    props = r["exports"][0]["properties"]
+    assert props["status"] == "parsed", props
+    assert props["tag_layout"] == "ue5-complete-type-name"
+    assert "synthetic" in props["verification"]
+    tags = {t["name"]: t for t in props["tags"]}
+    assert tags["Width"]["value"] == 1024
+    assert tags["Width"]["type_name"] == "IntProperty"
+    assert tags["bEnabled"]["bool_value"] is True
+    assert tags["bEnabled"]["size"] == 0
+    assert tags["Tags"]["type_name"] == \
+        "ArrayProperty<NameProperty>"
+    assert tags["Tags"]["inner_type"] == "NameProperty"
+    assert tags["Pos"]["struct_name"] == "Vector"
+    children = {c["name"]: c for c in tags["Pos"]["children"]}
+    assert children["X"]["value"] == 1.5
+    assert children["Y"]["value"] == 2.5
+    assert tags["Health"]["value"] == 77
+    assert tags["Health"]["property_guid"] == "42" * 16
+    assert tags["Health"]["override_operation"] == 1
+    assert tags["Health"]["experimental_overridable_logic"] \
+        is False

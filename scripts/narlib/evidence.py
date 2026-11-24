@@ -14,12 +14,17 @@ Every 2.0 module result is an envelope:
   names, offsets, class:method names.
 
 Security findings follow the brief section 9.5 field list and
-are built with make_finding().
+are built with make_finding(). Findings also carry a
+verification_status from narlib.VERIFICATION_STATUSES
+(Evolution Phase 6/8): how the finding was verified, kept
+separate from the analyst confidence in the underlying
+observation.
 """
 import datetime
 import re
 
-from . import CONFIDENCE_LEVELS, FACT_CLASSES, RESULT_STATUSES
+from . import (CONFIDENCE_LEVELS, FACT_CLASSES, RESULT_STATUSES,
+               VERIFICATION_STATUSES)
 
 SEVERITIES = ("critical", "high", "medium", "low",
               "informational")
@@ -28,6 +33,22 @@ SEVERITIES = ("critical", "high", "medium", "low",
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(
         timespec="seconds")
+
+
+def verification_for_fact_class(fact_class):
+    """Map a fact class to the verification status it can
+    honestly carry (Evolution Phase 8): a directly observed
+    fact is CONFIRMED; a derived one is STRONGLY_INDICATED
+    (computed from observations, not itself observed); an
+    inference or hypothesis is POTENTIAL at best; an
+    unknown is UNVERIFIED. CONTRADICTED is never assigned
+    by mapping — it is set explicitly where two checks
+    disagree."""
+    return {"observed": "CONFIRMED",
+            "derived": "STRONGLY_INDICATED",
+            "inferred": "POTENTIAL",
+            "hypothesis": "POTENTIAL",
+            "unknown": "UNVERIFIED"}.get(fact_class, "UNVERIFIED")
 
 
 def make_result(module, tool, tool_version, source, data,
@@ -56,17 +77,30 @@ def make_result(module, tool, tool_version, source, data,
 def make_finding(finding_id, title, severity, confidence,
                  component, file_path, evidence, explanation,
                  impact, remediation, reproduction="static",
-                 false_positives=""):
-    """One security finding in the brief section 9.5 schema."""
+                 false_positives="",
+                 verification_status="UNVERIFIED"):
+    """One security finding in the brief section 9.5 schema.
+
+    verification_status (narlib.VERIFICATION_STATUSES) states
+    how the finding was verified: a fact read directly from
+    the target is CONFIRMED; a conclusion drawn from
+    classified patterns is STRONGLY_INDICATED at best; a
+    review prompt is POTENTIAL. The default is UNVERIFIED —
+    a finding never claims verification its producer did
+    not perform."""
     if severity not in SEVERITIES:
         raise ValueError(f"bad severity: {severity}")
     if confidence not in CONFIDENCE_LEVELS:
         raise ValueError(f"bad confidence: {confidence}")
+    if verification_status not in VERIFICATION_STATUSES:
+        raise ValueError(
+            f"bad verification_status: {verification_status}")
     return {
         "id": finding_id,
         "title": title,
         "severity": severity,
         "confidence": confidence,
+        "verification_status": verification_status,
         "affected_component": component,
         "file_path": file_path,
         "evidence": evidence,

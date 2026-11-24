@@ -15,6 +15,16 @@ What is real here:
 - timeline: an empty timeline document conforming to
   schemas/timeline.schema.json, ready to be filled by a
   session on a real device.
+- session records (Evolution Phase 6): the plan and status
+  flows can persist a structured session record
+  (schemas/runtime-session.schema.json) into a case
+  workspace with --session-out DIR: session id, device
+  identity, tool probes/versions, start/stop times, the
+  events the flow produced, evidence paths, and errors.
+  A record describes what the flow observed and planned;
+  it never upgrades the verification label — a session
+  recorded with no device attached still says
+  IMPLEMENTED_BUT_UNVERIFIED.
 
 Verification status: the device paths were verified live on
 2026-11-23 against an Android emulator (API 26 / Android
@@ -40,9 +50,10 @@ status keeps reporting IMPLEMENTED_BUT_UNVERIFIED,
 exactly as the brief's honesty rules require.
 
 Usage:
-    python3 nar-runtime.py status [--json]
-    python3 nar-runtime.py plan app.apk [--json]
-    python3 nar-runtime.py timeline-template [--json]
+    python3 nar-runtime.py [--json] status [--session-out DIR]
+    python3 nar-runtime.py [--json] plan app.apk
+                            [--session-out DIR]
+    python3 nar-runtime.py [--json] timeline-template
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
@@ -52,9 +63,12 @@ import json
 import os
 import subprocess
 import sys
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import evidence as ev_mod  # noqa: E402
 from narlib import registry as reg_mod  # noqa: E402
+from narlib.hashing import sha256_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRIDA_CATALOG = [
@@ -122,7 +136,7 @@ def status():
                                 "ro.build.version.release")})
     verified = bool(devices)
     return {
-        "tool": "nar-runtime", "version": "2.4.0",
+        "tool": "nar-runtime", "version": "2.5.0",
         "adb": adb, "frida": frida,
         "devices": device_info,
         "device_error": err,
@@ -170,7 +184,7 @@ def plan(apk_path):
          "evidence": "app-private file inventory for the "
                      "case workspace"},
     ]
-    return {"tool": "nar-runtime", "version": "2.4.0",
+    return {"tool": "nar-runtime", "version": "2.5.0",
             "target": os.path.abspath(apk_path),
             "package_hint": package_hint,
             "verification_status": st["verification_status"],
@@ -188,24 +202,104 @@ def timeline_template():
     return {"case_id": None, "device": None, "events": []}
 
 
+def new_session(kind, st, target=None):
+    """Open a structured session record from a status()
+    snapshot. The record is data about the flow that
+    created it (plan/status), not a claim that device
+    work happened: the device's verification label is
+    carried through unchanged."""
+    started = ev_mod.now_iso()
+    record = {
+        "tool": "nar-runtime", "version": "2.5.0",
+        "session_id": "nar-rt-" + uuid.uuid4().hex[:12],
+        "kind": kind,
+        "started_at": started, "stopped_at": None,
+        "target": None,
+        "device": {
+            "attached": bool(st.get("devices")),
+            "devices": st.get("devices") or [],
+            "verification_status": st.get(
+                "verification_status")},
+        "tools": {"adb": st.get("adb"), "frida": st.get("frida")},
+        "events": [{"ts": started, "kind": "session-started",
+                    "detail": f"{kind} session created"}],
+        "evidence_paths": [],
+        "errors": ([st["device_error"]]
+                   if st.get("device_error") else []),
+    }
+    if target:
+        entry = {"path": os.path.abspath(target), "sha256": None}
+        if os.path.isfile(target):
+            entry["sha256"] = sha256_of(target)
+        record["target"] = entry
+    return record
+
+
+def close_session(record, events=()):
+    """Append (kind, detail) events and stamp the stop
+    time. Returns the record."""
+    for kind, detail in events:
+        record["events"].append(
+            {"ts": ev_mod.now_iso(), "kind": kind,
+             "detail": detail})
+    record["stopped_at"] = ev_mod.now_iso()
+    return record
+
+
+def write_session(record, out_dir):
+    """Persist the record as runtime-session.json inside
+    out_dir (typically a case workspace). Returns the path."""
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "runtime-session.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(record, fh, indent=1)
+    return path
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="Runtime subsystem: adapter status, "
                     "session plans, timeline template. Device "
                     "execution is labeled honestly.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("status")
+    status_p = sub.add_parser("status")
+    status_p.add_argument("--session-out", metavar="DIR",
+                          help="also persist a structured "
+                               "session record into DIR")
     plan_p = sub.add_parser("plan")
     plan_p.add_argument("apk")
+    plan_p.add_argument("--session-out", metavar="DIR",
+                        help="also persist a structured "
+                             "session record into DIR")
     sub.add_parser("timeline-template")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
+    session_path = None
     if args.cmd == "status":
         out = status()
+        if getattr(args, "session_out", None):
+            record = new_session("status", out)
+            close_session(record, [(
+                "status-probe",
+                f"devices attached: {len(out['devices'])}; "
+                f"verification: "
+                f"{out['verification_status']}")])
+            session_path = write_session(record,
+                                         args.session_out)
     elif args.cmd == "plan":
         out = plan(args.apk)
+        if getattr(args, "session_out", None):
+            record = new_session("plan", status(), args.apk)
+            close_session(record, [
+                ("step-planned",
+                 f"{step['step']}: {step['evidence']}")
+                for step in out["steps"]])
+            session_path = write_session(record,
+                                         args.session_out)
     else:
         out = timeline_template()
+    if session_path:
+        out["session_record"] = session_path
     if args.json:
         print(json.dumps(out, indent=2))
     elif args.cmd == "status":
@@ -222,6 +316,8 @@ def main(argv=None):
             print(f"    evidence: {s['evidence']}")
     else:
         print(json.dumps(out, indent=2))
+    if session_path and not args.json:
+        print(f"session record: {session_path}")
     return 0
 
 

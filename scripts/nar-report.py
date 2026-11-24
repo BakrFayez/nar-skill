@@ -7,7 +7,10 @@ self-contained report.html: all data embedded, no external
 requests, no CDN, no fonts to fetch. Dark and light themes
 (follows the OS preference, with a manual toggle), section
 navigation, and client-side search/filter for the endpoint,
-findings, and asset tables.
+findings, and asset tables. When native.json carries a
+bundled-library dependency graph, the dashboard renders it
+as an inline SVG (stdlib-generated, deterministic layered
+layout, still zero external references).
 
 Usage:
     python3 nar-report.py CASE_DIR [--out FILE]
@@ -44,6 +47,88 @@ def table(headers, rows):
             f"<tbody>{body}</tbody></table>")
 
 
+MAX_GRAPH_NODES = 120
+_NODE_H = 22
+_ROW_PITCH = 38
+_LAYER_GAP = 72
+_PAD = 16
+
+
+def dep_graph_svg(graph):
+    """Render a bundled-library dependency graph (the
+    dependency_graph map of native.json: display name ->
+    sorted bundled dependencies) as one inline SVG string.
+
+    Deterministic layered layout: a node's layer is the
+    longest dependency chain reaching it (relaxation is
+    bounded, so cyclic graphs still terminate and render).
+    All labels are HTML-escaped; the SVG references nothing
+    external. Returns (svg, truncated) where truncated says
+    the graph exceeded MAX_GRAPH_NODES and only the first
+    nodes (sorted order) are drawn.
+    """
+    nodes = sorted({*graph.keys(),
+                    *(d for deps in graph.values() for d in deps)})
+    truncated = len(nodes) > MAX_GRAPH_NODES
+    if truncated:
+        keep = set(nodes[:MAX_GRAPH_NODES])
+        nodes = nodes[:MAX_GRAPH_NODES]
+        edges = [(s, d) for s in nodes for d in graph.get(s, [])
+                 if d in keep]
+    else:
+        edges = [(s, d) for s, deps in graph.items() for d in deps]
+    layer = {n: 0 for n in nodes}
+    for _ in range(len(nodes)):
+        changed = False
+        for src, dst in edges:
+            if layer[dst] < layer[src] + 1:
+                layer[dst] = layer[src] + 1
+                changed = True
+        if not changed:
+            break
+    by_layer = {}
+    for n in nodes:
+        by_layer.setdefault(layer[n], []).append(n)
+    pos = {}
+    x = _PAD
+    width = _PAD
+    for lv in sorted(by_layer):
+        members = sorted(by_layer[lv])
+        w = max(84, max(int(len(n) * 7.0) + 18 for n in members))
+        for i, n in enumerate(members):
+            pos[n] = (x, _PAD + i * _ROW_PITCH, w)
+        width = x + w + _PAD
+        x += w + _LAYER_GAP
+    rows = max((len(v) for v in by_layer.values()), default=0)
+    height = _PAD * 2 + max(rows - 1, 0) * _ROW_PITCH + _NODE_H
+    out = [f'<svg viewBox="0 0 {width} {height}" width="100%" '
+           f'role="img" aria-label="Native dependency graph" '
+           f'style="max-width:{width}px">',
+           "<defs><marker id=\"nar-arr\" viewBox=\"0 0 8 8\" "
+           "refX=\"7\" refY=\"4\" markerWidth=\"6\" "
+           "markerHeight=\"6\" orient=\"auto\">"
+           "<path d=\"M0,0 L8,4 L0,8 z\" fill=\"var(--acc)\"/>"
+           "</marker></defs>"]
+    for src, dst in edges:
+        sx, sy, sw = pos[src]
+        dx, dy, _dw = pos[dst]
+        out.append(
+            f'<line x1="{sx + sw}" y1="{sy + _NODE_H // 2}" '
+            f'x2="{dx - 2}" y2="{dy + _NODE_H // 2}" '
+            f'stroke="var(--acc)" stroke-opacity="0.55" '
+            f'stroke-width="1.2" marker-end="url(#nar-arr)"/>')
+    for n in nodes:
+        nx, ny, nw = pos[n]
+        out.append(
+            f'<g><rect x="{nx}" y="{ny}" width="{nw}" '
+            f'height="{_NODE_H}" rx="5" fill="var(--card)" '
+            f'stroke="var(--line)"/>'
+            f'<text x="{nx + 9}" y="{ny + 15}" font-size="11.5" '
+            f'fill="var(--fg)">{esc(n)}</text></g>')
+    out.append("</svg>")
+    return "".join(out), truncated
+
+
 def render(case_dir):
     report = load_json(os.path.join(case_dir, "report.json"))
     if report is None:
@@ -56,6 +141,7 @@ def render(case_dir):
     security = load_json(os.path.join(case_dir,
                                       "security-findings.json")) or {}
     assets = load_json(os.path.join(case_dir, "assets.json")) or {}
+    native = load_json(os.path.join(case_dir, "native.json")) or {}
     exec_log = load_json(os.path.join(case_dir,
                                       "execution-log.json")) or {}
     identity = report.get("identity") or {}
@@ -87,6 +173,20 @@ def render(case_dir):
         parts.append("<h2>Engines</h2>" + table(
             ["Engine", "State", "Confidence", "Score", "Version"],
             rows))
+    graph = native.get("dependency_graph") or {}
+    if graph:
+        svg, truncated = dep_graph_svg(graph)
+        n_nodes = len({*graph.keys(),
+                       *(d for deps in graph.values() for d in deps)})
+        n_edges = sum(len(deps) for deps in graph.values())
+        note = (f" — first {MAX_GRAPH_NODES} libraries drawn; "
+                f"the full graph is in native.json"
+                if truncated else "")
+        parts.append(
+            "<h2>Native dependency graph</h2>"
+            f'<p class="sub">{n_nodes} libraries, {n_edges} '
+            f"bundled-to-bundled dependencies (from native.json)"
+            f"{esc(note)}</p>" + svg)
     eps = endpoints.get("endpoints") or []
     if eps:
         rows = [(e["classification"], e["kind"], e["url"][:140])

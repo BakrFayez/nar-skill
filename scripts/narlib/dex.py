@@ -63,6 +63,20 @@ def _uleb128(data, off):
         shift += 7
 
 
+def _sleb128(data, off):
+    result = 0
+    shift = 0
+    while True:
+        byte = data[off]
+        off += 1
+        result |= (byte & 0x7F) << shift
+        shift += 7
+        if not byte & 0x80:
+            if byte & 0x40:
+                result |= -(1 << shift)
+            return result, off
+
+
 class DexError(Exception):
     pass
 
@@ -88,6 +102,28 @@ class Dex:
             struct.unpack_from("<II", data, 0x58)
         (self.class_defs_size, self.class_defs_off) = \
             struct.unpack_from("<II", data, 0x60)
+        # A header table whose declared extent runs past the
+        # end of the buffer is corrupt by definition; reject
+        # it here so the lazy table readers below can never
+        # leak a bare struct.error on an inflated count
+        # (mutation corpus, evolution Phase 11).
+        for label, size, off, item in (
+                ("string_ids", self.string_ids_size,
+                 self.string_ids_off, 4),
+                ("type_ids", self.type_ids_size,
+                 self.type_ids_off, 4),
+                ("proto_ids", self.proto_ids_size,
+                 self.proto_ids_off, 12),
+                ("field_ids", self.field_ids_size,
+                 self.field_ids_off, 8),
+                ("method_ids", self.method_ids_size,
+                 self.method_ids_off, 8),
+                ("class_defs", self.class_defs_size,
+                 self.class_defs_off, 32)):
+            if size and off + size * item > len(data):
+                raise DexError(
+                    f"{name}: {label} table ({size} entries at "
+                    f"{off:#x}) extends past end of file")
         self._strings = None
         self._types = None
 
@@ -172,6 +208,7 @@ class Dex:
                 if super_idx != 0xFFFFFFFF and super_idx < len(types)
                 else None,
                 "interfaces": interfaces,
+                "annotations_off": _annotations,
                 "class_data_off": class_data_off,
             })
         return out
@@ -285,6 +322,189 @@ class Dex:
                 ref = self.method_ref(method_idx)
                 yield (method_idx, ref[1] if ref else "?",
                        flags, code_off, kind)
+
+    # -- code items: try/catch + debug presence ------------------
+    def code_item_info(self, code_off):
+        """Try/catch handler table and debug-info presence for
+        one code item (Evolution Phase 3). Returns None when
+        code_off is 0 or out of bounds. Handler type names are
+        resolved through the DEX's own type table; a handler
+        whose bytes are truncated is reported with a truncated
+        flag instead of raising."""
+        data = self.data
+        if not code_off or code_off + 16 > len(data):
+            return None
+        (regs, ins, outs, tries_size, debug_off,
+         insns_size) = struct.unpack_from("<HHHHII", data, code_off)
+        info = {"registers_size": regs, "ins_size": ins,
+                "outs_size": outs, "tries_size": tries_size,
+                "debug_info_off": debug_off,
+                "has_debug_info": bool(debug_off),
+                "insns_size": insns_size, "tries": []}
+        if not tries_size:
+            return info
+        types = self.types()
+        tries_off = code_off + 16 + insns_size * 2
+        if insns_size % 2:
+            tries_off += 2  # uint alignment padding
+        list_off = tries_off + tries_size * 8
+        if list_off > len(data):
+            info["tries_truncated"] = True
+            return info
+        try:
+            handler_count, _ = _uleb128(data, list_off)
+        except IndexError:
+            info["tries_truncated"] = True
+            return info
+        info["handler_list_count"] = handler_count
+        for i in range(tries_size):
+            start_addr, insn_count, handler_off = \
+                struct.unpack_from("<IHH", data, tries_off + i * 8)
+            entry = {"start_addr": start_addr,
+                     "insn_count": insn_count,
+                     "end_addr": start_addr + insn_count,
+                     "handlers": [], "catch_all_addr": None}
+            try:
+                pos = list_off + handler_off
+                size, pos = _sleb128(data, pos)
+                typed = abs(size)
+                for _ in range(typed):
+                    type_idx, pos = _uleb128(data, pos)
+                    addr, pos = _uleb128(data, pos)
+                    entry["handlers"].append({
+                        "type": types[type_idx]
+                        if type_idx < len(types) else "?",
+                        "addr": addr})
+                if size <= 0:
+                    catch_all, pos = _uleb128(data, pos)
+                    entry["catch_all_addr"] = catch_all
+            except IndexError:
+                entry["truncated"] = True
+            info["tries"].append(entry)
+        return info
+
+    # -- annotations (encoded values, @Metadata) ------------------
+    def _encoded_value(self, off):
+        """Decode one encoded_value. Returns (value, new_off).
+        References resolve through the DEX's own tables:
+        strings and types to their text, fields/methods/enums
+        to (kind, owner, name) tuples."""
+        data = self.data
+        header = data[off]
+        off += 1
+        vtype, arg = header & 0x1F, header >> 5
+        if vtype in (0x00, 0x02, 0x03, 0x04, 0x06, 0x10, 0x11):
+            nbytes = arg + 1
+            raw = data[off:off + nbytes]
+            if len(raw) < nbytes:
+                raise DexError("encoded_value truncated")
+            off += nbytes
+            if vtype == 0x10:  # float, right-extended
+                raw = raw.rjust(4, b"\x00")
+                return struct.unpack("<f", raw)[0], off
+            if vtype == 0x11:  # double
+                raw = raw.rjust(8, b"\x00")
+                return struct.unpack("<d", raw)[0], off
+            value = int.from_bytes(raw, "little")
+            if vtype in (0x00, 0x02, 0x04, 0x06) and nbytes and \
+                    raw[-1] & 0x80:
+                value -= 1 << (nbytes * 8)
+            return value, off
+        # Index-carrying values (string / type / field /
+        # method / enum / method type / method handle) encode
+        # the index as an unsigned little-endian integer of
+        # value_arg+1 bytes — NOT as a ULEB128. The two agree
+        # only for indices < 256 with arg 0; reading them as
+        # ULEB128 desynchronizes the stream on larger indices
+        # (found on real @Metadata payloads, Phase 3).
+        if vtype in (0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B):
+            nbytes = arg + 1
+            raw = data[off:off + nbytes]
+            if len(raw) < nbytes:
+                raise DexError("encoded_value truncated")
+            idx = int.from_bytes(raw, "little")
+            off += nbytes
+            if vtype == 0x17:  # string
+                strings = self.strings()
+                return (strings[idx] if idx < len(strings)
+                        else "?"), off
+            if vtype == 0x18:  # type
+                types = self.types()
+                return (types[idx] if idx < len(types)
+                        else "?"), off
+            if vtype in (0x19, 0x1B):  # field / enum (field ref)
+                return (("field" if vtype == 0x19 else "enum"),
+                        self.field_ref(idx)), off
+            if vtype == 0x1A:  # method
+                return ("method", self.method_ref(idx)), off
+            return (("method_type" if vtype == 0x15
+                     else "method_handle"), idx), off
+        if vtype == 0x1C:  # array
+            size, off = _uleb128(data, off)
+            values = []
+            for _ in range(size):
+                value, off = self._encoded_value(off)
+                values.append(value)
+            return values, off
+        if vtype == 0x1D:  # nested annotation
+            return self._encoded_annotation(off)
+        if vtype == 0x1E:
+            return None, off
+        if vtype == 0x1F:
+            return bool(arg), off
+        raise DexError(f"unknown encoded_value type {vtype:#x}")
+
+    def _encoded_annotation(self, off):
+        """Decode one encoded_annotation at off. Returns
+        ({type, elements}, new_off)."""
+        data = self.data
+        type_idx, off = _uleb128(data, off)
+        size, off = _uleb128(data, off)
+        types, strings = self.types(), self.strings()
+        elements = {}
+        for _ in range(size):
+            name_idx, off = _uleb128(data, off)
+            value, off = self._encoded_value(off)
+            name = strings[name_idx] if name_idx < len(strings) \
+                else "?"
+            elements[name] = value
+        return ({"type": types[type_idx]
+                 if type_idx < len(types) else "?",
+                 "elements": elements}, off)
+
+    def class_annotations(self, class_def):
+        """Class-level annotations for one class_def entry:
+        [{type, visibility, elements}]. Empty when the class
+        carries no annotations directory or no class-level
+        set. Malformed directories yield what parsed cleanly
+        plus a truncated marker entry."""
+        annotations_off = class_def.get("annotations_off") or 0
+        data = self.data
+        if not annotations_off or \
+                annotations_off + 16 > len(data):
+            return []
+        class_set_off = struct.unpack_from(
+            "<I", data, annotations_off)[0]
+        if not class_set_off or class_set_off + 4 > len(data):
+            return []
+        size = struct.unpack_from("<I", data, class_set_off)[0]
+        out = []
+        for i in range(min(size, 4096)):
+            item_off = struct.unpack_from(
+                "<I", data, class_set_off + 4 + i * 4)[0]
+            if not item_off or item_off + 1 > len(data):
+                continue
+            visibility = data[item_off]
+            try:
+                annotation, _ = self._encoded_annotation(
+                    item_off + 1)
+            except (DexError, IndexError, struct.error):
+                out.append({"type": "?", "visibility": visibility,
+                            "elements": {}, "truncated": True})
+                continue
+            annotation["visibility"] = visibility
+            out.append(annotation)
+        return out
 
     # -- code scan -------------------------------------------------
     def scan_code(self, code_off):

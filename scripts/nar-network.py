@@ -22,6 +22,16 @@ cleartext rules, domain configs, trust anchors, pin sets,
 debug overrides). No traffic is generated and nothing is
 contacted: this is static analysis only.
 
+Redaction (Evolution Phase 5): credential material inside
+endpoint URLs — sensitive query-parameter values and URL
+userinfo — is replaced with REDACTED before anything is
+emitted, in every output mode. Classification still runs
+on the original URL (a redacted URL must still classify
+as sensitive); the report counts the redacted values and
+never carries the raw ones, so case outputs and downstream
+consumers (nar-security evidence strings included) never
+persist a credential.
+
 Usage:
     python3 nar-network.py app.apk [--json] [--work DIR]
 
@@ -59,6 +69,40 @@ THIRD_PARTY_SUFFIXES = (
 SENSITIVE_QUERY = re.compile(
     r"(api[_-]?key|apikey|token|secret|password|passwd|auth)="
     r"[^&]{4,}", re.I)
+# Redaction: query parameters whose NAME marks the value as
+# credential material. Broader than SENSITIVE_QUERY (which
+# drives classification) because redaction is about never
+# persisting a value, not about judging the endpoint.
+REDACT_PARAM_RE = re.compile(
+    r"([?&](?:api[_-]?key|apikey|access[_-]?token|token|secret|"
+    r"password|passwd|auth|session|signature|sig|key)=)"
+    r"[^&#\s]+", re.I)
+USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)[^/@\s]+@",
+                         re.I)
+REDACTED = "REDACTED"
+
+
+def redact_url(url):
+    """Replace credential material in one URL with REDACTED.
+
+    Returns (redacted_url, values_redacted). Covers URL
+    userinfo (user:password@) as one value and each
+    sensitive-named query parameter value. Anything else in
+    the URL — scheme, host, path, benign parameters — is
+    preserved byte for byte."""
+    count = 0
+    m = USERINFO_RE.match(url)
+    if m:
+        url = m.group(1) + REDACTED + "@" + url[m.end():]
+        count += 1
+
+    def _sub(match):
+        nonlocal count
+        count += 1
+        return match.group(1) + REDACTED
+
+    url = REDACT_PARAM_RE.sub(_sub, url)
+    return url, count
 NETWORK_LIB_PREFIXES = {
     "okhttp3/": "OkHttp", "retrofit2/": "Retrofit",
     "io/ktor/": "Ktor", "com/android/volley": "Volley",
@@ -196,6 +240,7 @@ def analyze(target, work_dir=None):
                 candidates.setdefault(value, set()).update(sources or [])
     endpoints = []
     hosts, api_hosts = set(), set()
+    total_redacted = 0
     for url in sorted(candidates):
         classification, host, kind = classify(
             url, sorted(candidates[url]))
@@ -203,10 +248,15 @@ def analyze(target, work_dir=None):
             hosts.add(host)
             if kind == "api":
                 api_hosts.add(host)
-        endpoints.append({"url": url[:500], "host": host,
-                          "kind": kind,
-                          "classification": classification,
-                          "sources": sorted(candidates[url])[:5]})
+        safe_url, n_redacted = redact_url(url[:500])
+        total_redacted += n_redacted
+        endpoint = {"url": safe_url, "host": host,
+                    "kind": kind,
+                    "classification": classification,
+                    "sources": sorted(candidates[url])[:5]}
+        if n_redacted:
+            endpoint["redacted"] = True
+        endpoints.append(endpoint)
         if len(endpoints) >= MAX_ENDPOINTS:
             break
     # Network libraries from package-name string evidence.
@@ -262,14 +312,22 @@ def analyze(target, work_dir=None):
     for e in endpoints:
         by_class[e["classification"]] = \
             by_class.get(e["classification"], 0) + 1
-    return {"tool": "nar-network", "version": "2.4.0",
+    return {"tool": "nar-network", "version": "2.5.0",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "endpoints": endpoints, "hosts": sorted(hosts),
             "api_hosts": sorted(api_hosts),
             "network_libraries": libraries, "services": services,
             "network_security_config": nsc,
-            "classification_counts": by_class, "notes": notes}
+            "classification_counts": by_class,
+            "redaction": {
+                "endpoint_values_redacted": total_redacted,
+                "policy": "credential values in endpoint URLs "
+                          "(sensitive query parameters and "
+                          "userinfo) are replaced with REDACTED "
+                          "before any output is written; only "
+                          "the count is reported, never a value"},
+            "notes": notes}
 
 
 def human(report):
@@ -281,6 +339,11 @@ def human(report):
     print(f"Hosts: {len(report['hosts'])}; API hosts: "
           f"{report['api_hosts'][:10]}")
     print(f"Network libraries: {report['network_libraries']}")
+    redacted = (report.get("redaction") or {}).get(
+        "endpoint_values_redacted")
+    if redacted:
+        print(f"Redacted credential values in endpoint URLs: "
+              f"{redacted}")
     for svc in report["services"]:
         print(f"service: {svc['service']} — {svc['evidence']}")
     nsc = report["network_security_config"]

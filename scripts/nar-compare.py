@@ -7,6 +7,19 @@ and signing-file lists.
 
 Usage:
     python3 nar-compare.py old.apk new.apk [--json]
+    python3 nar-compare.py old.apk new.apk --out DIR
+
+With --out DIR (Evolution Phase 7), the comparison is also
+written as three named artifacts: comparison.json (this
+tool's full report), feature-map.json (the per-dimension
+added/removed/modified projection, schema:
+schemas/compare-feature-map.schema.json), and
+version-diff.md (the human-readable rendering of the same
+projection). The feature map's entry dimension separates
+signing-file churn from content changes; that separation
+is a labeled heuristic — signing files change on every
+re-sign, legitimate or not — and the unfiltered counts
+stay in comparison.json.
 
 What is compared:
     - Identity: package name / version / SDK levels from `aapt2 dump badging`
@@ -430,8 +443,15 @@ def extended_compare(old_path, new_path, report):
         if not data:
             return None
         out = set()
-        for group in ("urls", "endpoints"):
-            for hit in data.get("groups", {}).get(group, []):
+        # nar-strings groups are {name: {"count", "hits"}} —
+        # iterating the group dict itself yields its keys,
+        # which silently produced identical sets on both
+        # sides (found in Evolution Phase 7: the endpoint
+        # diff reported 0/0 on a pair with a real change).
+        for group in ("urls", "api_endpoints"):
+            g = data.get("groups", {}).get(group) or {}
+            hits = g.get("hits", []) if isinstance(g, dict) else g
+            for hit in hits:
                 out.add(hit.get("value") if isinstance(hit, dict)
                         else hit)
         return out
@@ -514,6 +534,216 @@ def extended_compare(old_path, new_path, report):
         "medium" if any(s["level"] == "medium" for s in sev) else
         "low" if sev else "none")
     return ext
+
+
+_IDENTITY_FIELDS = ("package", "version_code", "version_name",
+                    "min_sdk", "target_sdk", "app_label")
+
+
+def feature_map(report):
+    """Project a compare() report into the feature-map
+    artifact: added / removed / modified per dimension the
+    comparison already computes (identity, permissions,
+    DEX + classes, native libraries, endpoints, assets,
+    resources, signing, engine). The build-noise block
+    separates signing-file churn from content entry
+    changes and labels that separation a heuristic."""
+    old, new = report["old"], report["new"]
+    d = report["diff"]
+    ext = report.get("extended") or {}
+    old_b = old.get("badging") or {}
+    new_b = new.get("badging") or {}
+    identity = {}
+    for field in _IDENTITY_FIELDS:
+        if field in old_b or field in new_b:
+            identity[field] = {
+                "old": old_b.get(field), "new": new_b.get(field),
+                "changed": old_b.get(field) != new_b.get(field)}
+    signing_names = (
+        {s["name"] for s in d["signing_files"]["added"]}
+        | {s["name"] for s in d["signing_files"]["removed"]}
+        | {c["name"] for c in d["signing_files"]["changed"]})
+    ent = d["entries"]
+    content_changed = [e for e in ent["changed"]
+                       if e not in signing_names]
+    dimensions = {
+        "identity": {"changed": d["identity_changed"],
+                     "fields": identity},
+        "permissions": {"added": d["permissions_added"],
+                        "removed": d["permissions_removed"]},
+        "dex": {
+            "added": [x["name"] for x in d["dex"]["added"]],
+            "removed": [x["name"] for x in d["dex"]["removed"]],
+            "changed": [c["name"] for c in d["dex"]["changed"]],
+            "totals_delta": d["dex"]["totals_delta"],
+            "total_bytes_delta": d["dex"]["total_bytes_delta"]},
+        "classes": ext.get("classes") or {"available": False},
+        "native_libraries": {
+            "added": [x["path"] for x in d["native_libs"]["added"]],
+            "removed": [x["path"]
+                        for x in d["native_libs"]["removed"]],
+            "changed": [c["path"]
+                        for c in d["native_libs"]["changed"]]},
+        "endpoints": ext.get("endpoints") or {"available": False},
+        "assets": ext.get("assets") or {"available": False},
+        "resources": {"arsc_status": d["resources_arsc"]["status"],
+                      "counts_delta": d["counts_delta"]},
+        "signing": {
+            "added": [s["name"] for s in d["signing_files"]["added"]],
+            "removed": [s["name"]
+                        for s in d["signing_files"]["removed"]],
+            "changed": [c["name"]
+                        for c in d["signing_files"]["changed"]]},
+        "engine": ext.get("engine_versions") or {"available": False},
+        "entries": {
+            "added_count": ent["added_count"],
+            "removed_count": ent["removed_count"],
+            "changed_count": ent["changed_count"],
+            "content_changed_excluding_signing": content_changed},
+    }
+    return {
+        "tool": "nar-compare", "version": "2.4.0",
+        "kind": "version-feature-map",
+        "old": {"file": old.get("file"),
+                "sha256": old.get("sha256")},
+        "new": {"file": new.get("file"),
+                "sha256": new.get("sha256")},
+        "identical_files": report.get("identical_files", False),
+        "similarity": ext.get("similarity"),
+        "overall_severity": ext.get("overall_severity"),
+        "severity": ext.get("severity", []),
+        "dimensions": dimensions,
+        "build_noise": {
+            "policy": "heuristic: signing files (META-INF) "
+                      "change on every re-sign and are counted "
+                      "in their own dimension; the entries "
+                      "dimension additionally reports content "
+                      "changes excluding them. A re-sign can "
+                      "be legitimate (certificate rotation) — "
+                      "the unfiltered counts stay in "
+                      "comparison.json and the signing "
+                      "dimension is never hidden.",
+            "signing_files_in_entry_diff": len(signing_names),
+            "content_changed_excluding_signing":
+                len(content_changed)},
+        "notes": ext.get("notes", []),
+    }
+
+
+def version_diff_md(fmap):
+    """Render the feature map as a human-readable Markdown
+    diff. Built from the same projection as feature-map.json
+    so the two artifacts cannot disagree."""
+    dims = fmap["dimensions"]
+    lines = [f"# Version diff: {fmap['old']['file']} → "
+             f"{fmap['new']['file']}", ""]
+    lines.append(f"- Old SHA-256: `{fmap['old']['sha256']}`")
+    lines.append(f"- New SHA-256: `{fmap['new']['sha256']}`")
+    lines.append(f"- Identical files: {fmap['identical_files']}")
+    if fmap.get("similarity"):
+        lines.append(
+            f"- Entry similarity (identical / union): "
+            f"{fmap['similarity']['entry_jaccard_identical']}")
+    lines.append(f"- Overall severity: "
+                 f"{fmap.get('overall_severity')}")
+    lines.append("")
+    idf = dims["identity"]["fields"]
+    if idf:
+        lines.append("## Identity")
+        for field, v in idf.items():
+            mark = " (changed)" if v["changed"] else ""
+            lines.append(f"- {field}: {v['old']} → {v['new']}{mark}")
+        lines.append("")
+    perms = dims["permissions"]
+    lines.append("## Permissions")
+    lines.append(f"- Added ({len(perms['added'])}): "
+                 f"{', '.join(perms['added']) or '—'}")
+    lines.append(f"- Removed ({len(perms['removed'])}): "
+                 f"{', '.join(perms['removed']) or '—'}")
+    lines.append("")
+    dex = dims["dex"]
+    lines.append("## DEX")
+    lines.append(f"- Files added: {dex['added'] or '—'}; "
+                 f"removed: {dex['removed'] or '—'}; "
+                 f"changed: {dex['changed'] or '—'}")
+    lines.append(f"- Totals delta: {dex['totals_delta']}")
+    cls = dims["classes"]
+    if cls.get("available") is False:
+        lines.append("- Classes: unavailable (see notes)")
+    else:
+        lines.append(f"- Classes: +{cls['added_count']} "
+                     f"-{cls['removed_count']}")
+    lines.append("")
+    eps = dims["endpoints"]
+    lines.append("## Endpoints")
+    if eps.get("available") is False:
+        lines.append("- unavailable (see notes)")
+    else:
+        lines.append(f"- Added ({eps['added_count']}): "
+                     f"{', '.join(eps['added'][:10]) or '—'}")
+        lines.append(f"- Removed ({eps['removed_count']}): "
+                     f"{', '.join(eps['removed'][:10]) or '—'}")
+    lines.append("")
+    ast = dims["assets"]
+    lines.append("## Assets")
+    if ast.get("available") is False:
+        lines.append("- unavailable (see notes)")
+    else:
+        lines.append(f"- +{ast['added_count']} "
+                     f"-{ast['removed_count']} "
+                     f"~{ast['changed_count']}")
+    nat = dims["native_libraries"]
+    lines.append("")
+    lines.append("## Native libraries")
+    lines.append(f"- Added: {nat['added'] or '—'}")
+    lines.append(f"- Removed: {nat['removed'] or '—'}")
+    lines.append(f"- Changed: {nat['changed'] or '—'}")
+    sig = dims["signing"]
+    lines.append("")
+    lines.append("## Signing files")
+    lines.append(f"- Added: {sig['added'] or '—'}; "
+                 f"removed: {sig['removed'] or '—'}; "
+                 f"changed: {sig['changed'] or '—'}")
+    eng = dims["engine"]
+    lines.append("")
+    lines.append("## Engine")
+    if eng.get("available") is False:
+        lines.append("- unavailable (see notes)")
+    else:
+        lines.append(f"- changed: {eng.get('changed')}")
+    if fmap["severity"]:
+        lines.append("")
+        lines.append("## Severity findings")
+        for s in fmap["severity"]:
+            lines.append(f"- [{s['level']}] {s['change']} — "
+                         f"{s['reason']}")
+    lines.append("")
+    lines.append("## Build noise (heuristic)")
+    lines.append(f"- {fmap['build_noise']['policy']}")
+    lines.append(
+        f"- Content entries changed (excluding signing): "
+        f"{fmap['build_noise']['content_changed_excluding_signing']}")
+    for note in fmap["notes"]:
+        lines.append(f"- note: {note}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_artifacts(report, out_dir):
+    """Write comparison.json + feature-map.json +
+    version-diff.md into out_dir. Returns the three paths."""
+    os.makedirs(out_dir, exist_ok=True)
+    fmap = feature_map(report)
+    paths = {}
+    for name, payload in (
+            ("comparison.json", json.dumps(report, indent=1)),
+            ("feature-map.json", json.dumps(fmap, indent=1)),
+            ("version-diff.md", version_diff_md(fmap))):
+        path = os.path.join(out_dir, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(payload + "\n")
+        paths[name] = path
+    return paths
 
 
 def _fmt_delta(n, unit=""):
@@ -673,6 +903,10 @@ def main(argv=None):
     p.add_argument("old_apk", help="path to the older .apk file")
     p.add_argument("new_apk", help="path to the newer .apk file")
     p.add_argument("--json", action="store_true", help="machine-readable JSON output")
+    p.add_argument("--out", metavar="DIR",
+                   help="also write comparison.json, "
+                        "feature-map.json and version-diff.md "
+                        "into DIR")
     args = p.parse_args(argv)
     try:
         report = compare(args.old_apk, args.new_apk)
@@ -682,6 +916,13 @@ def main(argv=None):
     except OSError as e:
         print(f"nar-compare: cannot read file: {e}", file=sys.stderr)
         return 2
+    if args.out and "error" not in report["old"] \
+            and "error" not in report["new"]:
+        paths = write_artifacts(report, args.out)
+        if not args.json:
+            for name in ("comparison.json", "feature-map.json",
+                         "version-diff.md"):
+                print(f"wrote {paths[name]}")
     if args.json:
         print(json.dumps(report, indent=2))
     else:

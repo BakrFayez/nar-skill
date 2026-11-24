@@ -44,12 +44,55 @@ TOOL_TIMEOUT = 1800
 sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as NAR_VERSION
+    from narlib import companions as _companions
+    from narlib import correlations as _correlations
+    from narlib import evidence as _evidence
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.4.0"
+    NAR_VERSION = "2.5.0"
+    _companions = None
+    _correlations = None
+    _evidence = None
 
 # One entry per bundled-tool run, in execution order. main()
 # turns this into execution-log.json (2.0 orchestrator record).
 EXEC_LOG = []
+
+# Orchestration budgets (Evolution Phase 8): a per-stage
+# timeout cap and an optional total budget for the whole
+# run, set from the CLI / case config by main(). A run that
+# hits a budget stops the affected stage with status
+# "budget-exceeded" in the execution log — recorded,
+# never a hang and never a silent truncation.
+BUDGET = {"stage_timeout_s": None, "total_budget_s": None,
+          "t0": None}
+
+
+def set_budgets(stage_timeout_s=None, total_budget_s=None):
+    BUDGET["stage_timeout_s"] = stage_timeout_s
+    BUDGET["total_budget_s"] = total_budget_s
+    BUDGET["t0"] = time.time()
+
+
+def _effective_timeout(requested):
+    """(effective timeout, budget_bound) for one tool run."""
+    eff = requested
+    bound = False
+    if BUDGET["stage_timeout_s"]:
+        if BUDGET["stage_timeout_s"] < eff:
+            bound = True
+        eff = min(eff, BUDGET["stage_timeout_s"])
+    if BUDGET["total_budget_s"] and BUDGET["t0"]:
+        remaining = BUDGET["total_budget_s"] - (
+            time.time() - BUDGET["t0"])
+        if remaining < eff:
+            bound = True
+        eff = min(eff, max(remaining, 0.01))
+    return eff, bound
+
+
+def _budget_snapshot():
+    return {"stage_timeout_s": BUDGET["stage_timeout_s"],
+            "total_budget_s": BUDGET["total_budget_s"]}
 
 
 def run_json_tool(script, args, timeout=TOOL_TIMEOUT):
@@ -58,16 +101,19 @@ def run_json_tool(script, args, timeout=TOOL_TIMEOUT):
     if not os.path.isfile(path):
         return None, f"{script} is missing from the skill"
     cmd = [sys.executable, path] + args + ["--json"]
+    eff_timeout, budget_bound = _effective_timeout(timeout)
     started = time.time()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout)
+                              timeout=eff_timeout)
     except subprocess.TimeoutExpired:
         EXEC_LOG.append({"stage": script, "module": script,
                          "tool": script, "tool_version": None,
-                         "status": "failed",
-                         "duration_s": round(time.time() - started, 3)})
-        return None, f"{script} did not finish within {timeout}s"
+                         "status": ("budget-exceeded" if budget_bound
+                                    else "failed"),
+                         "duration_s": round(time.time() - started, 3),
+                         "budget": _budget_snapshot()})
+        return None, f"{script} did not finish within {eff_timeout}s"
     except OSError as e:
         EXEC_LOG.append({"stage": script, "module": script,
                          "tool": script, "tool_version": None,
@@ -253,6 +299,16 @@ def run_cached_stage(stage, script, args, cache_key, out_dir):
     instead of re-running the tool (resume semantics)."""
     cache_path = _stage_cache_path(out_dir, stage)
     key_path = cache_path + ".key"
+    if BUDGET["total_budget_s"] and BUDGET["t0"] and (
+            time.time() - BUDGET["t0"] > BUDGET["total_budget_s"]):
+        EXEC_LOG.append({
+            "stage": stage, "module": script, "tool": script,
+            "tool_version": NAR_VERSION,
+            "status": "budget-exceeded", "duration_s": 0.0,
+            "budget": _budget_snapshot()})
+        return None, (f"total budget of "
+                      f"{BUDGET['total_budget_s']}s exhausted "
+                      f"before stage {stage}"), False
     if os.path.isfile(cache_path) and os.path.isfile(key_path):
         with open(key_path, encoding="utf-8") as fh:
             if fh.read().strip() == cache_key:
@@ -272,7 +328,8 @@ def run_cached_stage(stage, script, args, cache_key, out_dir):
     return data, err, False
 
 
-def run_2_0_stages(report, apk_path, out_dir, work_dir):
+def run_2_0_stages(report, apk_path, out_dir, work_dir,
+                   perms_data=None):
     """The 2.0 module stages: fingerprint, engine fusion, DEX,
     native, network, security, assets. Each writes its
     standardized companion document into the case directory
@@ -359,22 +416,128 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir):
             "by_category": data.get("by_category"),
             "duplicate_groups": len(data.get("duplicates", []))}
 
-    stage("fingerprint", "nar-fingerprint.py", [apk_path],
-          "fingerprint.json", sum_fingerprint)
-    stage("engines", "nar-engines.py", [apk_path],
-          "engines.json", sum_engines)
+    fp_data = stage("fingerprint", "nar-fingerprint.py", [apk_path],
+                    "fingerprint.json", sum_fingerprint)
+    eng_data = stage("engines", "nar-engines.py", [apk_path],
+                     "engines.json", sum_engines)
     dex_dir = os.path.join(out_dir, "dex")
-    stage("dex", "nar-dex.py", [apk_path, "--out", dex_dir],
-          "dex.json", sum_dex)
-    stage("native", "nar-native.py", [apk_path],
-          "native.json", sum_native)
-    stage("network", "nar-network.py",
-          [apk_path, "--work", os.path.join(work_dir, "network")],
-          "endpoints.json", sum_network)
+    dex_data = stage("dex", "nar-dex.py",
+                     [apk_path, "--out", dex_dir],
+                     "dex.json", sum_dex)
+    nat_data = stage("native", "nar-native.py", [apk_path],
+                     "native.json", sum_native)
+    net_data = stage("network", "nar-network.py",
+                     [apk_path, "--work",
+                      os.path.join(work_dir, "network")],
+                     "endpoints.json", sum_network)
     stage("security", "nar-security.py", [apk_path],
           "security-findings.json", sum_security)
     stage("assets", "nar-assets.py", [apk_path],
           "assets.json", sum_assets)
+
+    # Brief-named companion projections (Evolution Phase 2):
+    # application.json / manifest.json / native-inventory.json
+    # / frameworks.json, projected from the stage data above —
+    # no stage re-runs. Each is schema-validated before it is
+    # written; a projection that fails validation degrades to
+    # a limitation line, never to a written bad document.
+    if _companions is not None and _evidence is not None:
+        schema_dir = os.path.join(
+            os.path.dirname(HERE), "schemas")
+        projections = [
+            ("application", "application.json",
+             "application.schema.json",
+             _companions.project_application(fp_data, NAR_VERSION)),
+            ("manifest", "manifest.json", "manifest.schema.json",
+             _companions.project_manifest(
+                 report.get("permissions"), report.get("identity"),
+                 NAR_VERSION)),
+            ("native-inventory", "native-inventory.json",
+             "native-inventory.schema.json",
+             _companions.project_native_inventory(
+                 nat_data, NAR_VERSION)),
+            ("frameworks", "frameworks.json",
+             "frameworks.schema.json",
+             _companions.project_frameworks(
+                 eng_data, fp_data, NAR_VERSION)),
+            # Network companions (Evolution Phase 5), projected
+            # from the network stage's endpoints document.
+            ("network-analysis", "network-analysis.json",
+             "network-analysis.schema.json",
+             _companions.project_network_analysis(
+                 net_data, NAR_VERSION)),
+            ("api-architecture", "api-architecture.json",
+             "api-architecture.schema.json",
+             _companions.project_api_architecture(
+                 net_data, NAR_VERSION)),
+        ]
+        for key, filename, schema_name, doc in projections:
+            try:
+                with open(os.path.join(schema_dir, schema_name),
+                          encoding="utf-8") as fh:
+                    schema = json.load(fh)
+                errors = _evidence.validate(doc, schema)
+            except (OSError, ValueError) as e:
+                errors = [f"schema unavailable: {e}"]
+            if errors:
+                report["limitations"].append(
+                    f"companion {filename} not emitted: "
+                    f"projection failed validation ({errors[0]})")
+                continue
+            with open(os.path.join(out_dir, filename),
+                      "w", encoding="utf-8") as fh:
+                json.dump(doc, fh, indent=1)
+            companions[key] = {"file": filename, "projected": True}
+
+    # Cross-module correlations (Evolution Phase 8): explicit
+    # join records across the stage documents, emitted as the
+    # correlations.json companion (schema-validated). The JNI
+    # entries are also embedded into native.json and counted
+    # in the report, per the phase spec.
+    if _correlations is not None and _evidence is not None:
+        corr = _correlations.build_correlations(
+            dex_data, nat_data, perms_data, net_data, NAR_VERSION)
+        try:
+            with open(os.path.join(
+                    os.path.dirname(HERE), "schemas",
+                    "correlations.schema.json"),
+                    encoding="utf-8") as fh:
+                corr_schema = json.load(fh)
+            corr_errors = _evidence.validate(corr, corr_schema)
+        except (OSError, ValueError) as e:
+            corr_errors = [f"schema unavailable: {e}"]
+        if corr_errors:
+            report["limitations"].append(
+                "companion correlations.json not emitted: "
+                f"failed validation ({corr_errors[0]})")
+        else:
+            with open(os.path.join(out_dir, "correlations.json"),
+                      "w", encoding="utf-8") as fh:
+                json.dump(corr, fh, indent=1)
+            companions["correlations"] = {
+                "file": "correlations.json", "projected": True}
+            report["correlations_summary"] = corr["counts"]
+            native_path = os.path.join(out_dir, "native.json")
+            if os.path.isfile(native_path):
+                try:
+                    with open(native_path, encoding="utf-8") as fh:
+                        native_doc = json.load(fh)
+                    native_doc["jni_correlations"] = \
+                        corr["jni_bindings"]
+                    with open(native_path, "w",
+                              encoding="utf-8") as fh:
+                        json.dump(native_doc, fh, indent=1)
+                except (OSError, ValueError) as e:
+                    report["limitations"].append(
+                        "native.json JNI correlation enrichment "
+                        f"failed: {e}")
+            if isinstance(report.get("native_summary"), dict):
+                report["native_summary"]["jni_correlations"] = {
+                    "matched": corr["counts"]["jni_matched"],
+                    "declaration_only":
+                        corr["counts"]["jni_declaration_only"],
+                    "export_only":
+                        corr["counts"]["jni_export_only"]}
 
 
 def analyze(target, work_dir, out_dir=None):
@@ -632,7 +795,8 @@ def analyze(target, work_dir, out_dir=None):
     # 2.0 module stages (fingerprint / engine fusion / DEX /
     # native / network / security / assets) with case caching.
     if apk_for_steps and not triage.get("is_obb"):
-        run_2_0_stages(report, apk_for_steps, out_dir, work_dir)
+        run_2_0_stages(report, apk_for_steps, out_dir, work_dir,
+                       perms_data=perms)
 
     # Limitations and unknowns: the honest tail of every report.
     lim = report["limitations"]
@@ -873,12 +1037,208 @@ def render_md(report):
     return "\n".join(lines)
 
 
+BUNDLE_MANIFEST = "case-bundle-manifest.json"
+
+
+def _case_files(case_dir):
+    out = []
+    for root, _dirs, names in os.walk(case_dir):
+        for name in names:
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, case_dir)
+            out.append((rel.replace(os.sep, "/"), full))
+    return sorted(out)
+
+
+def export_case(case_dir, bundle_path):
+    """Export a case directory to a single portable bundle
+    (zip) with a per-file SHA-256 manifest. Returns a
+    summary dict. The manifest travels inside the bundle
+    and lands in the imported case, where verify_case
+    re-checks every file against it."""
+    case_doc = {}
+    case_json = os.path.join(case_dir, "case.json")
+    if os.path.isfile(case_json):
+        with open(case_json, encoding="utf-8") as fh:
+            case_doc = json.load(fh)
+    files = []
+    with zipfile.ZipFile(bundle_path, "w",
+                         zipfile.ZIP_DEFLATED) as zf:
+        for rel, full in _case_files(case_dir):
+            if rel == BUNDLE_MANIFEST:
+                continue
+            files.append({"path": rel,
+                          "sha256": sha256_of(full),
+                          "size_bytes": os.path.getsize(full)})
+        manifest = {
+            "tool": "nar-analyze", "version": NAR_VERSION,
+            "kind": "nar-case-bundle",
+            "created": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                     time.gmtime()),
+            "case_id": case_doc.get("case_id"),
+            "input_sha256": (case_doc.get("input") or {}).get(
+                "sha256"),
+            "files": files}
+        zf.writestr(BUNDLE_MANIFEST, json.dumps(manifest, indent=1))
+        for rel, full in _case_files(case_dir):
+            if rel == BUNDLE_MANIFEST:
+                continue
+            zf.write(full, rel)
+    return {"bundle": os.path.abspath(bundle_path),
+            "files": len(files),
+            "case_id": manifest["case_id"],
+            "input_sha256": manifest["input_sha256"]}
+
+
+def import_case(bundle_path, out_dir):
+    """Import a case bundle into out_dir (guarded
+    extraction: absolute paths and '..' entries are
+    refused), then verify the imported case. Returns the
+    verify summary plus import facts."""
+    with zipfile.ZipFile(bundle_path) as zf:
+        names = zf.namelist()
+        if BUNDLE_MANIFEST not in names:
+            raise ValueError("not a NAR case bundle: "
+                             f"{BUNDLE_MANIFEST} missing")
+        for name in names:
+            if name.startswith("/") or ".." in (
+                    name.replace("\\", "/").split("/")):
+                raise ValueError(f"unsafe entry in bundle: {name}")
+        os.makedirs(out_dir, exist_ok=True)
+        zf.extractall(out_dir)
+    result = verify_case(out_dir)
+    result["imported_to"] = os.path.abspath(out_dir)
+    result["files_imported"] = len(names)
+    return result
+
+
+def verify_case(case_dir):
+    """Verify a case directory's integrity: the recorded
+    input hash (re-checked when the input file is still at
+    its recorded path), the bundle manifest when present
+    (every file's hash + size), and the stage-cache
+    integrity keys (recomputed from the case's recorded
+    input hash + its recorded NAR version + stage name).
+    Returns {ok, checks, failures, notes} — a check that
+    cannot run is a note, never a silent pass."""
+    checks, failures, notes = [], [], []
+
+    def check(name, ok, detail=""):
+        checks.append({"check": name, "ok": bool(ok),
+                       "detail": detail})
+        if not ok:
+            failures.append(f"{name}: {detail}")
+
+    case_json = os.path.join(case_dir, "case.json")
+    if not os.path.isfile(case_json):
+        check("case.json present", False, "case.json missing")
+        return {"ok": False, "checks": checks,
+                "failures": failures, "notes": notes}
+    check("case.json present", True)
+    with open(case_json, encoding="utf-8") as fh:
+        case_doc = json.load(fh)
+    inp = case_doc.get("input") or {}
+    input_sha = inp.get("sha256")
+    check("input hash recorded", bool(input_sha))
+    input_path = inp.get("path")
+    if input_path and os.path.isfile(input_path):
+        actual = sha256_of(input_path)
+        check("input file hash matches the record",
+              actual == input_sha,
+              "recorded input file changed on disk"
+              if actual != input_sha else "re-hashed OK")
+    else:
+        notes.append("input file not present at its recorded "
+                     "path; its hash was not re-checked "
+                     "(normal for an imported case)")
+    manifest_path = os.path.join(case_dir, BUNDLE_MANIFEST)
+    if os.path.isfile(manifest_path):
+        with open(manifest_path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        check("bundle input hash matches case record",
+              manifest.get("input_sha256") == input_sha)
+        bad = []
+        for entry in manifest.get("files", []):
+            full = os.path.join(case_dir, entry["path"])
+            if not os.path.isfile(full):
+                bad.append(f"{entry['path']} missing")
+            elif sha256_of(full) != entry["sha256"] or \
+                    os.path.getsize(full) != entry["size_bytes"]:
+                bad.append(f"{entry['path']} hash/size mismatch")
+        check("bundle manifest: every file intact", not bad,
+              "; ".join(bad[:5]) if bad else
+              f"{len(manifest.get('files', []))} files verified")
+    else:
+        notes.append("no bundle manifest in this case "
+                     "(not an imported bundle); manifest "
+                     "checks not applicable")
+    cache_dir = os.path.join(case_dir, "cache")
+    if os.path.isdir(cache_dir) and input_sha:
+        case_version = case_doc.get("nar_version") or NAR_VERSION
+        bad = []
+        checked = 0
+        for name in sorted(os.listdir(cache_dir)):
+            if not name.endswith(".json"):
+                continue
+            stage = name[:-len(".json")]
+            key_path = os.path.join(cache_dir, name + ".key")
+            if not os.path.isfile(key_path):
+                bad.append(f"{stage}: cache key file missing")
+                continue
+            with open(key_path, encoding="utf-8") as fh:
+                recorded = fh.read().strip()
+            # Recompute exactly as run_2_0_stages derives
+            # it: sha256 of "<input sha>|<version>|<stage>".
+            expected = hashlib.sha256(
+                f"{input_sha}|{case_version}|{stage}".encode()
+            ).hexdigest()
+            checked += 1
+            if recorded != expected:
+                bad.append(f"{stage}: cache key mismatch")
+            try:
+                with open(os.path.join(cache_dir, name),
+                          encoding="utf-8") as fh:
+                    json.load(fh)
+            except ValueError:
+                bad.append(f"{stage}: cache JSON unparsable")
+        check("stage cache integrity keys", not bad,
+              "; ".join(bad[:5]) if bad else
+              f"{checked} cache entries verified")
+    stages = case_doc.get("stages") or {}
+    failed = [s for s, v in stages.items()
+              if v.get("status") not in ("ok", "cached")]
+    if failed:
+        notes.append("stages recorded as not-ok in this "
+                     f"case: {', '.join(sorted(failed))} "
+                     "(integrity is unaffected; the case "
+                     "records its own degraded stages)")
+    return {"ok": not failures, "checks": checks,
+            "failures": failures, "notes": notes}
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="NAR one-command full static workup: writes"
                     " report.md + report.json for an APK/AAB/XAPK/OBB.")
-    p.add_argument("target", help="path to the .apk, .aab, .xapk,"
+    p.add_argument("target", nargs="?", help="path to the .apk, .aab, .xapk,"
                                   " .apkm, or .obb file")
+    p.add_argument("--export", metavar="CASE_DIR",
+                   help="export a case directory to a bundle "
+                        "(with --bundle FILE) and exit")
+    p.add_argument("--bundle", metavar="FILE",
+                   help="bundle path for --export / --import")
+    p.add_argument("--import", dest="import_bundle", metavar="FILE",
+                   help="import a case bundle (with --out DIR) "
+                        "and exit")
+    p.add_argument("--verify", metavar="CASE_DIR",
+                   help="verify a case directory's integrity "
+                        "and exit")
+    p.add_argument("--stage-timeout", type=float, metavar="S",
+                   help="per-stage timeout cap in seconds "
+                        "(orchestration budget)")
+    p.add_argument("--total-budget", type=float, metavar="S",
+                   help="total budget in seconds for the whole "
+                        "run (orchestration budget)")
     p.add_argument("--out", metavar="DIR",
                    help="report directory (default ./nar-analyze-<name>)")
     p.add_argument("--work", metavar="DIR",
@@ -892,6 +1252,52 @@ def main(argv=None):
                    help="ignore the case stage cache and re-run "
                         "every 2.0 stage")
     args = p.parse_args(argv)
+    # Case bundle modes (Phase 8): export / import / verify
+    # operate on case directories, not on targets.
+    if args.export or args.import_bundle or args.verify:
+        if args.export:
+            if not args.bundle:
+                print("nar-analyze: --export needs --bundle FILE",
+                      file=sys.stderr)
+                return 2
+            summary = export_case(args.export, args.bundle)
+            print(json.dumps(summary, indent=2) if args.json
+                  else f"exported {summary['files']} files to "
+                       f"{summary['bundle']}")
+            return 0
+        if args.import_bundle:
+            out_dir = args.out or os.path.join(
+                os.getcwd(), "nar-case-imported")
+            try:
+                result = import_case(args.import_bundle, out_dir)
+            except (ValueError, zipfile.BadZipFile) as e:
+                print(f"nar-analyze: import failed: {e}",
+                      file=sys.stderr)
+                return 1
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print(f"imported to {result['imported_to']}: "
+                      f"verify {'OK' if result['ok'] else 'FAILED'}")
+                for f in result["failures"]:
+                    print(f"  FAIL {f}")
+            return 0 if result["ok"] else 1
+        result = verify_case(args.verify)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"case verify: "
+                  f"{'OK' if result['ok'] else 'FAILED'}")
+            for c in result["checks"]:
+                print(f"  [{'ok' if c['ok'] else 'FAIL'}] "
+                      f"{c['check']} {c['detail']}")
+            for n in result["notes"]:
+                print(f"  note: {n}")
+        return 0 if result["ok"] else 1
+    if not args.target:
+        p.error("a target file is required (or use --export / "
+                "--import / --verify)")
+    set_budgets(args.stage_timeout, args.total_budget)
     stem = os.path.splitext(os.path.basename(args.target))[0] or "target"
     out_dir = args.out or os.path.join(os.getcwd(), f"nar-analyze-{stem}")
     work_dir = args.work or os.path.join(
@@ -926,7 +1332,8 @@ def main(argv=None):
         "input": {"path": report.get("target"),
                   "sha256": report.get("target_sha256"),
                   "size_bytes": report.get("target_size_bytes")},
-        "config": {"profile": "full"},
+        "config": {"profile": "full",
+                   "budgets": _budget_snapshot()},
         "tool_versions": {"nar": NAR_VERSION,
                           "python": sys.version.split()[0]},
         "stages": stages,

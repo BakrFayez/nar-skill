@@ -135,10 +135,114 @@ def parse_pck(data):
                       "size_bytes": size,
                       "flags": entry_flags,
                       "encrypted": bool(entry_flags & FLAG_ENCRYPTED)})
+    report["file_types"] = _classify_files(files, data)
     report["files"] = files
     report["file_count"] = len(files)
     report["total_content_bytes"] = sum(f["size_bytes"] for f in files)
     return report
+
+
+_EXT_TYPES = (
+    ("scene", (".tscn", ".scn")),
+    ("resource", (".tres", ".res", ".material", ".theme")),
+    ("script", (".gd",)),
+    ("compiled script", (".gdc",)),
+    ("shader", (".gdshader", ".shader")),
+    ("texture", (".png", ".jpg", ".jpeg", ".webp", ".svg",
+                 ".bmp", ".dds", ".ktx", ".exr", ".hdr",
+                 ".tga", ".stex", ".ctex")),
+    ("audio", (".ogg", ".wav", ".mp3", ".opus", ".flac")),
+    ("font", (".ttf", ".otf", ".font", ".fnt")),
+    ("model", (".obj", ".gltf", ".glb", ".mesh", ".dae")),
+    ("translation", (".translation", ".po", ".csv")),
+    ("import metadata", (".import",)),
+    ("text", (".txt", ".md", ".cfg", ".ini")),
+)
+
+
+def _header_type(head):
+    """(type, detail) from content magic, or (None, None)."""
+    if head.startswith(b"[gd_scene"):
+        return "scene", None
+    if head.startswith(b"[gd_resource"):
+        return "resource", None
+    if head.startswith(b"RSRC"):
+        # Binary resource: after the magic come three u32
+        # version fields, then the resource type as a
+        # length-prefixed string. Claimed only when the
+        # string validates as a printable identifier.
+        if len(head) >= 20:
+            ln = struct.unpack_from("<I", head, 16)[0]
+            if 0 < ln <= 64 and 20 + ln <= len(head):
+                raw = head[20:20 + ln].rstrip(b"\x00")
+                try:
+                    name = raw.decode("ascii")
+                except UnicodeDecodeError:
+                    name = ""
+                if name and all(c.isalnum() or c in "_."
+                                for c in name):
+                    return "binary resource", name
+        return "binary resource", None
+    if head.startswith(b"\x89PNG") or head.startswith(b"\xff\xd8") \
+            or head.startswith(b"DDS ") or head.startswith(b"\xabKTX") \
+            or (head.startswith(b"RIFF")
+                and head[8:12] == b"WEBP"):
+        return "texture", None
+    if head.startswith(b"OggS") or head.startswith(b"fLaC") \
+            or head.startswith(b"ID3") \
+            or (head.startswith(b"RIFF")
+                and head[8:12] == b"WAVE"):
+        return "audio", None
+    if head.startswith((b"\x00\x01\x00\x00", b"OTTO", b"wOFF",
+                        b"true")):
+        return "font", None
+    return None, None
+
+
+def classify_godot_resource(path, head, encrypted=False):
+    """Classify one pack entry by resource type.
+
+    Returns (resource_type, evidence, detail). Header magic
+    wins over the file extension; the extension is the
+    fallback and is labeled as the evidence. Encrypted
+    entries are NEVER typed — their content is not
+    readable, so any type would be a guess.
+    """
+    if encrypted:
+        return None, "encrypted entry: not classified", None
+    if head:
+        kind, detail = _header_type(head)
+        if kind:
+            return kind, "header", detail
+    low = path.lower()
+    base = low.rsplit("/", 1)[-1]
+    if base in ("project.godot", "project.binary"):
+        return "project config", "extension", None
+    for kind, exts in _EXT_TYPES:
+        if low.endswith(exts):
+            return kind, "extension", None
+    return "unknown", "none", None
+
+
+def _classify_files(files, data=None):
+    """Attach resource_type / type_evidence (/ type_detail)
+    to listing entries and return per-type counts. `data`
+    is the pack bytes for header evidence; without it only
+    extension evidence is available."""
+    counts = {}
+    for f in files:
+        head = None
+        if data is not None and "offset" in f:
+            head = data[f["offset"]:f["offset"] + 64]
+        kind, evidence, detail = classify_godot_resource(
+            f["path"], head, f.get("encrypted", False))
+        f["resource_type"] = kind
+        f["type_evidence"] = evidence
+        if detail:
+            f["type_detail"] = detail
+        key = kind or "encrypted (unclassified)"
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def find_godotpcktool():
@@ -220,6 +324,7 @@ def inspect(target):
             if files is not None:
                 sub["files"] = files
                 sub["file_count"] = len(files)
+                sub["file_types"] = _classify_files(files)
                 sub["listing_via"] = "godotpcktool"
                 report["is_godot"] = True
             else:
@@ -251,6 +356,7 @@ def inspect(target):
                 if files is not None:
                     sub["files"] = files
                     sub["file_count"] = len(files)
+                    sub["file_types"] = _classify_files(files)
                     sub["listing_via"] = "godotpcktool"
                 else:
                     sub["fallback_error"] = err
@@ -281,11 +387,15 @@ def human(report, limit):
             lines.append(f"Files: {pck['file_count']} (listed via"
                          f" {pck.get('listing_via', 'stdlib')}),"
                          f" {pck.get('total_content_bytes', 0):,} content bytes")
+            if pck.get("file_types"):
+                lines.append(f"Resource types: {pck['file_types']}")
             shown = pck["files"] if limit <= 0 else pck["files"][:limit]
             for f in shown:
                 mark = " [encrypted]" if f.get("encrypted") else ""
+                rtype = f.get("resource_type")
+                tmark = f" [{rtype}]" if rtype else ""
                 lines.append(f"  {f['path']} ({f['size_bytes']:,} bytes)"
-                             f"{mark}")
+                             f"{mark}{tmark}")
             if len(shown) < pck["file_count"]:
                 lines.append(f"  ... and {pck['file_count'] - len(shown)} more"
                              " (raise --limit, or use --json for all)")

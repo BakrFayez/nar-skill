@@ -357,7 +357,7 @@ def pak_packages(pak_path, out_dir):
 
 
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unreal", "version": "2.4.0",
+    report = {"tool": "nar-unreal", "version": "2.5.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     lower = target.lower()

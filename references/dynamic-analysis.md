@@ -133,6 +133,20 @@ Rules:
 - Frida changes timing. A race or timeout that appears only under
   Frida is a measurement artifact until reproduced without it.
 
+## Session records (nar-runtime)
+
+`nar-runtime.py status` reports the runtime subsystem's
+honest verification state; `nar-runtime.py plan app.apk`
+builds a session plan for an authorized target. Adding
+`--session-out DIR` persists a structured session record
+(`runtime-session.json`, schema-validated) into a case
+workspace: session and device identity, tool probes,
+start/stop times, collected events, evidence paths, and
+errors. The record carries the verification label
+unchanged — a plan or an offline record is not evidence
+that a live session ran; live captures state their mode
+(attach / spawn) and what they actually observed.
+
 ## What dynamic analysis can and cannot prove
 
 Can prove:

@@ -91,6 +91,28 @@ fingerprint must match (or a v3 lineage must connect them). A changed
 signer without lineage means users cannot upgrade in place. Record
 the fingerprints in the comparison report.
 
+## nar-compare artifacts (--out)
+
+`nar-compare.py old.apk new.apk --out DIR` writes three
+named artifacts beside the usual output (Evolution
+Phase 7): `comparison.json` (the tool's full report),
+`feature-map.json` (the per-dimension added / removed /
+modified projection: identity, permissions, DEX and
+classes, native libraries, endpoints, assets, resources,
+signing, engine — schema
+schemas/compare-feature-map.schema.json), and
+`version-diff.md` (the same projection rendered for
+humans, so the two cannot disagree). The feature map's
+build-noise block separates signing-file churn from
+content entry changes; the separation is labeled a
+heuristic (a re-sign can be legitimate certificate
+rotation) and the unfiltered counts stay in
+comparison.json. The endpoint dimension reads the
+nar-strings `urls` + `api_endpoints` hit lists — an
+earlier reader iterated the group dicts themselves and
+silently reported 0/0 on pairs with real endpoint
+changes; fixed in the same phase.
+
 ## Building a feature map
 
 A feature map is a document, not a dump. One row per feature:

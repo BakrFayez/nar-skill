@@ -14,7 +14,26 @@ DT_NEEDED, DT_SONAME, DT_BIND_NOW = 1, 14, 24
 DT_FLAGS, DT_FLAGS_1 = 30, 0x6FFFFFFB
 DF_BIND_NOW, DF_1_NOW = 0x8, 0x1
 SHT_SYMTAB, SHT_DYNSYM, SHT_STRTAB, SHT_DYNAMIC = 2, 11, 3, 6
+SHT_RELA, SHT_REL = 4, 9
 ET_DYN = 3
+
+# Relocation type names for the common cases, per machine.
+# Anything unmapped is reported numerically (type-N) rather
+# than named from a guess.
+RELOC_NAMES = {
+    0x3E: {0: "NONE", 1: "64", 2: "PC32", 4: "PLT32",
+           5: "COPY", 6: "GLOB_DAT", 7: "JUMP_SLOT",
+           8: "RELATIVE", 37: "IRELATIVE"},          # x86-64
+    0x03: {0: "NONE", 1: "32", 2: "PC32", 5: "COPY",
+           6: "GLOB_DAT", 7: "JUMP_SLOT", 8: "RELATIVE",
+           42: "IRELATIVE"},                          # x86
+    0x28: {0: "NONE", 2: "ABS32", 20: "COPY",
+           21: "GLOB_DAT", 22: "JUMP_SLOT", 23: "RELATIVE",
+           160: "IRELATIVE"},                         # ARM
+    0xB7: {257: "ABS64", 1024: "COPY", 1025: "GLOB_DAT",
+           1026: "JUMP_SLOT", 1027: "RELATIVE",
+           1032: "IRELATIVE"},                        # AArch64
+}
 
 MACHINES = {0x28: "ARM", 0xB7: "AArch64", 0x03: "x86",
             0x3E: "x86-64", 0x08: "MIPS", 0xF3: "RISC-V"}
@@ -37,6 +56,10 @@ class Elf:
     def __init__(self, data, name="lib.so"):
         if len(data) < 52 or not data.startswith(b"\x7fELF"):
             raise ElfError(f"{name}: not an ELF file")
+        if data[4] not in (1, 2):
+            raise ElfError(
+                f"{name}: invalid EI_CLASS {data[4]} "
+                "(expected 1=32-bit or 2=64-bit)")
         self.name = name
         self.data = data
         self.is_64 = data[4] == 2
@@ -179,6 +202,127 @@ class Elf:
                     "size": size})
         return out
 
+    def _section_symbol_names(self, symtab_section):
+        """Symbol names of one symbol-table section, in
+        table order (index 0 is the null symbol)."""
+        strtab = self._strtab_for(symtab_section)
+        blob = self._section_data(symtab_section)
+        e = self.endian
+        entsize = symtab_section["entsize"] or \
+            (24 if self.is_64 else 16)
+        names = []
+        for off in range(0, len(blob) - entsize + 1, entsize):
+            if self.is_64:
+                name_off = struct.unpack_from(
+                    e + "I", blob, off)[0]
+            else:
+                name_off = struct.unpack_from(
+                    e + "I", blob, off)[0]
+            names.append(_str_at(strtab, name_off))
+        return names
+
+    def relocations(self):
+        """Relocation entries from SHT_REL / SHT_RELA
+        sections (Evolution Phase 3): [{section, offset,
+        type, type_name, symbol_index, symbol}]. Symbol
+        names resolve through the relocation section's
+        linked symbol table; unmapped type numbers are
+        reported numerically."""
+        out = []
+        e = self.endian
+        sections = self.sections()
+        names_by_machine = RELOC_NAMES.get(self.machine, {})
+        for s in sections:
+            if s["type"] not in (SHT_REL, SHT_RELA):
+                continue
+            has_addend = s["type"] == SHT_RELA
+            blob = self._section_data(s)
+            if self.is_64:
+                entsize = s["entsize"] or (24 if has_addend
+                                           else 16)
+            else:
+                entsize = s["entsize"] or (12 if has_addend
+                                           else 8)
+            if not entsize:
+                continue
+            sym_names = []
+            link = s["link"]
+            if 0 <= link < len(sections):
+                sym_names = self._section_symbol_names(
+                    sections[link])
+            for off in range(0, len(blob) - entsize + 1, entsize):
+                if self.is_64:
+                    r_offset, r_info = struct.unpack_from(
+                        e + "QQ", blob, off)
+                    sym = r_info >> 32
+                    rtype = r_info & 0xFFFFFFFF
+                else:
+                    r_offset, r_info = struct.unpack_from(
+                        e + "II", blob, off)
+                    sym = r_info >> 8
+                    rtype = r_info & 0xFF
+                out.append({
+                    "section": s["name"], "offset": r_offset,
+                    "type": rtype,
+                    "type_name": names_by_machine.get(
+                        rtype, f"type-{rtype}"),
+                    "symbol_index": sym,
+                    "symbol": sym_names[sym]
+                    if sym < len(sym_names) else None})
+        return out
+
+    def relocation_summary(self):
+        """Counts over relocations(): totals, per-section,
+        per-type, and the PLT/GOT subset (.rela.plt/.rel.plt
+        entries — the lazy-binding surface)."""
+        entries = self.relocations()
+        by_section = {}
+        by_type = {}
+        plt_got = 0
+        for entry in entries:
+            by_section[entry["section"]] = \
+                by_section.get(entry["section"], 0) + 1
+            by_type[entry["type_name"]] = \
+                by_type.get(entry["type_name"], 0) + 1
+            if entry["section"] in (".rela.plt", ".rel.plt"):
+                plt_got += 1
+        return {"total": len(entries), "by_section": by_section,
+                "by_type": by_type, "plt_got": plt_got}
+
+    def comment_strings(self):
+        """Strings of the .comment section (compiler banners
+        the toolchain embedded), or [] when the section is
+        absent or stripped."""
+        for s in self.sections():
+            if s["name"] == ".comment":
+                blob = self._section_data(s)
+                return [part.decode("utf-8", "replace")
+                        for part in blob.split(b"\x00")
+                        if part][:16]
+        return []
+
+    def compiler_fingerprints(self):
+        """.comment-based compiler fingerprints (Evolution
+        Phase 3): OBSERVED evidence — the exact banner
+        strings the toolchain left in the binary. Nothing
+        is claimed when the section is stripped."""
+        out = []
+        for text in self.comment_strings():
+            if "clang version" in text:
+                out.append({"tool": "clang", "banner": text,
+                            "fact_class": "observed",
+                            "source": ".comment section"})
+            elif text.startswith("GCC:"):
+                out.append({"tool": "gcc", "banner": text,
+                            "fact_class": "observed",
+                            "source": ".comment section"})
+            elif "Android" in text and "clang" in text:
+                out.append({"tool": "clang (Android NDK)",
+                            "banner": text,
+                            "fact_class": "observed",
+                            "source": ".comment section"})
+        return out
+
     def facts(self):
         """The full native-intelligence fact set for this ELF."""
         dyn = self.dynamic_entries()
@@ -260,4 +404,7 @@ class Elf:
             "register_natives_hint": any(
                 s["name"] == "RegisterNatives" for s in dynsyms),
             "section_names": section_names,
+            "relocations": self.relocation_summary(),
+            "comment_strings": self.comment_strings(),
+            "compiler_fingerprints": self.compiler_fingerprints(),
         }

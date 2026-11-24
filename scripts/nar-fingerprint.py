@@ -24,6 +24,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import evidence as ev_mod  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -40,8 +41,13 @@ def run_json_tool(script, args, timeout=1200):
 
 
 def prop(value, provenance, confidence="high", fact_class="observed"):
+    # verification_status (Phase 8): derived from the fact
+    # class by the shared mapping — a property never claims
+    # more verification than its fact class supports.
     return {"value": value, "provenance": provenance,
-            "confidence": confidence, "fact_class": fact_class}
+            "confidence": confidence, "fact_class": fact_class,
+            "verification_status":
+                ev_mod.verification_for_fact_class(fact_class)}
 
 
 def fingerprint(apk_path):
@@ -71,10 +77,12 @@ def fingerprint(apk_path):
     from_badging("app_label", "app_label")
     from_badging("min_sdk", "min_sdk")
     from_badging("target_sdk", "target_sdk")
+    from_badging("compile_sdk", "compile_sdk")
     if "compile_sdk" not in props:
-        notes.append("compile SDK is not exposed by the badging "
-                     "reader; check with aapt2 dump badging "
-                     "compileSdkVersion line if needed")
+        notes.append("compile SDK was not exposed by the badging "
+                     "reader for this target (no compileSdkVersion "
+                     "in the aapt2 badging output); absence is "
+                     "recorded, not guessed")
     props["sha256"] = prop(triage["sha256"], "nar-triage file hash")
     props["size_bytes"] = prop(triage["size_bytes"],
                                "filesystem")
@@ -143,7 +151,9 @@ def human(fp):
             value = json.dumps(value)
         print(f"- {name}: {value}")
         print(f"    [{p['provenance']}; confidence "
-              f"{p['confidence']}; {p['fact_class']}]")
+              f"{p['confidence']}; {p['fact_class']}; "
+              f"verification "
+              f"{p.get('verification_status', 'UNVERIFIED')}]")
     for note in fp["notes"]:
         print(f"note: {note}")
 

@@ -219,3 +219,21 @@ wrappers that call them. After the bundle work:
   alone. Pair static bundle work with the dynamic guide
   (`references/dynamic-analysis.md`) when the question is
   about what the app does when it runs.
+
+## Source maps and the native-module inventory
+
+`nar-rn` reports any `*.map` entries shipped in the APK
+(`source_maps`) and the bundle's own
+`//# sourceMappingURL=` reference. Its `native_modules`
+block inventories the new-architecture surface: for text
+bundles, module names are extracted from the call sites
+themselves (TurboModuleRegistry.get/.getEnforcing,
+codegenNativeComponent, NativeModules.<name>). For
+Hermes bytecode the same names sit in the string table
+as standalone entries and cannot be attributed to call
+sites without bytecode reference analysis, so the report
+gives architecture-marker counts (TurboModuleRegistry,
+codegenNativeComponent, NativeModules,
+__turboModuleProxy) and states that names were not
+extracted — marker presence proves the architecture is
+used, not which modules exist.

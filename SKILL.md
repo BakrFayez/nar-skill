@@ -2,7 +2,7 @@
 name: nar
 description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis.
 metadata:
-  version: "2.4.0"
+  version: "2.5.0"
 ---
 
 # NAR: Nirous Android Reversing
@@ -70,36 +70,39 @@ investigation with triage unless the question already names a deeper target.
 | Question | First step | Guide |
 |---|---|---|
 | What is this APK? Package, version, size, DEX/.so inventory | `python3 scripts/nar-triage.py app.apk` | [triage and inventory](references/triage-and-inventory.md) |
-| Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (1.x workup + 2.0 stages → case dir with report.md / report.json / report.html + companions, case.json, execution-log.json; stage results are cached per input hash) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
-| One command for everything? | `python3 scripts/nar.py <command> …` — unified CLI over every module (`nar analyze`, `nar dex`, `nar security`, …); each module script also works standalone | [architecture](references/architecture.md) |
+| Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (1.x workup + 2.0 stages → case dir with report.md / report.json / report.html + companions incl. correlations.json, case.json, execution-log.json; stage results are cached per input hash; `--stage-timeout` / `--total-budget` bound the run) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
+| One command for everything? | `python3 scripts/nar.py <command> …` — unified CLI over every module (`nar analyze`, `nar dex`, `nar security`, …; also `nar tools`, `nar identify`, `nar validate`, `nar benchmark`, `nar case`); each module script also works standalone | [architecture](references/architecture.md) |
+| Which of NAR's tools are installed on this machine? | `python3 scripts/nar.py tools [--json]` (registry view with live probes; the doctor stays the readiness gate) | [tool registry](references/tool-registry.md) |
+| How fast / how accurate is NAR on the fixture corpus? | `python3 scripts/nar.py benchmark [--out metrics.json]` (measured timings, labeled-corpus accuracy metrics, peak memory; synthetic and real corpora reported separately) | [benchmarks](references/benchmarks.md) |
+| Move a case directory / verify its integrity | `python3 scripts/nar.py case export case/ --bundle case.zip`, then `case import case.zip --out dir/` / `case verify dir/` (per-file hash manifest; tampering fails verify) | [output schema](references/output-schema.md) |
 | What file is this really? Is extraction safe? | `python3 scripts/nar-input.py identify file` / `extract` / `duplicates` (magic-based identification, zip-slip/bomb-guarded extraction) | [architecture](references/architecture.md) |
 | A fingerprint I can diff/track, with provenance | `python3 scripts/nar-fingerprint.py app.apk` (every property carries source tool + confidence) | [output schema](references/output-schema.md) |
 | Engine verdict with a confidence score | `python3 scripts/nar-engines.py game.apk [--deep]` (multi-indicator fusion; --deep confirms with the engine's own deep-dive tool) | [triage and inventory](references/triage-and-inventory.md) |
-| Deep DEX facts: classes, call edges, reflection, dynamic loading | `python3 scripts/nar-dex.py app.apk` (own DEX parser; `--jadx` / `--baksmali` adapters) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
+| Deep DEX facts: classes, call edges, reflection, dynamic loading | `python3 scripts/nar-dex.py app.apk` (own DEX parser: try/catch tables, debug-info presence, Kotlin @Metadata inventory; `--jadx` / `--baksmali` adapters) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | Instruction-level bytecode listing for one class/method (jadx failed, obfuscated or protected method) | `python3 scripts/nar-dex.py app.apk --disassemble --disasm-class '<substr>'` (own disassembler; `--disasm-all` for an explicit full decode) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
-| Deep native facts: dependencies, JNI exports, hardening | `python3 scripts/nar-native.py app.apk` (own ELF parser, readelf cross-check with `--work`) | [native libs and JNI](references/native-libs-and-jni.md) |
-| Which endpoints does it talk to (statically)? | `python3 scripts/nar-network.py app.apk` (classified endpoint inventory, services, network security config) | [network traffic](references/network-traffic.md) |
-| Security review with severities and fixes | `python3 scripts/nar-security.py app.apk [--deep]` (findings in the NAR-SEC schema: evidence, impact, remediation) | [output schema](references/output-schema.md), [safety and authorization](references/safety-and-authorization.md) |
-| Full asset inventory (types, sizes, duplicates) | `python3 scripts/nar-assets.py app.apk` | [manifest and resources](references/manifest-and-resources.md) |
-| Runtime observation on my own device | `python3 scripts/nar-runtime.py status` / `plan app.apk` (adb + Frida adapters, session plans, timeline schema) | [dynamic analysis](references/dynamic-analysis.md) |
+| Deep native facts: dependencies, JNI exports, hardening | `python3 scripts/nar-native.py app.apk` (own ELF parser: dependency graph, relocations, compiler fingerprints; readelf cross-check with `--work`) | [native libs and JNI](references/native-libs-and-jni.md) |
+| Which endpoints does it talk to (statically)? | `python3 scripts/nar-network.py app.apk` (classified endpoint inventory, services, network security config; credential/token values redacted at the source, counts reported) | [network traffic](references/network-traffic.md) |
+| Security review with severities and fixes | `python3 scripts/nar-security.py app.apk [--deep]` (findings in the NAR-SEC schema: evidence, impact, remediation, verification status) | [output schema](references/output-schema.md), [safety and authorization](references/safety-and-authorization.md) |
+| Full asset inventory (types, sizes, duplicates) | `python3 scripts/nar-assets.py app.apk` (audio header metadata for WAV/OGG/MP3; other formats report unmeasured) | [manifest and resources](references/manifest-and-resources.md) |
+| Runtime observation on my own device | `python3 scripts/nar-runtime.py status` / `plan app.apk` (adb + Frida adapters, session plans, persisted session records with `--session-out`; jni-trace RegisterNatives events verified live on the emulator, attach + spawn) | [dynamic analysis](references/dynamic-analysis.md) |
 | What engine is this game? Unity / Unreal / Godot? | Triage engine hints, then confirm markers | [triage](references/triage-and-inventory.md), [native libs and JNI](references/native-libs-and-jni.md) |
-| Is this app protected? Which packer / protector? | Triage Protection systems section (named packers, obfuscation, RASP, pinning, DRM, encryption, native hardening) | [triage and inventory](references/triage-and-inventory.md) |
+| Is this app protected? Which packer / protector? | Triage Protection systems section (named packers, obfuscation, RASP, pinning, DRM, encryption, native hardening; signatures ship as a versioned database, `scripts/protection-signatures.json`) | [triage and inventory](references/triage-and-inventory.md) |
 | Permissions, components, intent filters, SDK levels | `apktool d` or `aapt2 dump xmltree` | [manifest and resources](references/manifest-and-resources.md) |
 | Strings, layouts, drawables, asset bundles (.pak/.bundle/.obb) | `apktool d` + inventory | [manifest and resources](references/manifest-and-resources.md) |
 | Which classes/methods exist? Where is feature X? | Grep jadx output, then read one class | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | How does this method work? | jadx decompile of one class/method | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | What does the native library do? JNI bindings? | `.so` inventory, strings, Ghidra/Kuna | [native libs and JNI](references/native-libs-and-jni.md) |
-| Unity IL2CPP game: what is the game logic? | `python3 scripts/nar-il2cpp.py game.apk` (locates the pair, runs Il2CppDumper, summarizes), then Ghidra | [Unity IL2CPP](references/unity-il2cpp.md) |
-| Godot game: what is in the `.pck` and the scripts? | `python3 scripts/nar-godot.py game.apk` (pack listing + encryption flag), GodotPckTool extract, GDRE Tools decompile | [native libs and JNI](references/native-libs-and-jni.md) |
+| Unity IL2CPP game: what is the game logic? | `python3 scripts/nar-il2cpp.py game.apk` (locates the pair, runs Il2CppDumper, summarizes), then Ghidra; Addressables content: `python3 scripts/nar-unity.py` parses catalog.json into a location inventory | [Unity IL2CPP](references/unity-il2cpp.md) |
+| Godot game: what is in the `.pck` and the scripts? | `python3 scripts/nar-godot.py game.apk` (pack listing + encryption flag, per-entry resource-type classification), GodotPckTool extract, GDRE Tools decompile | [native libs and JNI](references/native-libs-and-jni.md) |
 | Unreal game: what is inside the `.pak` packs? | Extract the `.pak`, then `python3 scripts/nar-pak.py game.pak` (list, or `--extract` entries) | [native libs and JNI](references/native-libs-and-jni.md) |
 | Unreal game: what is inside a `.uasset` / `.umap` package? | `python3 scripts/nar-unreal.py asset.uasset` (summary + name/import/export tables, resolved references, best-effort property tags), or the APK / `.utoc` / `.pak` holding it | [native libs and JNI](references/native-libs-and-jni.md) |
-| React Native app: what is in the JS bundle? | `python3 scripts/nar-rn.py app.apk` (Hermes vs JSC, bytecode version, counts), then hermes-dec decompile | [React Native](references/react-native.md) |
-| Flutter/Dart app: what is in `libapp.so`? | `python3 scripts/nar-flutter.py app.apk` (Dart/Flutter versions, AOT markers), then Dart AOT strings and symbols | [Flutter and Dart](references/flutter-dart.md) |
+| React Native app: what is in the JS bundle? | `python3 scripts/nar-rn.py app.apk` (Hermes vs JSC, bytecode version, counts, source-map detection, native-module inventory), then hermes-dec decompile | [React Native](references/react-native.md) |
+| Flutter/Dart app: what is in `libapp.so`? | `python3 scripts/nar-flutter.py app.apk` (Dart/Flutter versions, AOT markers, flutter_assets inventory), then Dart AOT strings and symbols | [Flutter and Dart](references/flutter-dart.md) |
 | What does it do on the network? | mitmproxy capture, tshark pcap reading | [network traffic](references/network-traffic.md) |
 | What does it do at runtime? (Frida scripts) | `scripts/frida/*.js` on a rooted device or emulator | [Frida scripts](references/frida-scripts.md) |
 | Interesting strings, URLs, endpoints | `python3 scripts/nar-strings.py app.apk` | [nar-strings.py](scripts/nar-strings.py) |
 | Permissions, components, intent filters | `python3 scripts/nar-perms.py app.apk` | [manifest and resources](references/manifest-and-resources.md) |
-| What changed between v1 and v2? | `python3 scripts/nar-compare.py old.apk new.apk` | [version compare and feature map](references/version-compare-and-feature-map.md) |
+| What changed between v1 and v2? | `python3 scripts/nar-compare.py old.apk new.apk [--out DIR]` (`--out` also writes feature-map.json + version-diff.md beside comparison.json) | [version compare and feature map](references/version-compare-and-feature-map.md) |
 | Legacy app: Android 4.x-7, ODEX, v1 signing, ARMv7 | DEX version, signing schemes, legacy markers | [legacy analysis](references/legacy-analysis.md) |
 | Modern app: Android 14/15/16, 16KB pages, Compose, Rust | ELF alignment, DEX markers, Play Integrity | [modern analysis](references/modern-analysis.md) |
 | Is it signed? Which schemes? Whose certificate? How do I sign my own build? | `apksigner verify --verbose --print-certs`; own-build workflow (align → sign → verify, rotation, continuity) in the same guide | [signatures and integrity](references/signatures-and-integrity.md) |
@@ -217,10 +220,12 @@ audit), `scripts/nar-pak.py` (Unreal .pak lister/extractor),
 `scripts/nar-il2cpp.py` (Unity IL2CPP locator + dumper summary),
 `scripts/nar-flutter.py` (Flutter/Dart fingerprint),
 `scripts/nar-godot.py` (Godot .pck inspector), `scripts/nar-rn.py`
-(React Native bundle inspector), the 2.0 modules
+(React Native bundle inspector), `scripts/nar-tools.py`
+(registry view behind `nar tools`), the 2.0 modules
 `scripts/nar-input.py` (format identification + safe extraction),
 `scripts/nar-fingerprint.py`, `scripts/nar-engines.py`,
-`scripts/nar-unity.py`, `scripts/nar-unreal.py`,
+`scripts/nar-unity.py` (incl. Addressables catalog inventory),
+`scripts/nar-unreal.py`,
 `scripts/nar-dex.py`, `scripts/nar-native.py`,
 `scripts/nar-network.py`, `scripts/nar-security.py`,
 `scripts/nar-assets.py`, `scripts/nar-runtime.py`,

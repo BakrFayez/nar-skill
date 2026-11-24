@@ -173,187 +173,57 @@ RUST_SCAN_BUDGET_BYTES = 512 * 1024 * 1024
 # uses this to bypass anything (see the legitimate-use boundary in
 # SKILL.md).
 #
-# Output is organized by category. A finding is attributed to a named
-# product only when a marker is dedicated to that product: a protector
-# runtime library, its stub application class, or its SDK package.
-# Generic names that collide with ordinary libraries are never used as
-# markers (no bare "libshell.so", no bare "frida"). Where a protection
-# kind has no reliable static marker (DexGuard string encryption,
-# OLLVM control-flow flattening, in-code signature checks, injected
-# RASP runtimes that are renamed per build), triage stays silent and
-# the triage guide says so instead of the tool guessing.
-PROTECTION_CATEGORIES = [
-    ("commercial_packer", "Commercial packer / VM protector"),
-    ("obfuscation", "Obfuscation"),
-    ("anti_tamper_rasp", "Anti-tamper / RASP"),
-    ("network_protection", "Network protection"),
-    ("licensing_drm", "Licensing / DRM"),
-    ("code_asset_encryption", "Code / asset encryption"),
-    ("native_hardening", "Native hardening"),
-]
-PROTECTION_CATEGORY_LABELS = dict(PROTECTION_CATEGORIES)
-PROTECTION_CATEGORY_ORDER = {key: i for i, (key, _) in
-                             enumerate(PROTECTION_CATEGORIES)}
+# The signatures themselves — categories, named packers, RASP and
+# licensing DEX markers, the Widevine UUID forms, the pin/stub
+# patterns and the stub thresholds — live in the versioned data
+# artifact scripts/protection-signatures.json (database schema 1)
+# and are loaded via narlib.signatures (Evolution Phase 5). The
+# artifact carries the attribution discipline in its own notes: a
+# finding is attributed to a named product only when a marker is
+# dedicated to that product, and protection kinds with no reliable
+# static marker are deliberately absent rather than guessed.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from narlib import signatures as _signatures
+    _SIG = _signatures.load_signatures()
+except Exception as _sig_err:  # missing/corrupt DB: fail loudly
+    raise SystemExit(
+        "nar-triage: protection signature database unusable: "
+        f"{_sig_err} (run nar-doctor to diagnose the install)")
 
-# Named commercial packers / VM protectors. Each entry:
-# (product name, .so matchers, DEX byte patterns, other entry-name
-# substrings). A .so matcher is ("exact", name), ("prefix", p), or
-# ("contains", s), matched case-insensitively against the .so file's
-# base name. DEX patterns are class/package strings from the shipped
-# runtime: stub application classes and wrapper packages. Only markers
-# specific to the product are listed; crash reporters and analytics
-# SDKs from the same vendor are NOT packer evidence and are excluded.
-PACKER_MARKERS = [
-    # Pairip (Google): VM-based protection. The runtime library name
-    # is dedicated, and the runtime classes (application, license
-    # check) live under com/pairip/.
-    ("Pairip (Google)",
-     [("exact", "libpairipcore.so")],
-     [b"com/pairip/"],
-     []),
-    # Tencent Legu: shell libraries are versioned (libshella-2.x.so,
-    # libshellx-*.so); the stub application package is
-    # com.tencent.StubShell. com.tencent.bugly is a crash reporter,
-    # not Legu, and is deliberately absent.
-    ("Tencent Legu",
-     [("prefix", "libshella"), ("prefix", "libshellx")],
-     [b"com/tencent/StubShell"],
-     []),
-    # Qihoo 360 Jiagu: libjiagu*.so (libjiagu.so, libjiagu_art.so,
-    # libjiagu_x86.so); the stub application is com.stub.StubApp.
-    ("Qihoo 360 Jiagu",
-     [("prefix", "libjiagu")],
-     [b"com/stub/StubApp"],
-     []),
-    # Bangcle SecShell (also sold as SecNeo): libsecexe.so /
-    # libsecmain.so / libSecShell*.so; runtime classes under
-    # com/secshell/SecShell.
-    ("Bangcle SecShell",
-     [("exact", "libsecexe.so"), ("exact", "libsecmain.so"),
-      ("prefix", "libsecshell")],
-     [b"com/secshell/SecShell"],
-     []),
-    # Alibaba SecurityGuard / Mobisec: versioned
-    # libsgmainso-*.so (matcher prefix covers libsgmain.so too),
-    # libmobisec.so; the SecurityGuard SDK package is
-    # com/alibaba/wireless/security (the vendor's ordinary app
-    # packages are not markers).
-    ("Alibaba SecurityGuard",
-     [("prefix", "libsgmain"), ("exact", "libmobisec.so")],
-     [b"com/alibaba/wireless/security"],
-     []),
-    # Baidu Protect: libbaiduprotect*.so; wrapper package
-    # com/baidu/protect.
-    ("Baidu Protect",
-     [("prefix", "libbaiduprotect")],
-     [b"com/baidu/protect"],
-     []),
-    # NetEase YiDun: wrapper library libnesec.so; wrapper package
-    # com/netease/nis/wrapper.
-    ("NetEase YiDun",
-     [("exact", "libnesec.so")],
-     [b"com/netease/nis/wrapper"],
-     []),
-    # iJiami: libexec.so / libexecmain.so, an ijiami.dat payload in
-    # assets, and the shell application class (shipped under both the
-    # plain and the obfuscated s.h.e.l.l package).
-    ("iJiami",
-     [("exact", "libexec.so"), ("exact", "libexecmain.so")],
-     [b"com/shell/SuperApplication", b"s/h/e/l/l/SuperApplication"],
-     ["ijiami.dat"]),
-    # DexProtector (Licel): the runtime library carries the product
-    # name (libDexProtector.so, case varies by build).
-    ("DexProtector",
-     [("contains", "dexprotector")],
-     [],
-     []),
-    # LIAPP (Lockin Company): libLIAPP.so.
-    ("LIAPP",
-     [("exact", "libliapp.so")],
-     [],
-     []),
-    # AppSealing (INKA Entworks): libAppSealing.so.
-    ("AppSealing",
-     [("exact", "libappsealing.so")],
-     [],
-     []),
-]
-
-# Anti-tamper / RASP DEX markers: (finding name, byte patterns, note).
-# These are string fingerprints of protection CODE. Presence shows the
-# check ships in the app; it does not show the check firing, and the
-# same strings can appear in apps that use root features legitimately.
-RASP_DEX_MARKERS = [
-    ("Root detection (RootBeer library)",
-     [b"com/scottyab/rootbeer"],
-     None),
-    ("Root-related markers (su / Magisk / Superuser)",
-     [b"com/topjohnwu/magisk", b"eu/chainfire/supersu",
-      b"com/noshufou/android/su", b"com/koushikdutta/superuser",
-      b"/system/app/Superuser.apk", b"/system/xbin/su",
-      b"/system/bin/su"],
-     "Strings checked by root detectors; the same paths can also be "
-     "probed by apps that offer root features."),
-    ("Emulator detection markers",
-     [b"/dev/qemu_pipe", b"qemu_pipe", b"ranchu", b"qemu.hw.mainkeys"],
-     None),
-    ("Debugger detection markers",
-     [b"isDebuggerConnected", b"TracerPid"],
-     None),
-    ("Hook framework markers (Frida / Xposed / Substrate)",
-     [b"frida-server", b"frida-agent", b"gum-js-loop",
-      b"de/robv/android/xposed", b"com/saurik/substrate"],
-     None),
-    ("SafetyNet attestation (legacy)",
-     [b"com/google/android/gms/safetynet"],
-     "Client-side presence only: the attestation verdict is made by "
-     "Google's servers, never inside the APK."),
-]
-
+PROTECTION_SIGNATURES_VERSION = _SIG["database_version"]
+PROTECTION_CATEGORIES = _SIG["categories"]
+PROTECTION_CATEGORY_LABELS = _SIG["category_labels"]
+PROTECTION_CATEGORY_ORDER = _SIG["category_order"]
+# Named commercial packers / VM protectors: (product name, .so
+# matchers, DEX byte patterns, other entry-name substrings).
+PACKER_MARKERS = _SIG["packer_markers"]
+# Anti-tamper / RASP DEX markers: (finding name, byte patterns,
+# note). Presence shows the check ships in the app; it does not
+# show the check firing.
+RASP_DEX_MARKERS = _SIG["rasp_dex_markers"]
 # Licensing / DRM DEX markers: (finding name, byte patterns, note).
-LICENSING_DEX_MARKERS = [
-    # Play License Verification Library: the com.android.vending.
-    # licensing package (LicenseChecker and friends). The separate
-    # CHECK_LICENSE permission is folded into this finding when the
-    # classes are present, and reported on its own when they are not.
-    ("Play License Verification (LVL)",
-     [b"com/android/vending/licensing"],
-     None),
-    # Widevine is handled separately below: its UUID reaches the DEX
-    # in compiled forms the plain string pattern cannot see.
-]
-
-# Widevine's MediaDrm scheme UUID (edef8ba9-79d6-4ace-a3c8-27dcd51d21ed)
-# reaches a DEX in three forms:
-#   * the dashed string constant (resource / toString-style code),
-#   * the raw 16 UUID bytes (byte-array constants),
-#   * compiled code: `new UUID(msb, lsb)` stores the two 64-bit
-#     halves as little-endian long constants in the code stream.
-# All four byte patterns are counted like any other protection
-# pattern; the finding (section 5 of the protection scan) fires on
-# the string form, on the raw bytes, or on BOTH long halves in the
-# SAME dex — one half alone is not evidence. A bare MediaDrm
-# reference is generic Android API use and is never a marker.
-WIDEVINE_UUID_STRING = b"edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"
-WIDEVINE_UUID_RAW = bytes.fromhex("edef8ba979d64acea3c827dcd51d21ed")
-WIDEVINE_UUID_MSB_LE = struct.pack("<Q", 0xEDEF8BA979D64ACE)
-WIDEVINE_UUID_LSB_LE = struct.pack("<Q", 0xA3C827DCD51D21ED)
-WIDEVINE_DEX_PATTERNS = [WIDEVINE_UUID_STRING, WIDEVINE_UUID_RAW,
-                         WIDEVINE_UUID_MSB_LE, WIDEVINE_UUID_LSB_LE]
-
+LICENSING_DEX_MARKERS = _SIG["licensing_dex_markers"]
+# Widevine's MediaDrm scheme UUID in its four byte forms (see the
+# database artifact for the full note; the finding fires on the
+# string form, the raw bytes, or BOTH long halves in the SAME dex).
+WIDEVINE_UUID_STRING = _SIG["widevine"]["uuid_string"]
+WIDEVINE_UUID_RAW = _SIG["widevine"]["uuid_raw"]
+WIDEVINE_UUID_MSB_LE = _SIG["widevine"]["uuid_msb_le"]
+WIDEVINE_UUID_LSB_LE = _SIG["widevine"]["uuid_lsb_le"]
+WIDEVINE_DEX_PATTERNS = _SIG["widevine"]["dex_patterns"]
 # OkHttp pin constants and network-security-config pins share the
-# "sha256/<base64>" shape (43-44 base64 chars for a 32-byte digest).
-PIN_CONSTANT_RE = re.compile(rb"sha256/[A-Za-z0-9+/]{40,}={0,2}")
-# Class descriptors ending in StubApp: the classic packer stub shape.
-# Attributed stubs are claimed by PACKER_MARKERS first; whatever is
-# left over is reported unattributed rather than guessed.
-STUB_DESCRIPTOR_RE = re.compile(rb"^L[A-Za-z0-9/$]*StubApp;$")
-# A primary DEX below this size, inside an app whose bulk is native or
-# asset payload, is the shell pattern: the visible DEX is a loader and
-# the real code arrives at runtime.
-STUB_DEX_MAX_BYTES = 100_000
-STUB_APP_MIN_BYTES = 2_000_000
-STUB_PAYLOAD_MIN_BYTES = 1_000_000
+# "sha256/<base64>" shape.
+PIN_CONSTANT_RE = _SIG["pin_constant_re"]
+# Class descriptors ending in StubApp: the classic packer stub
+# shape. Attributed stubs are claimed by PACKER_MARKERS first;
+# whatever is left over is reported unattributed, never guessed.
+STUB_DESCRIPTOR_RE = _SIG["stub_descriptor_re"]
+# A primary DEX below this size, inside an app whose bulk is
+# native or asset payload, is the shell pattern.
+STUB_DEX_MAX_BYTES = _SIG["stub_dex_max_bytes"]
+STUB_APP_MIN_BYTES = _SIG["stub_app_min_bytes"]
+STUB_PAYLOAD_MIN_BYTES = _SIG["stub_payload_min_bytes"]
 # DEX files larger than this are byte-scanned as streams (as before)
 # but not held in memory for the string-table parse.
 DEX_STRING_PARSE_MAX_BYTES = 96 * 1024 * 1024
@@ -1086,6 +956,12 @@ def aapt2_badging(apk_path):
             info["package"] = m.group(1)
             info["version_code"] = m.group(2)
             info["version_name"] = m.group(3)
+            # compileSdkVersion rides on the package line itself
+            # (compileSdkVersion='34'); the Codename variant is a
+            # different field and is not matched by this pattern.
+            cm = re.search(r"compileSdkVersion='([^']+)'", line)
+            if cm:
+                info["compile_sdk"] = cm.group(1)
             continue
         m = BADGING_PATTERNS["sdk"].match(line)
         if m:
@@ -1155,6 +1031,11 @@ def triage(apk_path):
         "obb_version_code": obb_match.group(2) if obb_match else None,
         "obb_package": obb_match.group(3) if obb_match else None,
         "looks_like_split": bool(SPLIT_RE.search(basename)),
+        # Protection signature database provenance (Phase 5):
+        # which signature set produced the protections below.
+        "protection_signatures": {
+            "database_version": PROTECTION_SIGNATURES_VERSION,
+            "counts": _SIG["counts"]},
     }
     try:
         zf = zipfile.ZipFile(apk_path)

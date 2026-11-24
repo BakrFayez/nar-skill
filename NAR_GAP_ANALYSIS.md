@@ -485,3 +485,409 @@ the matching NAR_TEST_MATRIX.md addenda.
   one classic-but-version-stripped, three Zen-native
   — no shipped title has yet provided a classic
   package with a recorded FileVersionUE5.
+
+## Evolution Phase 0 reconciliation (2026-11-24)
+
+The tables at the top of this document are the v1.1.0
+Phase-Zero audit and the dated addenda below them track
+each release; several addenda supersede each other (the
+2.1.0 addendum's runtime paragraph is superseded by the
+post-2.1.0 runtime addenda; its §13 "UAsset remains PI"
+note is superseded by the unreleased UAsset addendum).
+This reconciliation supersedes all of them where they
+conflict. It was produced by re-reading the shipped
+v2.4.0 tree and executing the baseline (pytest 144/144,
+e2e 47/47 with 0 skipped, doctor READY, 23/23 CLI
+`--help` exit 0, one full orchestrated case + cache
+re-run). Statuses use the exact evolution vocabulary:
+IMPLEMENTED_AND_TESTED (IT), IMPLEMENTED_BUT_UNVERIFIED
+(IU), PARTIALLY_IMPLEMENTED (PI), PLANNED (PL), MISSING
+(M), BROKEN (B), UNSUPPORTED (US), NOT_APPLICABLE (NA).
+
+| Area | Status | Evidence (executed or grep-verified, 2026-11-24) |
+|---|---|---|
+| Universal input intelligence | IT | narlib/formats.py magic+structure ID over the full input list; nar-input identify/validate/extract/duplicates; narlib/safearchive.py guards (slip/traversal/symlink/bomb/nesting/size) with planted-case unit tests; OAT/VDEX/ODEX/ART are first-class inputs since 2.4.0 |
+| Application fingerprinting | IT | nar-fingerprint.py: normalized properties each with provenance + confidence + fact class; fingerprint.json schema-validated in case runs. Named-file divergence: the brief's five files (application/manifest/native-inventory/frameworks + fingerprint) ship as one fingerprint.json + report sections — content present, names differ (plan Phase 2) |
+| Android internals (manifest, resources, permissions, signing) | IT | nar-perms.py own AXML parser with aapt2 cross-check; triage signature-scheme inventory (v1–v4), form factors, split/container handling; e2e cases green |
+| DEX / bytecode | PI | IT core: narlib/dex.py enumeration, hierarchies, call edges, reflection/dynamic-loading/native evidence; narlib/dexdis.py full disassembler (oracle: 40,837 methods, 0 mismatches). Missing: try/catch handler tables, debug info, control-flow graphs |
+| Java / Kotlin intelligence | PI | nar-dex Kotlin inventory (coroutines, Flow/StateFlow, serialization, data/sealed/companion labeled inferred); jadx + baksmali adapters version-checked. CFR/Procyon/dex2jar registered unavailable, never integrated; no Kotlin-metadata (@Metadata) parse; no rename suggestions |
+| Native binary analysis | PI | IT core: narlib/elf.py headers/sections/segments/dynamic/symbols/DT_NEEDED/Build ID/hardening + dependency graph, readelf cross-check. Missing: relocation tables; compiler fingerprints beyond Rust markers |
+| JNI intelligence (static) | IT | nar-native JNI export map joined with nar-dex native-method declarations; unit + e2e coverage. The runtime RegisterNatives event path is counted under Runtime, not here |
+| Unity | PI | IT core: IL2CPP location + Il2CppDumper summary, Cpp2IL optional second backend, metadata versions. Partial: Mono is inventory-level; AssetBundle object census only via optional UnityPy; Addressables is a catalog-presence flag, no catalog parse; no scene/prefab/material semantic inventory |
+| Unreal | PI | IT core: nar-pak incl. v10/v11 encoded index; narlib/iostore TOC v5 + v8, both directory-index layouts, real-set verified (7,171 chunks; 13,494 files); narlib/zen on 1,209 real packages; narlib/uasset summary/tables + best-effort property tags on a real UE4 corpus. Missing/unproven: Kismet/Blueprint graph decoding; UE5 tag-extension layouts (object version >= 1011); a real classic package with recorded FileVersionUE5 (evidence-negative over five titles — open by evidence) |
+| Godot | PI | IT core: nar-godot pack formats 3/4, encrypted-pack detection verified on a real encrypted pack, per-file encrypted marks, GodotPckTool cross-check. Partial: resource/scene classification is listing-level; GDScript bytecode is GDRE-orchestrated, not parsed |
+| Flutter / Dart | PI | nar-flutter versions + AOT markers, e2e positive/negative. Missing: snapshot/VM structure parsing, symbol recovery, plugin/native-channel inventory; assets are a presence flag |
+| React Native | PI | nar-rn Hermes/JSC decision + Hermes header parse, hermes-dec cross-check. Missing: source maps, native-module / TurboModule / Fabric inventory |
+| Other frameworks (detection) | IT | nar-engines fusion over 18 families with confidence + ambiguity reporting; Cordova/PhoneGap and Ren'Py/RPG Maker rows moved to tested by the 2.4.0 mega-sweep; Xamarin/.NET via narlib/dotnetmeta. Deep dives beyond detection do not exist for these families, by design |
+| Protection / obfuscation detection | PI | IT core: triage 7-category taxonomy, named packers under attribution discipline, zero false positives on clean sets (e2e + protection fixtures), RASP/pinning/DRM/encryption categories. Missing: a versioned signature-database artifact (signatures are code-embedded) |
+| Network intelligence | PI | IT core: nar-network classified endpoint taxonomy, hosts, services, NSC structured parse, client-library evidence. Missing: credential/token redaction pass in tooling (guide-level only); the three brief-named documents ship as one endpoints document; dynamic capture IU (device) |
+| Runtime / dynamic analysis | PI | Emulator scope IT: adb + install/launch + all four Frida scripts executed live, attach and spawn (API 26, 2026-11-23). IU: every physical-device row; the jni-trace RegisterNatives event path (hooks install live; no event — the fixture binds statically); java-api-trace app-triggered events (one REPL-triggered pair only). Session persistence is plan/timeline level, not a stored session record |
+| Security intelligence | IT | nar-security NAR-SEC findings (id/severity/confidence/evidence/impact/remediation/false-positive notes), schema-validated; known-findings fixture + clean fixture e2e cases. CVSS deliberately not computed (facts rarely support it; documented) |
+| Asset intelligence | PI | IT core: nar-assets typed inventory, hashes, image dimensions, duplicates, large assets, container cross-reference. Missing: audio metadata; dependency graphs (relationships are cross-references) |
+| Version comparison | PI | IT core: nar-compare extended diffs (classes/methods/strings/endpoints/assets/security/engine) + severity + similarity, planted-pair verified. Missing: feature-map.json / version-diff.md as named artifacts; >2-version comparison |
+| Evidence + correlation | PI | IT core: narlib/evidence.py envelope (tool+version, source, offset/location, timestamp, confidence, fact class) + 11 schemas + stdlib validator. Missing: verification-status vocabulary as a field; a correlation engine/records; derived-evidence de-duplication |
+| Orchestration | PI | IT core: nar-analyze case workspace, registry-driven stages, hash-keyed cache + resume (verified in this pass: 7 cached / 3 ok on re-run), execution log, partial-result degradation. Missing: adaptive planning, execution budgets, retry/cancellation policy |
+| Tool registry | IT | scripts/registry.json: 35 tools declared with probes + limitations; 9 registered unavailable (il2cppinspector, assetripper, uabea, unrealpak, fmodel, uassetapi, cfr, procyon, dex2jar), never faked; test_registry.py + doctor consistency. Noted risk: nar-doctor.sh is a parallel bash implementation kept consistent by test, not by construction |
+| Reporting | PI | IT core: report.md/json + offline HTML dashboard (zero external references asserted by e2e), companion set as documented in references/output-schema.md. Missing: dependency-graph rendering in the dashboard (graph data ships in native.json only) |
+| Unified CLI | PI | 23 subcommands, all help-clean with consistent exit codes (verified in this pass); 1.x standalone CLIs unchanged. Missing as commands: tools, benchmark, case, validate, identify, info (functions reachable via doctor / nar input / tests runner) |
+| AI skill interface | IT | SKILL.md routing covers every module; frontmatter valid; version consistent across skill.yaml / SKILL.md / plugin.json / pyproject / README (grep-verified 2.4.0); install routes documented for Claude Code, Codex, Cursor, Muse; no MCP dependency |
+| Testing / benchmarks | PI | IT core: pytest 144 + e2e 47 executed in this pass; security-guard unit tests (planted archives, malformed inputs). Partial: benchmarks runner measures wall-times only — no accuracy / precision / recall / FP / FN metrics; no memory metrics; no fuzz corpus |
+| Documentation | PI | 22 reference guides + 5 program documents; architecture/registry/schema/safety/troubleshooting guides exist and match code. BROKEN item: README repo-structure block describes the 1.x layout (17 guides, no 2.0 modules). Minor: "NAR 2.0" headline branding at version 2.4.0 in README + pyproject |
+| Packaging / distribution | IT | pyproject (stdlib-only core, optional extras), plugin manifest, per-release ZIP, GitHub Release v2.4.0 published; CI executed green on GitHub for the current workflow scope |
+| Extensibility | PI | narlib shared core + registry-declared tools + uniform script conventions. Missing: a formal adapter/plugin contract, capability negotiation, a versioned signature database |
+
+Environment-blocked rows (no code change moves them):
+physical-device runtime (IU — no device attached);
+CI workflow edits + execution (workflows permission is
+absent on the release push path; execution happens on
+GitHub, on push, and this program does not push);
+Oodle (US — proprietary SDK, refused by name);
+versioned classic UE5 package on real data (open by
+evidence over five titles); Zen pre-5.3/EA layouts and
+recorded Zen versioning on real data (no obtainable
+sample); OAT beyond API 26 x86_64, real Dalvik-ODEX and
+CDEX files (synthetic level; CDEX payload identified,
+not decoded); Wear OS / APEX / instant-app samples
+(unexercised, labeled as such in-product).
+
+## Evolution Phase 1 addendum (2026-11-24) — core reliability
+
+Documentation row moves from PARTIALLY_IMPLEMENTED (with
+a BROKEN item) to IMPLEMENTED_AND_TESTED for the audited
+defects: the README repo-structure block now describes the
+real 2.4.0 layout (22 guides, all 2.0 modules + narlib,
+tests/unit + tests/benchmarks), and a new automated guard
+(tests/unit/test_docs_consistency.py) asserts the block
+names every file in scripts/, scripts/narlib/,
+scripts/frida/, references/ and schemas/, that the stated
+guide count equals the tree, and that every SKILL.md
+routing target exists. Version consistency is now guarded
+by unit test across all 18 version-bearing locations,
+including a planted-mismatch case. The README/pyproject
+"NAR 2.0" headline divergence is resolved by removing the
+version number from the brand headline entirely (recorded
+in NAR_IMPLEMENTATION_PLAN.md, Phase 1 record). The
+nar-doctor compile check no longer leaves `__pycache__`
+in the tree (compiles into a temp dir; verified clean
+after a run). Battery after this phase: pytest 154/154,
+e2e 47/47, doctor READY.
+
+## Evolution Phase 2 addendum (2026-11-24) — input + fingerprinting
+
+Application fingerprinting stays IMPLEMENTED_AND_TESTED
+and gains compile_sdk (parsed from the aapt2 badging
+package line by nar-triage, reported by nar-fingerprint
+with provenance; absence remains an explicit note — the
+AAB/container identity paths do not expose it). The
+named-file divergence recorded in Phase 0 is closed:
+nar-analyze emits application.json, manifest.json,
+native-inventory.json and frameworks.json beside the
+existing companions, projected from the same run's stage
+data by narlib/companions.py and schema-validated before
+writing (four new schemas ship in schemas/); the existing
+companion set is unchanged. Universal input intelligence
+stays IMPLEMENTED_AND_TESTED and gains AAR/JAR structural
+summaries in nar-input validate (entry/class counts,
+manifest presence; AAR layout facts incl. the classes.jar
+class count), covered by planted-fixture unit tests.
+Battery after this phase: pytest 165/165, e2e 49/49, doctor READY;
+e2e analyze cases assert the companion set in both runs.
+
+## Evolution Phase 3 addendum (2026-11-24) — Android intelligence
+
+DEX / bytecode moves from PARTIALLY_IMPLEMENTED toward
+IMPLEMENTED_AND_TESTED for the audited sub-gaps: try/catch
+handler tables and debug-info presence are parsed
+(narlib.dex.code_item_info) and reported per DEX by
+nar-dex, cross-checked exactly against SDK dexdump on a
+real corpus DEX (484 methods with tries, 1,178 try items,
+1,357 handler entries — all three counts agree);
+narlib.dexdis gains a control-flow block summary
+(boundaries + branch edges + try ranges) with the
+disassembler oracle re-run at FULL AGREEMENT (230,836
+instructions, 0 mismatches), so listings are unchanged.
+Full control-flow graph rendering and debug line/local
+decoding remain unimplemented (presence and boundaries
+only). Java / Kotlin intelligence gains @Metadata payload
+parsing (metadata version + declaration kind per class)
+on top of the existing inventory: verified on a real
+Kotlin corpus fixture (10,213 annotations; versions
+1.8.0 / 2.2.0 dominant). Two defects were found and fixed
+in-phase (encoded-value index encoding; the @Metadata
+string-table gate) — see the Phase 3 record in
+NAR_IMPLEMENTATION_PLAN.md. Native binary analysis gains
+relocation parsing (cross-checked against readelf -r:
+section counts and PLT/GOT subset agree; one AArch64
+type number corrected from readelf's evidence) and
+.comment-based Clang/GCC compiler fingerprints as
+OBSERVED evidence; stripped binaries claim neither.
+Battery after this phase: pytest 171/171, doctor READY.
+
+## Evolution Phase 4 addendum (2026-11-24) — engine intelligence
+
+Unity intelligence gains the Addressables catalog
+inventory in nar-unity (locations / providers / resource
+types / decoded entry table, fields claimed only where
+range-validated against the catalog's own tables) —
+IMPLEMENTED_AND_TESTED on a real catalog (6,798
+locations, 24,820 entries) plus a synthetic catalog.
+React Native gains source-map detection and a
+native-module inventory: IMPLEMENTED_AND_TESTED for
+text bundles (planted call sites) and for Hermes
+architecture markers on a real fixture; Hermes module
+NAME attribution is PARTIALLY_IMPLEMENTED by design
+boundary (string-table entries cannot be attributed to
+call sites without bytecode reference analysis — the
+report states this). Flutter gains the real
+flutter_assets inventory (IMPLEMENTED_AND_TESTED: 370
+typed entries on the fixture; JSON AssetManifest keys
+counted, the binary manifest reported as present only).
+Godot listings gain resource-type classification with
+labeled evidence (header > extension; encrypted entries
+never typed) — IMPLEMENTED_AND_TESTED on the real pack
+plus synthetic packs. Unreal classic-package property
+parsing gains the UE5 tag-extension layouts: 1011
+extension tail and 1012+ complete type names are
+IMPLEMENTED_BUT_UNVERIFIED against real samples —
+verified on synthetic packages built to the documented
+format and labeled synthetic in parser output and docs,
+because no real package with a recorded UE5 version
+>= 1011 exists in the corpus (evidence-negative for
+real samples, same finding as 2.4.0). Kismet/Blueprint
+graph decoding remains PLANNED. Battery after this
+phase: pytest 178/178, doctor READY.
+
+## Evolution Phase 5 addendum (2026-11-24) — protection + network
+
+Protection / obfuscation detection: the "missing"
+item from Phase 0 is closed — the signatures now ship
+as a versioned database artifact
+(scripts/protection-signatures.json, database_version
+1.0.0, schema 1) with a validating loader
+(narlib/signatures.py) and doctor visibility (a core
+protection-signatures check). Behavioral equivalence
+with the code-embedded set is proven by a pinned
+canonical digest and byte-identical triage output on
+the protection fixtures; the e2e protection cases
+(named-on-doctored, zero false positives on the clean
+set, Widevine compiled-UUID) pass unchanged. The row
+moves to IMPLEMENTED_AND_TESTED for the database
+artifact; detection coverage itself is unchanged.
+Network intelligence: the credential/token redaction
+pass is implemented in nar-network (endpoint URLs
+redacted at the source, counts reported, raw values
+never written to case outputs) — IMPLEMENTED_AND_TESTED
+with a planted-fixture acceptance (5 planted values,
+count 5, no secret substring in the report). The three
+brief-named network documents now ship: endpoints.json
+plus the network-analysis.json and api-architecture.json
+companions, schema-validated in case runs. Battery
+after this phase: pytest 194/194, e2e 52/52, doctor READY.
+
+## Evolution Phase 6 addendum (2026-11-24) — runtime + security
+
+Dynamic analysis: the last unverified Frida event path
+is closed. jni-trace's RegisterNatives events were
+captured LIVE on the API 26 emulator (Frida 17.27.4)
+against a purpose-built demo variant whose library
+registers dynamically via RegisterNatives in JNI_OnLoad:
+attach mode produced the full chain (class line,
+per-method line with resolved symbol, [jni-entry] call
+trace, logcat corroboration that the registered method
+ran); spawn mode produced the class-level event. The
+row moves to IMPLEMENTED_AND_TESTED for the emulator
+environment; a physical-device session remains NOT RUN
+(owner's device only). The live run found and fixed a
+real defect (Frida 17 removed the Memory.readPointer /
+readUtf8String statics the per-method read used).
+Runtime sessions: plan/status flows now persist
+structured session records (runtime-session.json,
+schema-validated; device identity, tool probes,
+start/stop, events, evidence paths, errors) with the
+honest verification label carried unchanged —
+IMPLEMENTED_AND_TESTED offline + one live-recorded
+session. Security intelligence: findings carry
+verification_status from the Phase 8 vocabulary
+(schema + make_finding + per-rule assignment in
+nar-security); legacy findings without the field still
+validate — IMPLEMENTED_AND_TESTED. Battery after this
+phase: pytest 202/202, e2e 52/52, doctor READY.
+
+## Evolution Phase 7 addendum (2026-11-24) — assets + comparison
+
+Asset inventory: audio entries now carry header-parsed
+metadata (WAV / OGG Vorbis+Opus / MP3: channels, sample
+rate, duration where the header makes it computable —
+Xing frame count or a labeled CBR estimate for MP3,
+final-page granule for OGG); formats outside the
+measured set report unmeasured with the reason. The
+Phase 0 "no audio metadata" gap is closed —
+IMPLEMENTED_AND_TESTED on synthetic known-header
+fixtures. Version comparison: nar-compare --out emits
+the three named artifacts (comparison.json,
+feature-map.json schema-validated projection,
+version-diff.md) with a labeled-heuristic build-noise
+separation of signing churn from content changes —
+IMPLEMENTED_AND_TESTED (planted-pair e2e asserts the
+files + key deltas). The phase also fixed a latent
+defect that made the extended endpoint diff report
+0/0 unconditionally (group dicts iterated instead of
+their hit lists); the planted pair's real endpoint
+change now surfaces. Battery after this phase:
+pytest 213/213, e2e 53/53, doctor READY.
+
+## Evolution Phase 8 addendum (2026-11-24) — evidence + orchestration
+
+Evidence model: the verification-status vocabulary is
+now wired through findings (Phase 6), fingerprint
+properties (fact-class mapping in narlib.evidence), and
+correlation entries, with schemas updated and legacy
+documents still validating — IMPLEMENTED_AND_TESTED,
+including a 13-document full-case schema sweep.
+Cross-module correlation records (the Phase 0 "no
+explicit correlation" gap) now ship as the
+correlations.json companion in every case run: JNI
+declarations↔exports, components↔entry points,
+endpoints↔referencing classes, network libraries↔DEX
+presence, with same-evidence deduplication stated and
+implemented — IMPLEMENTED_AND_TESTED (demo fixture:
+known JNI pair matched/CONFIRMED; fabricated set pins
+declaration-only + export-only). Orchestration: the
+previously hardcoded-timeout runner now enforces
+configurable per-stage + total budgets, recorded as
+budget-exceeded stops in the execution log and case
+config — IMPLEMENTED_AND_TESTED. Case portability:
+export/import/verify with a hash manifest and cache
+integrity keys — IMPLEMENTED_AND_TESTED (round-trip +
+tamper e2e). Battery after this phase: pytest 220/220,
+e2e 55/55, doctor READY. Phases 5–8 of the evolution
+program are complete; the branch remains local and
+unpublished per the program rule.
+
+## Evolution Phase 9 addendum (2026-11-24) — reporting + CLI
+
+Reporting: the Phase 0 "no dependency-graph rendering"
+gap is closed — the offline dashboard renders
+native.json's dependency graph as an inline SVG
+section (deterministic layered layout, escaped
+labels, internal fragment references only, zero
+external references asserted by unit test and e2e;
+graphs over 120 libraries truncate with a note, the
+full graph stays in native.json). The row moves to
+IMPLEMENTED_AND_TESTED for the audited gap. Unified
+CLI: the Phase 0 "missing as commands" list is
+closed — `nar tools` (registry view, new
+nar-tools.py over narlib.registry probes),
+`nar identify` / `nar validate` (nar-input prefix
+aliases), `nar benchmark` (the benchmark runner),
+and `nar case` (export/import/verify routing) ship
+with --help, JSON where the family has it, unit
+tests, and e2e smokes; the 23 existing verbs are
+untouched pass-throughs. (`nar info` from the
+Phase 0 list was not added: no distinct capability
+backs it — identity is `nar version` + triage —
+and the program rule is no verb without a real
+implementation behind it.) The row moves to
+IMPLEMENTED_AND_TESTED. Battery after this phase:
+pytest 229/229, e2e 65/65, doctor READY.
+
+## Evolution Phase 10 addendum (2026-11-24) — skill + integrations
+
+Skill quality: SKILL.md routing now covers everything
+Phases 1–9 added (companions incl. correlations.json,
+redaction, signature DB, the five new CLI verbs,
+budgets, case ops, session records, audio metadata,
+compare artifacts, Addressables, RN source maps,
+Flutter assets, Godot resource types, DEX try/catch +
+@Metadata, ELF relocations). The Phase 0-deferred full
+guide-vs-code audit is executed: 0 missing link
+targets, 0 missing script files, 0 misattributed nar
+flags (line- and block-level), 0 unknown nar verbs;
+51 unattributed flag tokens all dispositioned as
+external-tool flags in named-tool contexts; 1 stale
+capability claim fixed (DEX guide scope limit); 2
+discoverability gaps closed (session records in the
+dynamic-analysis guide, `nar tools` in the
+tool-registry guide). The audit's durable checks are
+unit tests now, including programmatic frontmatter +
+plugin.json validation. The row moves to
+IMPLEMENTED_AND_TESTED. Registry: unchanged in
+Phases 9–10 (no tool status changed); consistency
+tests green. Battery after this phase: pytest
+234/234, e2e 65/65, doctor READY.
+
+## Evolution Phase 11 addendum (2026-11-24) — testing + benchmarks
+
+Testing: the Phase 0 "no accuracy metrics, no
+benchmarks beyond wall-times, no mutation corpus" gap
+is closed. The benchmark runner computes, from the
+labeled local corpora (role labels only; synthetic
+and real separate): protection attribution precision
+1.0 / recall 1.0, 0 FP on the 9-fixture clean set
+(real); engine-detection recall 1.0 on 6 labeled real
+fixtures; engine accuracy 1.0 on the 8-fixture
+synthetic framework corpus; format-identification
+accuracy 1.0 on 10 labeled fixtures. NOT RUN (stated
+in the runner output): real-corpus engine precision —
+no labeled engine-negative real corpus exists.
+Peak memory measured on the largest fixture
+(273,366,540 B): nar-analyze process peak RSS
+1,887,338,496 B (stage subprocess peaks excluded by
+the stated method), 304.69 s wall. The parser
+mutation corpus (DEX/ELF/PAK/IoStore/Zen) passes with
+named error types only, after two in-cycle parser
+fixes (DEX header-extent validation; ELF EI_CLASS
+validation). Methodology: references/benchmarks.md.
+The Testing row moves to IMPLEMENTED_AND_TESTED for
+the audited gaps; the single-positive protection
+corpus caveat stands (recall there is 1.0-or-0.0 by
+construction). Battery after this phase: pytest
+239/239, e2e 65/65, doctor READY.
+
+## Evolution Phase 12 addendum (2026-11-24) — END STATE, v2.5.0 prepared
+
+The TOTAL INTELLIGENCE EVOLUTION program is complete
+on this branch. Version 2.5.0 is prepared (18/18
+version locations, consistency-tested) and NOT
+published: merge / push / tag / release remain the
+owner's explicit decision.
+
+End-state capability deltas from Phases 9–12 (the
+earlier addenda record Phases 1–8):
+
+- Reporting: dependency-graph rendering MISSING →
+  IMPLEMENTED_AND_TESTED (offline inline SVG from
+  native.json; truncation labeled; zero external
+  references asserted).
+- Unified CLI: five capability areas reachable only
+  as scripts/flags → IMPLEMENTED_AND_TESTED as verbs
+  (`tools`, `identify`, `validate`, `benchmark`,
+  `case`); 28 verbs + version, all --help-clean; the
+  23 original verbs untouched.
+- Skill quality / guide accuracy: deferred audit →
+  IMPLEMENTED_AND_TESTED (full guide-vs-code audit
+  executed; durable checks encoded as tests;
+  frontmatter + plugin.json validated
+  programmatically).
+- Testing: wall-times only → IMPLEMENTED_AND_TESTED
+  (labeled-corpus accuracy metrics, parser mutation
+  corpus, measured peak memory), with one explicit
+  NOT RUN: real-corpus engine precision (no labeled
+  engine-negative real corpus exists).
+- Parser robustness: mutation corpus now guards DEX,
+  ELF, PAK, IoStore, Zen clean-failure; two defects
+  it caught (DEX header extents, ELF EI_CLASS) are
+  fixed and covered.
+- Release readiness: IMPLEMENTED_AND_TESTED as
+  preparation (release guide written from 2.x
+  practice; final battery pytest 239/239, e2e 65/65,
+  doctor READY; whole-evolution-diff greps clean).
+
+Standing limitations, unchanged and still labeled as
+before: physical-device runtime verification is
+IMPLEMENTED_BUT_UNVERIFIED (owner's device only);
+Zen pre-5.3/EA layouts and recorded Zen versioning
+remain synthetic-verified only; OAT beyond API 26
+x86_64 remains synthetic-only; Kismet / Blueprint
+graph decoding remains PLANNED; CI execution is
+GitHub-only (no push this cycle).

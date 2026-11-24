@@ -619,3 +619,18 @@ behavior. Keep these limits in mind when writing a report:
   the names no longer describe what the code does.
 
 Research by Bakr Fayez.
+
+## Addressables catalogs
+
+When a build ships Addressables, `nar-unity` parses the
+content catalog (`assets/aa/catalog.json`) into an
+inventory (`addressables_catalog` in the JSON report):
+locations (the catalog's internal ids), the provider
+ids, the declared resource types, and the entry table.
+The entry table is a base64 blob — an int32 count plus
+28-byte entries — whose index fields are claimed only
+where they validate against the catalog's own tables
+(internal-id, provider, and resource-type indices), so
+the per-type and per-provider entry counts are evidence,
+not guesses. A catalog whose entry blob does not match
+that validated layout is reported by size, undecoded.

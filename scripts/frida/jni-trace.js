@@ -90,13 +90,17 @@ function watchNativeFunction(fnPtr, label) {
 // void* fnPtr; }. Each field is one pointer wide.
 function readNativeMethod(methodsPtr, index) {
     var entry = methodsPtr.add(index * Process.pointerSize * 3);
-    var namePtr = Memory.readPointer(entry);
-    var sigPtr = Memory.readPointer(entry.add(Process.pointerSize));
-    var fnPtr = Memory.readPointer(entry.add(Process.pointerSize * 2));
+    // NativePointer instance methods: the Memory.readPointer /
+    // Memory.readUtf8String statics were removed in Frida 17
+    // (the class-line event fired but the per-method read threw
+    // until this was fixed — found live, Evolution Phase 6).
+    var namePtr = entry.readPointer();
+    var sigPtr = entry.add(Process.pointerSize).readPointer();
+    var fnPtr = entry.add(Process.pointerSize * 2).readPointer();
     var name = "";
     var sig = "";
-    try { name = Memory.readUtf8String(namePtr); } catch (e) { name = "?"; }
-    try { sig = Memory.readUtf8String(sigPtr); } catch (e) { sig = "?"; }
+    try { name = namePtr.readUtf8String(); } catch (e) { name = "?"; }
+    try { sig = sigPtr.readUtf8String(); } catch (e) { sig = "?"; }
     return { name: name, sig: sig, fnPtr: fnPtr };
 }
 

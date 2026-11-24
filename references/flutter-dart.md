@@ -245,3 +245,15 @@ Measured values (arm64-v8a):
 | Dart version | 3.12.2 (stable) |
 | Flutter version | 3.44.8 (stable), git hash 058e0af2c2 |
 | Obfuscation | None detected |
+
+## The flutter_assets inventory
+
+`nar-flutter` inventories `assets/flutter_assets/` for
+real (`flutter_assets` in the JSON report): every entry
+with its size and a type classified by file name /
+extension (image, font, audio, video, shader, data,
+manifests, licenses), per-type counts, and the total
+size. When the JSON `AssetManifest.json` ships, its
+declared asset keys are counted; the binary
+`AssetManifest.bin` form is reported as present without
+a key count, since that form is not decoded here.

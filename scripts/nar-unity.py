@@ -21,13 +21,16 @@ Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
 """
 import argparse
+import base64
 import io
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import zipfile
+from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib.hashing import sha256_of  # noqa: E402
@@ -35,6 +38,104 @@ from narlib.hashing import sha256_of  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 UNITY_VERSION_RE = re.compile(rb"(20\d\d\.\d+\.\d+[abfp]\d+)")
 MAX_BUNDLE_SCAN = 200
+
+
+def parse_addressables_catalog(raw):
+    """Parse an Addressables content catalog (catalog.json)
+    into an inventory: locations (internal ids), providers,
+    resource types, and the entry table.
+
+    The entry table is a base64 blob: an int32 entry count
+    followed by count x 28-byte entries of 7 int32 fields.
+    Field roles are claimed only where the values validate
+    against the catalog's own tables (field 0 indexes the
+    internal ids, field 1 the provider ids, field 6 the
+    resource types — each verified by range on real
+    catalogs); the remaining fields are reported by role
+    only in aggregate (dependency / data offsets, key
+    index) and never resolved beyond the evidence.
+    """
+    try:
+        doc = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError as e:
+        return {"parsed": False, "error": f"not JSON: {e}"}
+    if not isinstance(doc, dict) or \
+            not isinstance(doc.get("m_InternalIds"), list):
+        return {"parsed": False,
+                "error": "no m_InternalIds list: not an "
+                         "Addressables content catalog"}
+    internal_ids = doc["m_InternalIds"]
+    types = [t.get("m_ClassName")
+             for t in doc.get("m_resourceTypes") or []
+             if isinstance(t, dict) and t.get("m_ClassName")]
+    providers = []
+    for key in ("m_InstanceProviderData", "m_SceneProviderData"):
+        pd = doc.get(key)
+        if isinstance(pd, dict) and pd.get("m_Id"):
+            providers.append(pd["m_Id"])
+    resource_providers = [
+        p["m_Id"] for p in doc.get("m_ResourceProviderData") or []
+        if isinstance(p, dict) and p.get("m_Id")]
+    provider_ids = [p for p in doc.get("m_ProviderIds") or []
+                    if isinstance(p, str)]
+    out = {
+        "parsed": True,
+        "locator_id": doc.get("m_LocatorId"),
+        "build_result_hash": doc.get("m_BuildResultHash"),
+        "location_count": len(internal_ids),
+        "locations_sample": internal_ids[:25],
+        "provider_ids": provider_ids,
+        "resource_providers": resource_providers,
+        "lifecycle_providers": providers,
+        "resource_type_count": len(types),
+        "resource_types": types[:200],
+    }
+    blob = None
+    if isinstance(doc.get("m_EntryDataString"), str):
+        try:
+            blob = base64.b64decode(doc["m_EntryDataString"])
+        except ValueError:
+            blob = None
+    if blob is None or len(blob) < 4:
+        out["entries"] = {"decoded": False,
+                          "note": "no decodable entry-data blob"}
+        return out
+    count = struct.unpack_from("<i", blob, 0)[0]
+    if count < 0 or 4 + count * 28 != len(blob):
+        out["entries"] = {
+            "decoded": False, "blob_bytes": len(blob),
+            "note": "entry blob does not match the validated "
+                    "layout (int32 count + count x 28-byte "
+                    "entries); reported by size only"}
+        return out
+    f0, f1, f6 = [], [], []
+    for i in range(count):
+        vals = struct.unpack_from("<7i", blob, 4 + i * 28)
+        f0.append(vals[0])
+        f1.append(vals[1])
+        f6.append(vals[6])
+    validated = []
+    by_type = by_provider = None
+    if f0 and max(f0) < len(internal_ids) and min(f0) >= 0:
+        validated.append("internal_id_index")
+    if f6 and types and max(f6) < len(types) and min(f6) >= 0:
+        validated.append("resource_type_index")
+        by_type = [{"type": types[idx], "entries": n}
+                   for idx, n in Counter(f6).most_common(25)]
+    if f1 and provider_ids and \
+            max(f1) < len(provider_ids) and min(f1) >= 0:
+        validated.append("provider_index")
+        by_provider = [{"provider": provider_ids[idx],
+                        "entries": n}
+                       for idx, n in Counter(f1).most_common(10)]
+    out["entries"] = {
+        "decoded": True, "count": count,
+        "layout": "int32 count + 28-byte entries (7 x int32)",
+        "fields_validated": validated,
+        "by_resource_type": by_type,
+        "by_provider": by_provider,
+    }
+    return out
 
 
 def run_json_tool(script, args, timeout=1800):
@@ -64,7 +165,7 @@ def unitypy_census(data):
 
 
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unity", "version": "2.4.0",
+    report = {"tool": "nar-unity", "version": "2.5.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     triage = run_json_tool("nar-triage.py", [target]) or {}
@@ -77,9 +178,22 @@ def analyze(target, work_dir=None):
         backend = "Mono"
     bundles, version_strings = [], []
     addressables = False
+    catalog = None
     data_files = 0
     with zipfile.ZipFile(target) as zf:
         names = zf.namelist()
+        # The catalog is read in its own pass: the bundle walk
+        # below stops early at the bundle scan cap and could
+        # otherwise never reach a catalog listed late in the
+        # archive.
+        for name in names:
+            if name.endswith("catalog.json") and \
+                    ("/aa/" in name or
+                     name.startswith("assets/aa/")) and \
+                    zf.getinfo(name).file_size <= 268_435_456:
+                catalog = parse_addressables_catalog(zf.read(name))
+                catalog["path"] = name
+                break
         for name in names:
             if name.startswith("assets/bin/Data/"):
                 data_files += 1
@@ -113,6 +227,8 @@ def analyze(target, work_dir=None):
         "unityfs_bundle_count": len(bundles),
         "addressables": addressables,
     })
+    if catalog is not None:
+        report["addressables_catalog"] = catalog
     if backend == "IL2CPP":
         il2cpp_args = [target]
         if work_dir:
@@ -156,6 +272,15 @@ def human(report):
     print(f"Data files: {report['data_file_count']}; UnityFS "
           f"bundles: {report['unityfs_bundle_count']}; "
           f"Addressables: {report['addressables']}")
+    cat = report.get("addressables_catalog")
+    if cat and cat.get("parsed"):
+        ent = cat.get("entries") or {}
+        print(f"Addressables catalog: {cat['location_count']} "
+              f"locations, {cat['resource_type_count']} resource "
+              f"types, entries decoded: {ent.get('count')}")
+    elif cat:
+        print(f"Addressables catalog: not parsed "
+              f"({cat.get('error')})")
     if report.get("unitypy_census_first_bundle"):
         print(f"UnityPy census (first bundle): "
               f"{report['unitypy_census_first_bundle']}")

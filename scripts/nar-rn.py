@@ -127,6 +127,72 @@ def hbc_cross_check(bundle_path):
     return info, None
 
 
+_TURBO_RE = re.compile(
+    r"TurboModuleRegistry\.(?:get|getEnforcing)"
+    r"\(\s*['\"]([A-Za-z_$][\w$]*)['\"]")
+_FABRIC_RE = re.compile(
+    r"codegenNativeComponent(?:<[^>]*>)?"
+    r"\(\s*['\"]([A-Za-z_$][\w$]*)['\"]")
+_NATIVE_REF_RE = re.compile(r"NativeModules\.([A-Za-z_$][\w$]*)")
+_SOURCEMAP_URL_RE = re.compile(r"//# sourceMappingURL=(\S+)")
+
+
+_ARCH_MARKERS = ("TurboModuleRegistry", "codegenNativeComponent",
+                 "NativeModules", "__turboModuleProxy")
+
+
+def bundle_module_inventory(data, is_text):
+    """Native-module inventory from bundle markers.
+
+    Architecture markers (TurboModuleRegistry,
+    codegenNativeComponent, NativeModules,
+    __turboModuleProxy) are counted in the raw bundle for
+    both text and Hermes bundles — in Hermes bytecode they
+    appear as standalone string-table entries, which proves
+    the architecture is present but does not attribute
+    module names: the literals sit in the table separately
+    from their call sites, and attributing them needs
+    bytecode reference analysis (out of scope, stated in
+    the report). For text bundles the names are extracted
+    from the call sites themselves (TurboModuleRegistry
+    .get/.getEnforcing, codegenNativeComponent,
+    NativeModules.<name> references). Either way this is
+    an inventory of what the bundle references — not proof
+    of what the native side registers.
+    """
+    markers = {m: data.count(m.encode()) for m in _ARCH_MARKERS}
+    out = {"architecture_markers": markers}
+    text = data.decode("utf-8", "ignore")
+    m = _SOURCEMAP_URL_RE.search(text[-8192:])
+    out["bundle_source_mapping_url"] = m.group(1) if m else None
+    if not is_text:
+        out["module_names_extracted"] = False
+        out["note"] = ("Hermes bytecode: module names are "
+                       "standalone string-table entries and "
+                       "cannot be attributed to TurboModule / "
+                       "Fabric call sites without bytecode "
+                       "reference analysis; marker counts "
+                       "above are the evidence available")
+        return out
+    turbo = sorted(set(_TURBO_RE.findall(text)))
+    fabric = sorted(set(_FABRIC_RE.findall(text)))
+    referenced = sorted(set(_NATIVE_REF_RE.findall(text)))
+    out.update({
+        "module_names_extracted": True,
+        "turbomodules": turbo[:100],
+        "turbomodule_count": len(turbo),
+        "fabric_components": fabric[:100],
+        "fabric_component_count": len(fabric),
+        "native_modules_referenced": referenced[:100],
+        "native_module_reference_count": len(referenced),
+        "evidence": "names extracted from bundle call sites "
+                    "(TurboModuleRegistry / "
+                    "codegenNativeComponent / NativeModules "
+                    "references)",
+    })
+    return out
+
+
 def inspect(apk_path, work_dir):
     report = {"tool": "nar-rn", "file": os.path.basename(apk_path),
               "path": os.path.abspath(apk_path), "is_react_native": False}
@@ -136,6 +202,8 @@ def inspect(apk_path, work_dir):
         report["error"] = "not a ZIP/APK file"
         return report
     with zipfile.ZipFile(apk_path) as zf:
+        report["source_maps"] = sorted(
+            n for n in zf.namelist() if n.endswith(".map"))
         contract, fallbacks = find_bundle_candidates(zf.namelist())
         entry = None
         data = None
@@ -184,6 +252,8 @@ def inspect(apk_path, work_dir):
     report["bundle_path"] = os.path.abspath(out_path)
     report["bundle_size_bytes"] = len(data)
     kind = classify_bundle_head(data[:8192])
+    report["native_modules"] = bundle_module_inventory(
+        data, is_text=(kind == "js"))
     if kind == "hermes":
         report["engine"] = "Hermes"
         report["is_hermes"] = True
@@ -242,6 +312,22 @@ def human(report):
     else:
         lines.append(f"Ships as JavaScript text: "
                      f"{report['looks_like_text_js']}")
+    nm = report.get("native_modules") or {}
+    if nm.get("module_names_extracted"):
+        lines.append(
+            f"Native modules: {nm['turbomodule_count']} "
+            f"TurboModules, {nm['fabric_component_count']} "
+            f"Fabric components, "
+            f"{nm['native_module_reference_count']} "
+            f"NativeModules references")
+    elif nm:
+        marks = nm.get("architecture_markers") or {}
+        present = [k for k, v in marks.items() if v]
+        lines.append(f"Architecture markers in bundle: "
+                     f"{present or 'none'} (module names not "
+                     f"attributable from bytecode string table)")
+    if report.get("source_maps"):
+        lines.append(f"Source maps: {report['source_maps']}")
     return "\n".join(lines)
 
 

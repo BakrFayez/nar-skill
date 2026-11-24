@@ -38,9 +38,14 @@ def cmd_identify(args):
 def cmd_validate(args):
     verdict = formats.identify(args.target)
     notes = formats.validate_structure(args.target, verdict)
-    return {"target": args.target, "format": verdict["format"],
-            "sha256": verdict["sha256"], "valid": not notes,
-            "notes": notes}
+    result = {"target": args.target, "format": verdict["format"],
+              "sha256": verdict["sha256"], "valid": not notes,
+              "notes": notes}
+    structure = formats.archive_structure_summary(
+        args.target, verdict["format"])
+    if structure is not None:
+        result["structure"] = structure
+    return result
 
 
 def cmd_extract(args):
@@ -84,6 +89,21 @@ def human(data, mode):
               f"valid={data['valid']}")
         for note in data["notes"]:
             print(f"  note: {note}")
+        st = data.get("structure")
+        if st:
+            mf = "yes" if st["has_manifest_mf"] else "no"
+            print(f"  structure: {st['entry_count']} entries, "
+                  f"{st['class_entries']} class entries, "
+                  f"MANIFEST.MF={mf}")
+            if st["format"] == "aar":
+                am = "yes" if st["has_android_manifest"] else "no"
+                cj = "yes" if st["has_classes_jar"] else "no"
+                rt = "yes" if st["has_r_txt"] else "no"
+                print(f"  aar: AndroidManifest.xml={am}, "
+                      f"classes.jar={cj} "
+                      f"({st['classes_jar_class_count']} classes), "
+                      f"R.txt={rt}, res/ entries={st['res_entries']}, "
+                      f"jni libs={len(st['jni_libraries'])}")
     elif mode == "extract":
         print(f"Extracted {len(data['extracted'])} file(s), "
               f"{data['totals']['bytes']:,} bytes")

@@ -22,6 +22,13 @@ A probe returns `{available, path, version, note}` — the
 version is read from the tool itself (`--version`-style
 output) wherever the tool supports it.
 
+To see the whole registry with live probe results on the
+current machine, run `nar tools` (or
+`python3 scripts/nar-tools.py`; `--json` for the
+machine-readable view, `--available` to list only what
+probed present). It is a view, not a gate: readiness
+verdicts live in the doctor.
+
 ## Rules
 
 - A module that needs a tool probes the registry first and

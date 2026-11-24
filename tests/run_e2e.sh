@@ -194,6 +194,29 @@ if need compare-demo "$DEMO" && need compare-demo2 "$DEMO2"; then
   else bad "compare-demo" "expected deltas missing"; fi
 else skip "compare-demo" "demo pair absent"; fi
 
+if need compare-artifacts "$DEMO" && need compare-artifacts2 "$DEMO2"; then
+  rm -rf "$TMP/cmp-out"
+  $PY "$SCRIPTS/nar-compare.py" "$DEMO" "$DEMO2" --out "$TMP/cmp-out" > /dev/null 2>&1
+  ART=$($PY -c "
+import json, os
+d = '$TMP/cmp-out'
+need = ['comparison.json', 'feature-map.json', 'version-diff.md']
+if not all(os.path.isfile(os.path.join(d, n)) for n in need):
+    print('missing'); raise SystemExit
+fm = json.load(open(os.path.join(d, 'feature-map.json')))
+dims = fm['dimensions']
+assert 'android.permission.VIBRATE' in dims['permissions']['added']
+assert dims['dex']['totals_delta']['method_count'] == 2
+eps = dims['endpoints']
+assert eps.get('added_count', 0) + eps.get('removed_count', 0) >= 1
+md = open(os.path.join(d, 'version-diff.md')).read()
+assert 'VIBRATE' in md and 'heuristic' in md
+print('ok')" 2>/dev/null || echo missing)
+  if [ "$ART" = "ok" ]; then
+    ok "compare: --out artifacts carry the planted deltas"
+  else bad "compare-artifacts" "artifact assertions failed"; fi
+else skip "compare-artifacts" "demo pair absent"; fi
+
 # ---------------------------------------------------------------- perms
 if need perms-demo "$DEMO"; then
   $PY "$SCRIPTS/nar-perms.py" "$DEMO" > "$TMP/perms-demo.log" 2>&1
@@ -299,6 +322,19 @@ if need flutter-neg "$DEMO"; then
   else bad "flutter-negative" "NOT FLUTTER verdict missing"; fi
 else skip "flutter-negative" "demo fixture absent"; fi
 
+# Evolution Phase 4: the flutter_assets inventory is real —
+# hundreds of typed entries on the fixture, not a flag.
+if need flutter-assets "${FIX_FLUTTER:-}"; then
+  $PY "$SCRIPTS/nar-flutter.py" --json "$FIX_FLUTTER" > "$TMP/flutter-assets.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/flutter-assets.json'))
+inv=d.get('flutter_assets') or {}
+sys.exit(0 if inv.get('entry_count',0) > 100 and inv.get('by_type',{}).get('image',0) > 50 else 1)"; then
+    ok "flutter: real asset inventory (typed entries)"
+  else bad "flutter-assets" "asset inventory missing or implausibly small"; fi
+else skip "flutter-assets" "FIX_FLUTTER unset or absent"; fi
+
 # ---------------------------------------------------------------- godot
 if need godot "${FIX_GODOT_PCK:-}"; then
   $PY "$SCRIPTS/nar-godot.py" "$FIX_GODOT_PCK" > "$TMP/godot.log" 2>&1
@@ -306,6 +342,19 @@ if need godot "${FIX_GODOT_PCK:-}"; then
     ok "godot: pack listing + encryption flag"
   else bad "godot" "listing or encryption line missing"; fi
 else skip "godot" "FIX_GODOT_PCK unset or absent"; fi
+
+# Evolution Phase 4: pack entries carry resource types with
+# labeled evidence (header magic vs extension).
+if need godot-types "${FIX_GODOT_PCK:-}"; then
+  $PY "$SCRIPTS/nar-godot.py" --json "$FIX_GODOT_PCK" > "$TMP/godot-types.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/godot-types.json'))
+ft=(d.get('pck') or {}).get('file_types') or {}
+sys.exit(0 if ft.get('scene',0) > 10 and ft.get('texture',0) > 10 else 1)"; then
+    ok "godot: resource-type classification on pack entries"
+  else bad "godot-types" "file_types missing or implausibly small"; fi
+else skip "godot-types" "FIX_GODOT_PCK unset or absent"; fi
 
 # A loose Godot export (project ships under assets/ anchored by
 # project.binary, no .pck) must be counted, not reported as 0 files.
@@ -323,8 +372,9 @@ else skip "godot-loose" "FIX_GODOT_LOOSE unset or absent"; fi
 if need rn-pos "${FIX_RN:-}"; then
   $PY "$SCRIPTS/nar-rn.py" "$FIX_RN" > "$TMP/rn.log" 2>&1
   if contains "$TMP/rn.log" "Engine: Hermes" \
-     && contains "$TMP/rn.log" "Hermes bytecode version:"; then
-    ok "rn: Hermes detection + bytecode version"
+     && contains "$TMP/rn.log" "Hermes bytecode version:" \
+     && contains "$TMP/rn.log" "Architecture markers in bundle:"; then
+    ok "rn: Hermes detection + bytecode version + arch markers"
   else bad "rn-positive" "Hermes lines missing"; fi
 else skip "rn-positive" "FIX_RN unset or absent"; fi
 
@@ -334,6 +384,20 @@ if need rn-neg "$DEMO"; then
     ok "rn: clean negative on demo"
   else bad "rn-negative" "NOT REACT NATIVE verdict missing"; fi
 else skip "rn-negative" "demo fixture absent"; fi
+
+# Evolution Phase 4: the Addressables catalog parses into a
+# real inventory (locations + decoded entry table).
+if need unity-catalog "${FIX_UNITY_BUNDLES:-}"; then
+  $PY "$SCRIPTS/nar-unity.py" --json "${FIX_UNITY_BUNDLES}" > "$TMP/unity-catalog.json" 2>/dev/null
+  if $PY -c "
+import json,sys
+d=json.load(open('$TMP/unity-catalog.json'))
+c=d.get('addressables_catalog') or {}
+e=c.get('entries') or {}
+sys.exit(0 if c.get('location_count',0) > 1000 and e.get('decoded') and e.get('count',0) > 10000 else 1)"; then
+    ok "unity: Addressables catalog inventory (locations + entries)"
+  else bad "unity-catalog" "catalog inventory missing or implausibly small"; fi
+else skip "unity-catalog" "FIX_UNITY_BUNDLES unset or absent"; fi
 
 # Unity Addressables *.bundle files share the extension with RN
 # bundles; content validation must reject them as UnityFS, never
@@ -430,11 +494,146 @@ analyze_case() {
   else
     bad "analyze-$1" "report or required section missing"
   fi
+  # Brief-named companion projections (Evolution Phase 2;
+  # network companions added in Phase 5): all six files
+  # exist, parse, and carry their kind marker.
+  if [ -f "$TMP/analyze-$1/application.json" ] \
+     && [ -f "$TMP/analyze-$1/manifest.json" ] \
+     && [ -f "$TMP/analyze-$1/native-inventory.json" ] \
+     && [ -f "$TMP/analyze-$1/frameworks.json" ] \
+     && [ -f "$TMP/analyze-$1/network-analysis.json" ] \
+     && [ -f "$TMP/analyze-$1/api-architecture.json" ] \
+     && $PY - "$TMP/analyze-$1" <<'PYEOF'
+import json, os, sys
+base = sys.argv[1]
+expect = {"application.json": "application",
+          "manifest.json": "manifest",
+          "native-inventory.json": "native-inventory",
+          "frameworks.json": "frameworks",
+          "network-analysis.json": "network-analysis",
+          "api-architecture.json": "api-architecture"}
+for name, kind in expect.items():
+    d = json.load(open(os.path.join(base, name)))
+    if d.get("kind") != kind or d.get("projected") is not True:
+        sys.exit(1)
+sys.exit(0)
+PYEOF
+  then ok "analyze: $1 brief-named companions emitted"
+  else bad "analyze-$1-companions" "companion set missing or malformed"; fi
 }
 if need analyze-app "${FIX_APP:-}"; then analyze_case app "$FIX_APP"
 else skip "analyze-app" "FIX_APP unset or absent"; fi
 if need analyze-game "${FIX_GAME:-}"; then analyze_case game "$FIX_GAME"
 else skip "analyze-game" "FIX_GAME unset or absent"; fi
+
+# ------------------------------------------------- phase 8: correlations + case bundles
+if [ -f "$TMP/analyze-app/correlations.json" ]; then
+  CORR=$($PY -c "
+import json
+c = json.load(open('$TMP/analyze-app/correlations.json'))
+assert c['kind'] == 'correlations'
+n = c['counts']
+assert len(c['jni_bindings']) == n['jni_matched'] + n['jni_declaration_only'] + n['jni_export_only']
+assert 'deduplication' in c
+print('ok')" 2>/dev/null || echo bad)
+  if [ "$CORR" = "ok" ]; then
+    ok "analyze: correlations.json companion is consistent"
+  else bad "analyze-correlations" "correlations doc inconsistent"; fi
+else skip "analyze-correlations" "app case absent"; fi
+
+if [ -f "$TMP/analyze-app/case.json" ]; then
+  rm -f "$TMP/case-app.zip"; rm -rf "$TMP/case-app-imported"
+  BUNDLE_OK=0
+  if $PY "$SCRIPTS/nar-analyze.py" --export "$TMP/analyze-app" --bundle "$TMP/case-app.zip" >/dev/null 2>&1 \
+     && $PY "$SCRIPTS/nar-analyze.py" --import "$TMP/case-app.zip" --out "$TMP/case-app-imported" >/dev/null 2>&1; then
+    BUNDLE_OK=1
+  fi
+  TAMPER_OK=0
+  if [ "$BUNDLE_OK" = "1" ]; then
+    echo '{"tampered": true}' >> "$TMP/case-app-imported/report.json"
+    if ! $PY "$SCRIPTS/nar-analyze.py" --verify "$TMP/case-app-imported" >/dev/null 2>&1; then
+      TAMPER_OK=1
+    fi
+  fi
+  if [ "$BUNDLE_OK" = "1" ] && [ "$TAMPER_OK" = "1" ]; then
+    ok "analyze: case bundle round-trips and tampering fails verify"
+  else bad "analyze-case-bundle" "export/import/verify round-trip failed (ok=$BUNDLE_OK tamper=$TAMPER_OK)"; fi
+else skip "analyze-case-bundle" "app case absent"; fi
+
+# ------------------------------------------------- phase 9: reporting + CLI verbs
+# The unified CLI gains tools / identify / validate /
+# benchmark / case without touching the existing verbs.
+NAR="$SCRIPTS/nar.py"
+if $PY "$NAR" tools --json > "$TMP/cli-tools.json" 2>/dev/null \
+   && $PY - "$TMP/cli-tools.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+names = {t["name"] for t in d["tools"]}
+sys.exit(0 if d["tool"] == "nar-tools" and "jadx" in names
+         and d["summary"]["declared"] == len(d["tools"]) else 1)
+PYEOF
+then ok "cli: nar tools --json is the registry view"
+else bad "cli-tools" "nar tools --json failed or malformed"; fi
+
+for verb in tools identify validate benchmark case; do
+  if $PY "$NAR" "$verb" --help > /dev/null 2>&1; then
+    ok "cli: nar $verb --help exits 0"
+  else bad "cli-help-$verb" "nar $verb --help failed"; fi
+done
+
+if need cli-identify "$DEMO"; then
+  if $PY "$NAR" identify "$DEMO" --json 2>/dev/null \
+       | $PY -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["format"]=="apk" else 1)' \
+     && $PY "$NAR" validate "$DEMO" > /dev/null 2>&1; then
+    ok "cli: nar identify/validate alias nar-input on the demo"
+  else bad "cli-identify" "identify/validate alias mismatch"; fi
+else skip "cli-identify" "demo fixture absent"; fi
+
+if [ -f "$TMP/analyze-app/case.json" ]; then
+  if $PY "$NAR" case verify "$TMP/analyze-app" > /dev/null 2>&1 \
+     && $PY "$NAR" case export "$TMP/analyze-app" --bundle "$TMP/case-via-cli.zip" > /dev/null 2>&1 \
+     && [ -f "$TMP/case-via-cli.zip" ]; then
+    ok "cli: nar case verify/export route to nar-analyze"
+  else bad "cli-case" "nar case routing failed"; fi
+else skip "cli-case" "app case absent"; fi
+
+# Dashboard: a synthetic case with a native dependency graph
+# renders the graph section as inline SVG, still with zero
+# external references.
+$PY - "$TMP" <<'PYEOF'
+import json, os, sys
+case = os.path.join(sys.argv[1], "dash-case")
+os.makedirs(case)
+json.dump({"identity": {"package": "com.example.dash",
+                        "version_name": "1.0", "version_code": 1,
+                        "app_label": "Dash", "min_sdk": 24,
+                        "target_sdk": 34, "kind": "apk"},
+           "target_sha256": "c" * 64, "limitations": []},
+          open(os.path.join(case, "report.json"), "w"))
+json.dump({"dependency_graph": {"liba.so": ["libb.so"],
+                                "libb.so": ["liba.so", "libc.so"]}},
+          open(os.path.join(case, "native.json"), "w"))
+PYEOF
+if $PY "$NAR" report "$TMP/dash-case" > /dev/null 2>&1 \
+   && contains "$TMP/dash-case/report.html" "Native dependency graph" \
+   && contains "$TMP/dash-case/report.html" "<svg" \
+   && not_contains "$TMP/dash-case/report.html" "http://" \
+   && not_contains "$TMP/dash-case/report.html" "https://" \
+   && not_contains "$TMP/dash-case/report.html" "src=" \
+   && not_contains "$TMP/dash-case/report.html" "href="; then
+  ok "dashboard: dependency graph section, offline SVG, zero external refs"
+else bad "dashboard-graph" "graph section missing or external reference found"; fi
+
+# Benchmark smoke: a demo-only fixtures dir keeps the run
+# small; the runner must emit its JSON report.
+mkdir -p "$TMP/benchfix/demo"
+if need cli-benchmark "$DEMO"; then
+  cp "$DEMO" "$TMP/benchfix/demo/NarDemo.apk"
+  if NAR_FIXTURES="$TMP/benchfix" $PY "$NAR" benchmark --out "$TMP/bench.json" > /dev/null 2>&1 \
+     && $PY -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["runs"] else 1)' "$TMP/bench.json"; then
+    ok "cli: nar benchmark runs the benchmark runner (demo corpus)"
+  else bad "cli-benchmark" "benchmark smoke failed"; fi
+else skip "cli-benchmark" "demo fixture absent"; fi
 
 # ---------------------------------------------------------------- input (2.0)
 # Synthetic inputs are built by the harness itself: no binary

@@ -367,3 +367,49 @@ def validate_structure(path, verdict=None):
             f"extension {verdict['extension']} does not match the "
             f"identified format {fmt}")
     return notes
+
+
+def archive_structure_summary(path, fmt=None):
+    """Structural summary for AAR / JAR archives (Evolution
+    Phase 2): entry inventory facts — class entries, manifest
+    presence, and for AAR the classes.jar / R.txt / res/ /
+    jni/ layout. Returns None for other formats or when the
+    archive cannot be opened. Facts only: a missing part is
+    reported as absent, never inferred."""
+    fmt = fmt or identify(path)["format"]
+    if fmt not in ("aar", "jar"):
+        return None
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            summary = {
+                "format": fmt,
+                "entry_count": len(names),
+                "class_entries": sum(
+                    1 for n in names if n.endswith(".class")),
+                "has_manifest_mf": "META-INF/MANIFEST.MF" in names,
+            }
+            if fmt == "aar":
+                summary["has_android_manifest"] = \
+                    "AndroidManifest.xml" in names
+                summary["has_classes_jar"] = "classes.jar" in names
+                summary["classes_jar_class_count"] = None
+                if summary["has_classes_jar"]:
+                    try:
+                        import io
+                        inner = zipfile.ZipFile(
+                            io.BytesIO(zf.read("classes.jar")))
+                        summary["classes_jar_class_count"] = sum(
+                            1 for n in inner.namelist()
+                            if n.endswith(".class"))
+                    except zipfile.BadZipFile:
+                        summary["classes_jar_class_count"] = None
+                summary["has_r_txt"] = "R.txt" in names
+                summary["res_entries"] = sum(
+                    1 for n in names if n.startswith("res/"))
+                summary["jni_libraries"] = sorted(
+                    n for n in names
+                    if n.startswith("jni/") and n.endswith(".so"))
+            return summary
+    except (zipfile.BadZipFile, OSError):
+        return None

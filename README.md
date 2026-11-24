@@ -1,10 +1,10 @@
 # NAR Skill: Nirous Android Reversing
 
-# NAR 2.0 — NIROUS ANDROID INTELLIGENCE
+# NAR — NIROUS ANDROID INTELLIGENCE
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.4.0
+Version 2.5.0
 
 Research by Bakr Fayez
 
@@ -54,6 +54,22 @@ python3 scripts/nar.py analyze app.apk --out case/
 Every module also runs through the unified CLI
 (`python3 scripts/nar.py dex|native|network|security|engines …`)
 or standalone, exactly as in 1.x.
+
+## What's new in 2.5.0
+
+The TOTAL INTELLIGENCE EVOLUTION release: every audited
+gap in the 2.4.0 baseline closed or honestly re-labeled,
+each verified by executed tests (see CHANGELOG.md for
+the per-phase record). Highlights: the offline dashboard
+renders the native dependency graph; the unified CLI
+gains `tools`, `identify`, `validate`, `benchmark`, and
+`case` verbs; protection signatures ship as a versioned
+database; network output redacts credentials at the
+source; cases carry cross-module correlations,
+verification statuses, execution budgets, and
+export/import/verify bundles; benchmarks report labeled-
+corpus accuracy metrics and measured peak memory
+alongside timings.
 
 ## What's new in 2.0
 
@@ -238,40 +254,115 @@ nar-skill/
   CHANGELOG.md              Release history
   LICENSE                   MIT
   CONTRIBUTING.md           How to contribute
+  pyproject.toml            Package metadata + tool configuration
+  NAR_ARCHITECTURE.md       System architecture (2.0 program record)
+  NAR_AUDIT.md              Repository audit + reconciliation record
+  NAR_GAP_ANALYSIS.md       Capability baseline with per-area statuses
+  NAR_IMPLEMENTATION_PLAN.md  Phase plans and completion records
+  NAR_TEST_MATRIX.md        Executed test evidence matrix
   .gitignore                Keeps APKs and decoded output out of git
-  references/               One guide per topic (17 guides)
-    setup-and-doctor.md
-    triage-and-inventory.md
-    manifest-and-resources.md
-    dex-smali-and-decompile.md
-    native-libs-and-jni.md
-    unity-il2cpp.md
-    flutter-dart.md
-    react-native.md
+  references/               One guide per topic (24 guides)
     app-bundles.md
-    network-traffic.md
-    frida-scripts.md
-    legacy-analysis.md
-    modern-analysis.md
-    signatures-and-integrity.md
-    version-compare-and-feature-map.md
+    architecture.md
+    benchmarks.md
+    dex-smali-and-decompile.md
     dynamic-analysis.md
     evidence-workflows.md
+    flutter-dart.md
+    frida-scripts.md
+    legacy-analysis.md
+    manifest-and-resources.md
+    modern-analysis.md
+    native-libs-and-jni.md
+    network-traffic.md
+    output-schema.md
+    react-native.md
+    release-guide.md
+    safety-and-authorization.md
+    setup-and-doctor.md
+    signatures-and-integrity.md
+    tool-registry.md
+    triage-and-inventory.md
+    troubleshooting.md
+    unity-il2cpp.md
+    version-compare-and-feature-map.md
+  schemas/                  JSON schemas for the structured outputs (20 schemas)
+    api-architecture.schema.json
+    application.schema.json
+    assets.schema.json
+    case.schema.json
+    compare-feature-map.schema.json
+    comparison.schema.json
+    correlations.schema.json
+    endpoints.schema.json
+    engine.schema.json
+    execution-log.schema.json
+    fingerprint.schema.json
+    frameworks.schema.json
+    input.schema.json
+    manifest.schema.json
+    native-inventory.schema.json
+    network-analysis.schema.json
+    report.schema.json
+    runtime-session.schema.json
+    security-findings.schema.json
+    timeline.schema.json
   scripts/
+    nar.py                  Unified CLI over every module below
     nar-doctor.sh           Toolchain check (plain and --json)
-    nar-analyze.py          One-command full workup (report.md + report.json)
+    nar-analyze.py          Orchestrated case workup (case dir, staged, cached)
+    nar-input.py            Universal input identify / validate / extract / duplicates
     nar-triage.py           First-5-minutes APK triage (plain and --json)
     nar-strings.py          Ranked string extraction (plain and --json)
     nar-compare.py          Two-version diff (plain and --json)
     nar-perms.py            Permission and component audit (plain and --json)
+    nar-fingerprint.py      Normalized application fingerprint with provenance
+    nar-dex.py              Deep DEX intelligence: own parser + disassembler, jadx/baksmali adapters
+    nar-native.py           Deep native / ELF intelligence: dependencies, JNI map, hardening
+    nar-engines.py          Multi-indicator engine/framework detection with confidence
+    nar-unity.py            Unity deep dive (Mono / IL2CPP routing, bundles)
+    nar-unreal.py           Unreal deep dive (pak, IoStore, Zen + classic packages)
     nar-pak.py              Unreal .pak lister/extractor, pak format v1-7 + v10/v11 encoded index (plain and --json)
     nar-il2cpp.py           Unity IL2CPP locator + Il2CppDumper summary (plain and --json)
     nar-flutter.py          Flutter/Dart fingerprint (plain and --json)
     nar-godot.py            Godot .pck inspector (plain and --json)
     nar-rn.py               React Native bundle inspector (plain and --json)
+    nar-network.py          Static network intelligence: endpoints, services, NSC
+    nar-security.py         Structured security findings (NAR-SEC schema)
+    nar-assets.py           Typed asset inventory (types, sizes, hashes, duplicates)
+    nar-runtime.py          Runtime observation: adb + Frida adapters, session plans
+    nar-report.py           Offline HTML dashboard for a case directory
+    nar-tools.py            Tool-registry view: declared tools with live probes
+    registry.json           Capability registry: every orchestrated tool, probed
+    protection-signatures.json  Versioned protection-signature database (nar-triage, via narlib)
+    narlib/                 Shared core library used by the 2.0 modules
+      __init__.py
+      companions.py         Brief-named case companion projections
+      correlations.py       Cross-module correlation records (DEX/ELF/manifest/network joins)
+      dex.py                DEX parser (tables, hierarchies, call edges)
+      dexdis.py             DEX disassembler (oracle-verified listings)
+      dotnetmeta.py         .NET / Xamarin metadata reader
+      elf.py                ELF parser (headers, dynamic, symbols, hardening)
+      evidence.py           Evidence envelope + fact classes
+      formats.py            Magic + structure format identification
+      hashing.py            Streaming hashes
+      iostore.py            Unreal IoStore (UTOC/UCAS) parser
+      oat.py                OAT / VDEX / ODEX / ART parser
+      registry.py           Capability-registry reader
+      safearchive.py        Guarded archive extraction (slip/bomb/traversal)
+      signatures.py         Protection-signature database loader + validator
+      uasset.py             Classic Unreal package inspector
+      zen.py                Unreal Zen package parser
     frida/                  Frida observation scripts (Java, JNI, file, network)
+      file-io-observe.js
+      java-api-trace.js
+      jni-trace.js
+      network-observe.js
   tests/
     run_e2e.sh              End-to-end script test harness (fixtures via $NAR_FIXTURES)
+    unit/                   Pytest unit suite (parsers, guards, schemas, registry)
+    benchmarks/
+      run_benchmarks.py     Fixture-corpus benchmark runner (timings, accuracy metrics, peak memory)
   examples/
     sample-report.md        Filled report from a real triage run
     quick-triage.md         Example command session

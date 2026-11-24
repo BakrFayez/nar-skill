@@ -44,10 +44,21 @@ plus -- when the summary carries the UE5 version field
 one -- the UE5 1010 table layout. Packages flagged
 PKG_UnversionedProperties carry no tag stream to read
 (their properties need a .usmap mapping file, which is
-out of scope), and the UE5 tag-extension layouts (UE5
-object version 1011+) are reported as unsupported rather
-than guessed at. Encrypted content is never touched:
-this module parses plain package bytes only.
+out of scope). The UE5 tag-extension layouts are parsed
+for versioned packages: object version 1011 (property
+tag extensions: a trailing extension byte, plus an
+overridable-serialization payload when its flag is set)
+and 1012+ (complete type names: the type FName is
+replaced by an FPropertyTypeName node tree, the array
+index / GUID / extensions move behind a flags byte, and
+the bool value rides in that byte). No real package
+with a recorded UE5 object version >= 1011 exists in
+the corpus (shipped UE5 titles strip versions or use
+Zen), so those two layouts are verified against
+SYNTHETIC packages built to the documented format and
+are labeled synthetic wherever they are reported.
+Encrypted content is never touched: this module parses
+plain package bytes only.
 """
 import struct
 
@@ -57,8 +68,8 @@ FINAL_UE4 = 522
 # Assumed UE5 object version for an unversioned package whose
 # summary carries the UE5 version field (legacy file version
 # -8): the newest UE5 table layout this parser reads end to
-# end. Newer UE5 layouts change the property tag stream
-# (1011+), which this parser reports as unsupported anyway.
+# end. (Versioned packages recorded at 1011+ take the
+# tag-extension layouts in the property reader instead.)
 ASSUMED_UE5_FOR_UNVERSIONED = 1010
 
 # EPackageFlags (only the bits with a documented name).
@@ -761,15 +772,24 @@ class _Package:
                         "is out of scope",
             })
             return result
-        if self.eff5 >= 1011:
-            result.update({
-                "status": "unsupported",
-                "note": "UE5 object version >= 1011 serializes "
-                        "property tags with extension data / "
-                        "complete type names; that layout is "
-                        "not parsed by this build",
-            })
-            return result
+        if self.eff5 >= 1012:
+            result["tag_layout"] = "ue5-complete-type-name"
+            result["verification"] = (
+                "synthetic fixtures only: no real package "
+                "with a recorded UE5 object version >= 1011 "
+                "is available in the corpus, so this layout "
+                "is verified against synthetic packages built "
+                "to the documented format, not a real sample")
+        elif self.eff5 == 1011:
+            result["tag_layout"] = "ue5-tag-extension"
+            result["verification"] = (
+                "synthetic fixtures only: no real package "
+                "with a recorded UE5 object version >= 1011 "
+                "is available in the corpus, so this layout "
+                "is verified against synthetic packages built "
+                "to the documented format, not a real sample")
+        else:
+            result["tag_layout"] = "classic"
         size = exp["serial_size"]
         if size == 0:
             result.update({"status": "empty",
@@ -837,7 +857,130 @@ class _Package:
             tags.append(self._one_tag(r, blob, name, end, depth))
         raise UAssetError("tag stream ended without a None tag")
 
+    # -- UE5 tag-extension layouts (1011 / 1012+) ----------------------
+    # Layouts per the publicly documented format (the layout
+    # the open-source UAssetAPI reader implements). Verified
+    # on synthetic packages only — see the module docstring.
+
+    def _read_type_name(self, r):
+        """FPropertyTypeName: a flat node list; each node is
+        an FName plus an int32 inner (parameter) count, and
+        reading continues until the accumulated node budget
+        (1 + sum of inner counts) is consumed."""
+        nodes = []
+        total = 1
+        while len(nodes) < total:
+            nm = self._read_fname_soft(r)
+            if nm is None:
+                raise UAssetError(
+                    "type-name node outside the name table")
+            inner = r.i32()
+            if inner < 0 or inner > 64:
+                raise UAssetError(
+                    f"implausible type-name inner count {inner}")
+            nodes.append((nm, inner))
+            total += inner
+            if len(nodes) > 256:
+                raise UAssetError("type-name node cap reached")
+        return nodes
+
+    @staticmethod
+    def _type_name_subtree(nodes, i):
+        """Render the subtree rooted at nodes[i] as
+        Name<Param, ...>; returns (rendered, next index)."""
+        nm, inner = nodes[i]
+        parts = []
+        j = i + 1
+        for _ in range(inner):
+            sub, j = _Package._type_name_subtree(nodes, j)
+            parts.append(sub)
+        if parts:
+            return f"{nm}<{', '.join(parts)}>", j
+        return nm, j
+
+    @staticmethod
+    def _type_name_param_root(nodes, idx):
+        """Root name of the idx-th parameter of the root
+        node, or None when the root has fewer parameters."""
+        if not nodes or idx >= nodes[0][1]:
+            return None
+        j = 1
+        for k in range(nodes[0][1]):
+            if k == idx:
+                return nodes[j][0]
+            _, j = _Package._type_name_subtree(nodes, j)
+        return None
+
+    def _read_tag_extensions(self, r, tag):
+        """The 1011+ extension tail: one extension-mask
+        byte; when the overridable-information bit (0x02)
+        is set, an operation byte and a 4-byte boolean
+        follow."""
+        ext = r.u8()
+        tag["tag_extensions"] = ext
+        if ext & 0x02:
+            tag["override_operation"] = r.u8()
+            tag["experimental_overridable_logic"] = bool(r.i32())
+
+    def _one_tag_ctn(self, r, blob, name, end, depth):
+        """One tag in the >= 1012 complete-type-name layout:
+        FPropertyTypeName tree instead of the type FName,
+        then size, then a flags byte carrying the optional
+        array index / GUID / extensions, with the bool
+        value riding in the flags."""
+        nodes = self._read_type_name(r)
+        tname = nodes[0][0]
+        rendered, _ = self._type_name_subtree(nodes, 0)
+        size = r.i32()
+        if size < 0 or r.pos + size > end:
+            raise UAssetError(
+                f"tag {name!r} declares size {size} past the "
+                "export data")
+        flags = r.u8()
+        tag = {"name": name, "type": tname,
+               "type_name": rendered, "size": size,
+               "tag_flags": flags,
+               "array_index": r.i32() if flags & 0x01 else 0}
+        if tname == "StructProperty":
+            struct_name = self._type_name_param_root(nodes, 0)
+            if struct_name is None:
+                raise UAssetError(
+                    "struct tag carries no struct type name")
+            tag["struct_name"] = struct_name
+        elif tname == "BoolProperty":
+            tag["bool_value"] = bool(flags & 0x10)
+        elif tname in ("ByteProperty", "EnumProperty"):
+            enum_name = self._type_name_param_root(nodes, 0)
+            if enum_name is not None:
+                tag["enum_name"] = enum_name
+        elif tname == "ArrayProperty":
+            if nodes[0][1] >= 1:
+                inner, _ = self._type_name_subtree(nodes, 1)
+                tag["inner_type"] = inner
+        if flags & 0x08:
+            tag["binary_or_native_serialize"] = True
+        if flags & 0x20:
+            tag["skipped_serialize"] = True
+        if flags & 0x02:
+            tag["property_guid"] = r.take(16).hex()
+        if flags & 0x04:
+            self._read_tag_extensions(r, tag)
+        data_start = r.pos
+        data_end = data_start + size
+        value = self._decode_value(tag, blob, data_start, size)
+        if value is not _UNSET:
+            tag["value"] = value
+        if depth < MAX_TAG_DEPTH and size > 0:
+            children = self._nested_tags(tag, blob, data_start,
+                                         data_end, depth)
+            if children is not None:
+                tag["children"] = children
+        r.pos = data_end
+        return tag
+
     def _one_tag(self, r, blob, name, end, depth):
+        if self.eff5 >= 1012:
+            return self._one_tag_ctn(r, blob, name, end, depth)
         tname = self._read_fname_soft(r)
         if tname is None:
             raise UAssetError(
@@ -875,6 +1018,12 @@ class _Package:
             # then the 16-byte GUID itself when flagged.
             if r.u8():
                 tag["property_guid"] = r.take(16).hex()
+        if self.eff5 == 1011:
+            # VER_UE5_PROPERTY_TAG_EXTENSION: at exactly
+            # 1011 the extension tail is unconditional
+            # (from 1012 on it sits behind the flags byte's
+            # HasPropertyExtensions bit instead).
+            self._read_tag_extensions(r, tag)
         data_start = r.pos
         data_end = data_start + size
         value = self._decode_value(tag, blob, data_start, size)

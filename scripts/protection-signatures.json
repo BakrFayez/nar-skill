@@ -1,0 +1,290 @@
+{
+ "database": "NAR protection signatures",
+ "database_version": "1.0.0",
+ "schema": 1,
+ "comment": "Protection-system signatures for nar-triage, extracted from code into this versioned data artifact (Evolution Phase 5). Detection and reporting ONLY: a hit means protection artifacts or protection code ship inside the package; it says nothing about whether a check passed at runtime, and NAR never uses this to bypass anything. A finding is attributed to a named product only when a marker is dedicated to that product (a protector runtime library, its stub application class, or its SDK package); generic names that collide with ordinary libraries are never used as markers (no bare libshell.so, no bare frida). Protection kinds with no reliable static marker (DexGuard string encryption, OLLVM control-flow flattening, in-code signature checks, RASP runtimes renamed per build) are deliberately absent: triage stays silent there and the triage guide says so. DEX patterns are ASCII class/package strings from the shipped runtimes; the Widevine UUID forms are hex because three of the four are binary. Bump database_version on any signature change.",
+ "categories": [
+  {
+   "key": "commercial_packer",
+   "label": "Commercial packer / VM protector"
+  },
+  {
+   "key": "obfuscation",
+   "label": "Obfuscation"
+  },
+  {
+   "key": "anti_tamper_rasp",
+   "label": "Anti-tamper / RASP"
+  },
+  {
+   "key": "network_protection",
+   "label": "Network protection"
+  },
+  {
+   "key": "licensing_drm",
+   "label": "Licensing / DRM"
+  },
+  {
+   "key": "code_asset_encryption",
+   "label": "Code / asset encryption"
+  },
+  {
+   "key": "native_hardening",
+   "label": "Native hardening"
+  }
+ ],
+ "packers": [
+  {
+   "name": "Pairip (Google)",
+   "note": "VM-based protection. The runtime library name is dedicated, and the runtime classes (application, license check) live under com/pairip/.",
+   "so_matchers": [
+    {
+     "kind": "exact",
+     "value": "libpairipcore.so"
+    }
+   ],
+   "dex_patterns": [
+    "com/pairip/"
+   ],
+   "entry_substrings": []
+  },
+  {
+   "name": "Tencent Legu",
+   "note": "Shell libraries are versioned (libshella-2.x.so, libshellx-*.so); the stub application package is com.tencent.StubShell. com.tencent.bugly is a crash reporter, not Legu, and is deliberately absent.",
+   "so_matchers": [
+    {
+     "kind": "prefix",
+     "value": "libshella"
+    },
+    {
+     "kind": "prefix",
+     "value": "libshellx"
+    }
+   ],
+   "dex_patterns": [
+    "com/tencent/StubShell"
+   ],
+   "entry_substrings": []
+  },
+  {
+   "name": "Qihoo 360 Jiagu",
+   "note": "libjiagu*.so (libjiagu.so, libjiagu_art.so, libjiagu_x86.so); the stub application is com.stub.StubApp.",
+   "so_matchers": [
+    {
+     "kind": "prefix",
+     "value": "libjiagu"
+    }
+   ],
+   "dex_patterns": [
+    "com/stub/StubApp"
+   ],
+   "entry_substrings": []
+  },
+  {
+   "name": "Bangcle SecShell",
+   "note": "Also sold as SecNeo: libsecexe.so / libsecmain.so / libSecShell*.so; runtime classes under com/secshell/SecShell.",
+   "so_matchers": [
+    {
+     "kind": "exact",
+     "value": "libsecexe.so"
+    },
+    {
+     "kind": "exact",
+     "value": "libsecmain.so"
+    },
+    {
+     "kind": "prefix",
+     "value": "libsecshell"
+    }
+   ],
+   "dex_patterns": [
+    "com/secshell/SecShell"
+   ],
+   "entry_substrings": []
+  },
+  {
+   "name": "Alibaba SecurityGuard",
+   "note": "SecurityGuard / Mobisec: versioned libsgmainso-*.so (the prefix matcher covers libsgmain.so too), libmobisec.so; the SecurityGuard SDK package is com/alibaba/wireless/security (the vendor's ordinary app packages are not markers).",
+   "so_matchers": [
+    {
+     "kind": "prefix",
+     "value": "libsgmain"
+    },
+    {
+     "kind": "exact",
+     "value": "libmobisec.so"
+    }
+   ],
+   "dex_patterns": [
+    "com/alibaba/wireless/security"
+   ],
+   "entry_substrings": []
+  },
+  {
+   "name": "Baidu Protect",
+   "note": "libbaiduprotect*.so; wrapper package com/baidu/protect.",
+   "so_matchers": [
+    {
+     "kind": "prefix",
+     "value": "libbaiduprotect"
+    }
+   ],
+   "dex_patterns": [
+    "com/baidu/protect"
+   ],
+   "entry_substrings": []
+  },
+  {
+   "name": "NetEase YiDun",
+   "note": "Wrapper library libnesec.so; wrapper package com/netease/nis/wrapper.",
+   "so_matchers": [
+    {
+     "kind": "exact",
+     "value": "libnesec.so"
+    }
+   ],
+   "dex_patterns": [
+    "com/netease/nis/wrapper"
+   ],
+   "entry_substrings": []
+  },
+  {
+   "name": "iJiami",
+   "note": "libexec.so / libexecmain.so, an ijiami.dat payload in assets, and the shell application class (shipped under both the plain and the obfuscated s.h.e.l.l package).",
+   "so_matchers": [
+    {
+     "kind": "exact",
+     "value": "libexec.so"
+    },
+    {
+     "kind": "exact",
+     "value": "libexecmain.so"
+    }
+   ],
+   "dex_patterns": [
+    "com/shell/SuperApplication",
+    "s/h/e/l/l/SuperApplication"
+   ],
+   "entry_substrings": [
+    "ijiami.dat"
+   ]
+  },
+  {
+   "name": "DexProtector",
+   "note": "Licel: the runtime library carries the product name (libDexProtector.so, case varies by build).",
+   "so_matchers": [
+    {
+     "kind": "contains",
+     "value": "dexprotector"
+    }
+   ],
+   "dex_patterns": [],
+   "entry_substrings": []
+  },
+  {
+   "name": "LIAPP",
+   "note": "Lockin Company: libLIAPP.so.",
+   "so_matchers": [
+    {
+     "kind": "exact",
+     "value": "libliapp.so"
+    }
+   ],
+   "dex_patterns": [],
+   "entry_substrings": []
+  },
+  {
+   "name": "AppSealing",
+   "note": "INKA Entworks: libAppSealing.so.",
+   "so_matchers": [
+    {
+     "kind": "exact",
+     "value": "libappsealing.so"
+    }
+   ],
+   "dex_patterns": [],
+   "entry_substrings": []
+  }
+ ],
+ "rasp_dex_markers": [
+  {
+   "name": "Root detection (RootBeer library)",
+   "dex_patterns": [
+    "com/scottyab/rootbeer"
+   ],
+   "note": null
+  },
+  {
+   "name": "Root-related markers (su / Magisk / Superuser)",
+   "dex_patterns": [
+    "com/topjohnwu/magisk",
+    "eu/chainfire/supersu",
+    "com/noshufou/android/su",
+    "com/koushikdutta/superuser",
+    "/system/app/Superuser.apk",
+    "/system/xbin/su",
+    "/system/bin/su"
+   ],
+   "note": "Strings checked by root detectors; the same paths can also be probed by apps that offer root features."
+  },
+  {
+   "name": "Emulator detection markers",
+   "dex_patterns": [
+    "/dev/qemu_pipe",
+    "qemu_pipe",
+    "ranchu",
+    "qemu.hw.mainkeys"
+   ],
+   "note": null
+  },
+  {
+   "name": "Debugger detection markers",
+   "dex_patterns": [
+    "isDebuggerConnected",
+    "TracerPid"
+   ],
+   "note": null
+  },
+  {
+   "name": "Hook framework markers (Frida / Xposed / Substrate)",
+   "dex_patterns": [
+    "frida-server",
+    "frida-agent",
+    "gum-js-loop",
+    "de/robv/android/xposed",
+    "com/saurik/substrate"
+   ],
+   "note": null
+  },
+  {
+   "name": "SafetyNet attestation (legacy)",
+   "dex_patterns": [
+    "com/google/android/gms/safetynet"
+   ],
+   "note": "Client-side presence only: the attestation verdict is made by Google's servers, never inside the APK."
+  }
+ ],
+ "licensing_dex_markers": [
+  {
+   "name": "Play License Verification (LVL)",
+   "dex_patterns": [
+    "com/android/vending/licensing"
+   ],
+   "note": null
+  }
+ ],
+ "widevine": {
+  "comment": "The Widevine MediaDrm scheme UUID edef8ba9-79d6-4ace-a3c8-27dcd51d21ed reaches a DEX as the dashed string, as the raw 16 UUID bytes, or as the two 64-bit halves stored little-endian by compiled new UUID(msb, lsb) code. The finding fires on the string form, the raw bytes, or BOTH halves in the SAME dex; one half alone is not evidence. A bare MediaDrm reference is generic Android API use, never a marker.",
+  "uuid_string_hex": "65646566386261392d373964362d346163652d613363382d323764636435316432316564",
+  "uuid_raw_hex": "edef8ba979d64acea3c827dcd51d21ed",
+  "uuid_msb_le_hex": "ce4ad679a98befed",
+  "uuid_lsb_le_hex": "ed211dd5dc27c8a3"
+ },
+ "pin_constant_pattern": "sha256/[A-Za-z0-9+/]{40,}={0,2}",
+ "stub_descriptor_pattern": "^L[A-Za-z0-9/$]*StubApp;$",
+ "thresholds": {
+  "stub_dex_max_bytes": 100000,
+  "stub_app_min_bytes": 2000000,
+  "stub_payload_min_bytes": 1000000
+ }
+}

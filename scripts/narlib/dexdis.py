@@ -694,6 +694,76 @@ def _walk(base, dex, res, units, insns_size, instructions,
     return result
 
 
+_EXIT_MNEMONICS = ("return-void", "return", "return-wide",
+                   "return-object", "throw")
+
+
+def block_summary(dex, code_off):
+    """Control-flow block summary for one method (Evolution
+    Phase 3): block boundaries from branch targets, switch
+    case targets, fallthrough after conditional branches,
+    and try/catch boundaries — computed FROM the decoded
+    instruction list, which is not modified. Returns
+    {status, block_count, blocks: [{start, end,
+    instructions}], branch_edges: [[from, to]], tries}.
+    A failed decode yields the decode's failure status."""
+    result = disassemble_method(dex, code_off)
+    if result.get("status") != "ok":
+        return {"status": result.get("status", "failed"),
+                "error": result.get("error")}
+    insns = result["instructions"]
+    insns_size = result["insns_size"]
+    real = [i for i in insns if not i.get("is_payload")]
+    payload_by_addr = {i["addr"]: i["payload"] for i in insns
+                       if i.get("is_payload")}
+    leaders = {0}
+    edges = set()
+    for idx, insn in enumerate(real):
+        addr = insn["addr"]
+        mnemonic = insn["mnemonic"]
+        nxt = real[idx + 1]["addr"] if idx + 1 < len(real) \
+            else insns_size
+        target = insn.get("target")
+        if mnemonic in ("packed-switch", "sparse-switch"):
+            payload = payload_by_addr.get(target) or {}
+            for off in payload.get("target_offsets", []):
+                leaders.add(addr + off)
+                edges.add((addr, addr + off))
+            leaders.add(nxt)
+        elif target is not None:
+            leaders.add(target)
+            edges.add((addr, target))
+            if not mnemonic.startswith("goto"):
+                leaders.add(nxt)
+        elif mnemonic in _EXIT_MNEMONICS:
+            leaders.add(nxt)
+    tries = []
+    try:
+        info = dex.code_item_info(code_off)
+    except Exception:
+        info = None
+    if info:
+        for t in info["tries"]:
+            leaders.add(t["start_addr"])
+            leaders.add(t["end_addr"])
+            for h in t["handlers"]:
+                leaders.add(h["addr"])
+            if t["catch_all_addr"] is not None:
+                leaders.add(t["catch_all_addr"])
+            tries.append(t)
+    starts = sorted(a for a in leaders if 0 <= a < insns_size)
+    blocks = []
+    for j, start in enumerate(starts):
+        end = starts[j + 1] if j + 1 < len(starts) else insns_size
+        count = sum(1 for i in real if start <= i["addr"] < end)
+        blocks.append({"start": start, "end": end,
+                       "instructions": count})
+    return {"status": "ok", "block_count": len(blocks),
+            "blocks": blocks,
+            "branch_edges": sorted([list(e) for e in edges]),
+            "tries": tries}
+
+
 def _ins(addr, op, mnemonic, operands, ref):
     entry = {"addr": addr, "opcode": op, "mnemonic": mnemonic,
              "operands": operands,

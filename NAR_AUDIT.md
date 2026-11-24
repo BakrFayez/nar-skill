@@ -214,3 +214,147 @@ inventory, a stronger comparison engine, an orchestrator with
 registry + case workspace, standardized evidence outputs, an
 HTML dashboard, a unified CLI, unit tests, and CI — without
 rewriting or breaking any existing script.
+
+## 7. Reconciliation (2026-11-24) — Evolution Phase 0
+
+This audit was written against v1.1.0 before the 2.0
+program. The TOTAL INTELLIGENCE EVOLUTION program's
+Phase 0 re-audited the shipped v2.4.0 tree (local main
+c31c072; executed baseline: pytest 144/144, e2e harness
+47/47 with 0 skipped, doctor READY, all 23 unified-CLI
+subcommands help-clean, one orchestrated case executed
+end to end with its stage cache verified on re-run).
+Sections 1–6 above stand as the historical v1.1.0 audit;
+this section reconciles them.
+
+### 7.1 Disposition of the §4 defect list
+
+- #1 Markdown raw-JSON rendering — FIXED in 2.0
+  (recorded in place above); no recurrence in the
+  2.1.0–2.4.0 sweeps.
+- #2 unified CLI, #3 capability registry, #4 case
+  workspace/resume, #5 evidence schema + `schemas/`,
+  #10 security findings engine, #11 asset inventory,
+  #14 HTML dashboard, #15 unit tests + CI + pyproject —
+  all CLOSED by the 2.0 program and still present and
+  green at 2.4.0.
+- #6 engine detection, #7 DEX intelligence, #8 native
+  intelligence, #9 network intelligence, #12 comparison,
+  #16 signature-based input + safe extraction — CLOSED
+  as designed in 2.0; residual sub-gaps found by this
+  reconciliation are listed in §7.2.
+- #13 runtime subsystem — CLOSED beyond the audit's
+  expectation: the module exists and its device paths
+  were verified live on an emulator (API 26) in
+  2.1.0–2.4.0, attach and spawn; physical-device paths
+  remain IMPLEMENTED_BUT_UNVERIFIED.
+- #17 duplicated helpers — contained as designed:
+  2.0+ modules share narlib; the 1.x scripts remain
+  standalone on purpose (compatibility surface).
+- #18 `__pycache__` in tree — still occurs after doctor
+  runs; gitignored. Cosmetic; carried into the
+  evolution plan (Phase 1) as a tidy item, not a defect.
+
+### 7.2 New findings of this reconciliation
+
+Documentation defects (docs claim more, or other, than
+the code ships):
+
+1. README "Repo structure" block still describes the
+   1.x layout: it lists 17 reference guides (the tree
+   has 22; architecture, output-schema,
+   safety-and-authorization, tool-registry and
+   troubleshooting are missing from the list) and its
+   scripts listing omits every 2.0 module (nar.py,
+   nar-input, nar-fingerprint, nar-engines, nar-unity,
+   nar-unreal, nar-dex, nar-native, nar-network,
+   nar-security, nar-assets, nar-runtime, nar-report)
+   and narlib; its tests listing omits tests/unit and
+   tests/benchmarks. Status: BROKEN (documentation).
+2. The 2.0 implementation plan promised case companions
+   named application.json, permissions.json,
+   dependencies.json, classes.json and methods.json at
+   the case root. The shipped orchestrator emits a
+   different, documented set (references/output-schema.md
+   matches the code): classes/methods live under dex/,
+   permission data lives in report.json, and no
+   application.json exists (fingerprint.json covers the
+   role). A naming divergence between plan and product,
+   not a functional gap; the evolution plan (Phase 2)
+   closes it by emitting the brief-named set.
+3. README and pyproject carry the headline "NAR 2.0 —
+   NIROUS ANDROID INTELLIGENCE" at version 2.4.0.
+   Cosmetic identity staleness, shipped unchanged
+   through 2.1.0–2.4.0; recorded, not silently edited.
+
+Code-verified gaps (each reproduced or grep-proven in
+this pass; all are carried into the evolution plan with
+acceptance tests):
+
+4. No cross-module correlation engine: the string
+   "correlat" appears nowhere in scripts/. Correlation
+   exists only as merged summaries in report.json and
+   as joins inside single modules (nar-native's JNI map,
+   nar-dex's native declarations). The evidence
+   envelope (narlib/evidence.py) carries fact classes
+   and confidence, but no verification-status field
+   with the CONFIRMED / STRONGLY_INDICATED / POTENTIAL /
+   UNVERIFIED / CONTRADICTED vocabulary.
+5. narlib/dex.py parses no try/catch handler tables
+   and no debug info; narlib/dexdis.py produces
+   listings without a control-flow graph.
+6. narlib/elf.py parses no relocation tables; compiler
+   fingerprints beyond Rust markers (triage) do not
+   exist.
+7. nar-network applies no credential/token redaction
+   pass to its output (redaction is guide-level only);
+   its three brief-named documents ship as one
+   endpoints document.
+8. nar-assets extracts no audio metadata (duration,
+   channels, sample rate); image dimensions only.
+   Asset dependency relationships are container
+   cross-references, not graphs.
+9. nar-rn has no source-map, native-module,
+   TurboModule or Fabric inventory. nar-unity treats
+   Addressables as a catalog-presence flag (no catalog
+   parse); nar-flutter's asset handling is a presence
+   flag. nar-godot classifies pack contents at listing
+   level; GDScript bytecode and scene/resource parsing
+   are orchestrated external tools, not narlib parsers.
+10. Protection signatures are embedded in nar-triage
+    code; there is no versioned signature-database
+    artifact.
+11. The case workspace has resume + hash-keyed stage
+    cache, but no case export / import / verify
+    commands, no execution budgets, and no retry or
+    cancellation policy; the stage pipeline is fixed,
+    not adaptive.
+12. tests/benchmarks/run_benchmarks.py measures module
+    wall-times on fixture roles only; it computes no
+    accuracy, precision/recall or false-positive/
+    negative metrics (accuracy evidence lives in this
+    matrix instead).
+13. The unified CLI has 23 working subcommands, but
+    the brief's target families `tools`, `benchmark`,
+    `case`, `validate`, `identify` and `info` are not
+    commands (their functions are reachable through
+    doctor, `nar input identify/validate`, and the
+    tests/benchmarks runner).
+
+Environment-blocked (unchanged by any code work):
+physical-device runtime verification (no device is
+attached to this VM); CI workflow changes (the release
+push path lacks the workflows permission — workflow
+edits route through the GitHub web UI) and CI
+execution itself (runs on GitHub only, on push);
+Oodle decompression (proprietary SDK — UNSUPPORTED by
+design); a real classic-format UE5 package with a
+recorded FileVersionUE5 (evidence-negative across five
+examined UE5 titles; the row stays open by evidence,
+not by omission); Zen pre-5.3 / Early Access layouts
+and recorded Zen versioning on real data (no obtainable
+sample; synthetic-verified only); OAT beyond API 26
+x86_64 and real Dalvik-ODEX / CDEX files (synthetic
+level; CDEX payloads are identified, not decoded);
+Wear OS / APEX / instant-app samples (none obtainable;
+rows stay labeled unexercised).

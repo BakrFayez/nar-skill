@@ -2,6 +2,185 @@
 
 ## Unreleased
 
+## 2.5.0 (2026-11-24)
+
+- Release preparation (evolution Phase 12): version
+  bumped to 2.5.0 in all 18 version-bearing locations
+  (consistency-tested); the Unreleased evolution
+  entries consolidated into this section; a release
+  guide (references/release-guide.md) now documents
+  the 2.x release practice end to end — battery, the
+  18-location bump, changelog discipline, pre-push
+  greps, the push manifest excluding
+  .github/workflows, the sync record, the ZIP, and
+  the web-UI release step. This section is the
+  complete record of the TOTAL INTELLIGENCE EVOLUTION
+  program (Phases 0–12) over the 2.4.0 baseline.
+  Publication remains the owner's explicit decision.
+- Testing + benchmarks (evolution Phase 11): the
+  benchmark runner now computes accuracy metrics from
+  the labeled local corpora and measures peak memory,
+  with methodology in the new benchmarks guide
+  (references/benchmarks.md). Measured on the local
+  corpora (role labels only): protection attribution
+  precision 1.0 / recall 1.0 with zero false positives
+  on the 9-app clean set (real corpus); engine-detection
+  recall 1.0 on 6 labeled real fixtures and accuracy
+  1.0 on the 8-fixture synthetic framework corpus
+  (reported separately); format-identification accuracy
+  1.0 on 10 labeled fixtures; real-corpus engine
+  precision is NOT RUN (no labeled engine-negative real
+  corpus exists). Peak memory, measured: a full
+  nar-analyze run on the largest local fixture
+  (273,366,540 bytes) peaked at 1,887,338,496 bytes RSS
+  for the nar-analyze process (stage subprocess peaks
+  excluded), 304.69 s wall. A new parser mutation corpus
+  (truncated / corrupted DEX, ELF, PAK, IoStore TOC and
+  Zen inputs) proves each parser fails with its named
+  error type; the corpus caught two real defects, fixed
+  in this phase: narlib.dex let an inflated header table
+  leak a bare struct.error from the string-table reader
+  (header table extents are now validated at
+  construction), and narlib.elf silently treated an
+  invalid EI_CLASS as 32-bit (now an ElfError).
+- Skill + integrations (evolution Phase 10): SKILL.md
+  routing now covers the Phase 1–9 surface (companions
+  incl. correlations.json, network redaction, the
+  versioned protection-signature database, the
+  `nar tools` / `identify` / `validate` / `benchmark` /
+  `case` verbs, orchestration budgets, case
+  export/import/verify, runtime session records, audio
+  metadata, compare artifacts, Addressables catalogs,
+  RN source maps, Flutter asset inventories, Godot
+  resource types, DEX try/catch + Kotlin @Metadata, ELF
+  relocations). The deferred full guide-vs-code audit
+  ran over all 22 guides + SKILL.md: zero missing link
+  targets, zero missing script files, zero
+  misattributed nar flags, zero unknown nar verbs; the
+  51 flags no nar script defines are all external-tool
+  flags in named-tool contexts. One stale capability
+  claim fixed (the DEX guide's scope limit now reflects
+  try/catch tables, debug-info presence and the block
+  summary); the dynamic-analysis guide documents
+  session records and the tool-registry guide documents
+  `nar tools`. The audit's durable checks are encoded
+  as unit tests, including programmatic SKILL.md
+  frontmatter + plugin.json validation. The capability
+  registry needed no entry changes in Phases 9–10
+  (verified by its consistency tests).
+- Reporting + CLI (evolution Phase 9): the offline
+  dashboard renders the native dependency graph from
+  native.json as an inline SVG section (deterministic
+  layered layout, escaped labels, zero external
+  references; oversized graphs truncate with a note).
+  The unified CLI gains five verbs over existing
+  capability, with all existing verbs untouched:
+  `nar tools` (tool-registry view with live probes,
+  via the new nar-tools.py), `nar identify` and
+  `nar validate` (nar-input aliases), `nar benchmark`
+  (the fixture-corpus benchmark runner), and `nar case`
+  (export / import / verify routing to nar-analyze's
+  case operations).
+- Evidence + orchestration (evolution Phase 8):
+  verification_status is now carried by fingerprint
+  properties (mapped from fact class) and by the new
+  correlations.json case companion — explicit
+  cross-module joins (DEX native declarations ↔ ELF
+  JNI exports, manifest components ↔ DEX entry
+  points, endpoints ↔ referencing classes, network
+  libraries ↔ DEX presence) with same-evidence
+  deduplication; JNI entries are also embedded in
+  native.json. nar-analyze gains orchestration budgets
+  (--stage-timeout / --total-budget, recorded as
+  budget-exceeded stops in the execution log) and case
+  export / import / verify: a case directory travels
+  as one archive with a per-file hash manifest, and
+  verify re-checks the input hash, the manifest, and
+  the stage-cache integrity keys.
+- Assets + comparison (evolution Phase 7): nar-assets
+  reads audio metadata from WAV / OGG (Vorbis, Opus) /
+  MP3 headers — channels, sample rate, and duration
+  where the header makes it computable (MP3 estimates
+  are labeled as estimates); other formats report
+  unmeasured instead of guessing. nar-compare --out DIR
+  now writes comparison.json, feature-map.json (a
+  schema-validated per-dimension projection) and
+  version-diff.md, with signing-file churn separated
+  from content changes under a labeled build-noise
+  heuristic. The phase also fixed the extended endpoint
+  diff, which had silently reported 0/0 on every pair.
+- Runtime + security intelligence (evolution Phase 6):
+  nar-runtime plan/status can persist structured session
+  records (runtime-session.json: device identity, tool
+  probes, start/stop, events, errors) into a case
+  workspace via --session-out. The jni-trace
+  RegisterNatives event path is verified live on the
+  API 26 emulator (attach + spawn) against a
+  dynamic-registration fixture — the live run also caught
+  and fixed a Frida 17 API removal in the script's
+  per-method read. Security findings now carry a
+  verification_status (CONFIRMED / STRONGLY_INDICATED /
+  POTENTIAL / UNVERIFIED / CONTRADICTED); findings
+  written before the field existed still validate.
+- Protection + network intelligence (evolution Phase 5):
+  the protection signatures moved from code into a
+  versioned database (scripts/protection-signatures.json,
+  database v1.0.0) with a validating loader and doctor
+  visibility — detection behavior is unchanged (pinned
+  by a canonical digest and byte-identical triage output
+  on the protection fixtures). nar-network now redacts
+  credential values in endpoint URLs before any output
+  (counts reported, raw values never written), and case
+  runs emit two new schema-validated companions:
+  network-analysis.json and api-architecture.json.
+- Engine intelligence depth (evolution Phase 4): Unity
+  Addressables catalogs parse into a full inventory
+  (locations, providers, resource types, decoded entry
+  table — verified on a real catalog with thousands of
+  locations); React Native reports shipped source maps
+  and a native-module inventory (TurboModule / Fabric /
+  NativeModules names for text bundles, architecture
+  markers for Hermes bytecode); Flutter inventories
+  flutter_assets with typed entries instead of a
+  presence flag; Godot pack listings classify every
+  entry's resource type with labeled evidence (content
+  header over extension; encrypted entries never typed);
+  Unreal classic-package parsing adds the UE5
+  tag-extension property layouts (object versions 1011
+  and 1012+), verified on synthetic packages and labeled
+  synthetic, as no real sample records those versions.
+- Android intelligence depth (evolution Phase 3): DEX
+  analysis now parses try/catch handler tables and
+  debug-info presence (cross-checked exactly against the
+  SDK's dexdump), the disassembler adds a control-flow
+  block summary without changing its verified listings,
+  ELF analysis parses relocation tables (cross-checked
+  against readelf) and reports compiler fingerprints from
+  the .comment section as observed evidence, and Kotlin
+  @Metadata payloads are parsed — metadata version and
+  declaration kind per class — on real-world Kotlin apps.
+- Case companions completed (evolution Phase 2): the
+  orchestrated case now also emits application.json,
+  manifest.json, native-inventory.json and frameworks.json,
+  projected from the same run's stage data and validated
+  against new shipped schemas (a degraded source stage is
+  reported explicitly, never as an empty success).
+  Fingerprints report the compile SDK when the badging
+  reader exposes it, and input validation adds structural
+  summaries for AAR and JAR archives (entry and class
+  counts, manifest presence, library layout facts).
+- Documentation truth guards (evolution Phase 1): the
+  README repository-structure block now matches the real
+  tree (22 reference guides, all current modules and the
+  shared library, unit + benchmark test suites), and new
+  automated checks keep it that way — a unit test asserts
+  every script, library module, guide and schema is named
+  in the block, that skill routing targets exist, and
+  that all version-bearing files agree (a planted
+  mismatch is caught). The toolchain check no longer
+  leaves bytecode caches in the tree, and the brand
+  headline no longer embeds a version number.
+
 ## 2.4.0 (2026-11-24)
 
 - Unreal Zen packages: Zen (IoStore-native) package

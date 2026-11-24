@@ -7,7 +7,12 @@ nar-network (and nar-dex with --deep) and emits findings in
 the section 9.5 schema: id (NAR-SEC-NNN), title, severity,
 confidence, affected component, file path, evidence,
 explanation, potential impact, reproduction, remediation,
-and false-positive considerations. Severity is assigned
+and false-positive considerations. Each finding also
+carries a verification_status (CONFIRMED for facts read
+directly off the target, STRONGLY_INDICATED for conclusions
+from classified patterns, POTENTIAL for review prompts) —
+kept separate from confidence, and never upgraded beyond
+what the static evidence supports. Severity is assigned
 conservatively and every finding names the evidence it
 rests on; absences that are commonly benign are reported
 as informational with their false-positive notes, and
@@ -57,13 +62,20 @@ class Findings:
 
     def add(self, title, severity, confidence, component, path,
             evidence_text, explanation, impact, remediation,
-            false_positives=""):
+            false_positives="",
+            verification_status="UNVERIFIED"):
+        # verification_status (Phase 6): CONFIRMED only for
+        # facts read directly off the target (manifest
+        # attributes, signer verdicts, permission sets);
+        # STRONGLY_INDICATED for conclusions drawn from
+        # classified patterns; POTENTIAL for review prompts.
         self.items.append(ev.make_finding(
             f"NAR-SEC-{len(self.items) + 1:03d}", title, severity,
             confidence, component, path, evidence_text,
             explanation, impact, remediation,
             reproduction="static analysis (see evidence)",
-            false_positives=false_positives))
+            false_positives=false_positives,
+            verification_status=verification_status))
 
 
 def review(target, deep=False, work_dir=None):
@@ -92,7 +104,8 @@ def review(target, deep=False, work_dir=None):
             "builds; keep debug flags in debug variants only.",
             "A debug/test build distributed intentionally "
             "would explain this; it is critical only for "
-            "production distribution.")
+            "production distribution.",
+            verification_status="CONFIRMED")
     if app.get("allow_backup") is True:
         findings.add(
             "Full backup allowed", "medium", "high",
@@ -105,7 +118,8 @@ def review(target, deep=False, work_dir=None):
             "Set allowBackup=\"false\" or define backup rules "
             "excluding sensitive files.",
             "Apps that intentionally support user backup "
-            "migration may accept this risk.")
+            "migration may accept this risk.",
+            verification_status="CONFIRMED")
     # Exported components without permission guards.
     components = perms.get("components") or {}
     for kind in ("activity", "service", "receiver", "provider"):
@@ -129,7 +143,8 @@ def review(target, deep=False, work_dir=None):
             "permission.",
             "Launcher activities and share/deep-link targets "
             "are exported by design; verify each listed "
-            "component's intent before treating as a defect.")
+            "component's intent before treating as a defect.",
+            verification_status="CONFIRMED")
     dangerous = [p["name"] for p in perms.get("permissions", [])
                  if p.get("group") == "dangerous"]
     if dangerous:
@@ -145,7 +160,8 @@ def review(target, deep=False, work_dir=None):
             "need; request at runtime only.",
             "Most such permissions are legitimate for the "
             "app's stated features; this is a review prompt, "
-            "not a defect by itself.")
+            "not a defect by itself.",
+            verification_status="POTENTIAL")
     target_sdk = perms.get("target_sdk")
     if isinstance(target_sdk, int) and target_sdk < 31:
         findings.add(
@@ -158,7 +174,7 @@ def review(target, deep=False, work_dir=None):
             "Weaker platform security defaults apply.",
             "Raise targetSdkVersion and adopt the current "
             "behavior changes.",
-            "")
+            "", verification_status="CONFIRMED")
     min_sdk = perms.get("min_sdk")
     if isinstance(min_sdk, int) and min_sdk < 23:
         findings.add(
@@ -169,7 +185,7 @@ def review(target, deep=False, work_dir=None):
             "and several platform protections.",
             "Install-time permission grants on old devices.",
             "Raise minSdkVersion if the user base allows.",
-            "")
+            "", verification_status="CONFIRMED")
     schemes = triage.get("signature_schemes") or {}
     if schemes.get("v1") and not (schemes.get("v2")
                                   or schemes.get("v3")):
@@ -183,7 +199,7 @@ def review(target, deep=False, work_dir=None):
             "Modified DEX could be accepted on old devices.",
             "Sign with v2 (and v3 where supported) in "
             "addition to v1.",
-            "")
+            "", verification_status="CONFIRMED")
     if network:
         sensitive = [e for e in network.get("endpoints", [])
                      if e["classification"] == "sensitive"]
@@ -199,7 +215,8 @@ def review(target, deep=False, work_dir=None):
                 "Move secrets to headers over HTTPS; rotate "
                 "any exposed credential.",
                 "Some flagged URLs are format templates, not "
-                "live credentials; verify before rotating.")
+                "live credentials; verify before rotating.",
+                verification_status="STRONGLY_INDICATED")
         cleartext = [e for e in network.get("endpoints", [])
                      if e["classification"] == "confirmed"
                      and e["url"].startswith("http://")]
@@ -216,7 +233,8 @@ def review(target, deep=False, work_dir=None):
                 "cleartextTrafficPermitted=\"false\".",
                 "Endpoints may be dead code or redirected to "
                 "HTTPS by the server; runtime confirmation "
-                "needs a device.")
+                "needs a device.",
+                verification_status="STRONGLY_INDICATED")
         nsc = network.get("network_security_config") or {}
         if nsc.get("uses_cleartext_traffic") is True or \
                 nsc.get("base_cleartext_permitted") is True:
@@ -230,7 +248,8 @@ def review(target, deep=False, work_dir=None):
                 "ban.",
                 "Interception exposure for any http traffic.",
                 "Permit cleartext only for named legacy "
-                "domains that require it.", "")
+                "domains that require it.", "",
+                verification_status="CONFIRMED")
     protections = triage.get("protections") or {}
     prot_text = json.dumps(protections).lower()
     if "pinning" in prot_text or "certificate pinning" in prot_text:
@@ -274,7 +293,8 @@ def review(target, deep=False, work_dir=None):
                     "Avoid dynamic loading; if required, load "
                     "only signature-verified code over HTTPS.",
                     "Many frameworks (plugins, hotfix, game "
-                    "engines) load code legitimately.")
+                    "engines) load code legitimately.",
+                    verification_status="STRONGLY_INDICATED")
             if js_bridge:
                 findings.add(
                     "WebView JavaScript bridge exposed", "medium",
@@ -290,8 +310,9 @@ def review(target, deep=False, work_dir=None):
                     "by origin, and never load untrusted "
                     "content in a bridged WebView.",
                     "The bridge may only serve first-party "
-                    "bundled pages.")
-    return {"tool": "nar-security", "version": "2.4.0",
+                    "bundled pages.",
+                    verification_status="STRONGLY_INDICATED")
+    return {"tool": "nar-security", "version": "2.5.0",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "findings": findings.items,
@@ -310,7 +331,9 @@ def human(report):
     print(f"Severity counts: {report['severity_counts']}")
     for f in report["findings"]:
         print(f"- [{f['severity'].upper()}] {f['id']} "
-              f"{f['title']} (confidence {f['confidence']})")
+              f"{f['title']} (confidence {f['confidence']}, "
+              f"verification "
+              f"{f.get('verification_status', 'UNVERIFIED')})")
         print(f"    evidence: {f['evidence'][:180]}")
         print(f"    remediation: {f['remediation'][:150]}")
     for pos in report["positive_observations"]:

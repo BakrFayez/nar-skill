@@ -1277,3 +1277,425 @@ pytest 128/128 (baseline 125 + wide-sibling-chain,
 cycle-refusal, and depth-cap tests), e2e 47/47 PASS,
 py_compile clean, nar-doctor READY — all on branch
 close-all-gaps.
+
+## Reconciliation addendum (2026-11-24) — Evolution Phase 0 baseline
+
+The matrix's "Status at audit" column is the v1.1.0
+Phase-Zero baseline by design and is not edited; the
+addenda above carry the status forward release by
+release. This addendum records the executed baseline of
+the TOTAL INTELLIGENCE EVOLUTION program's Phase 0,
+run on the `evolution` branch at the v2.4.0 tree
+(local main c31c072, identical to the published
+2.4.0 tree) on 2026-11-24:
+
+- Unit tests: pytest 144/144 passed
+  (`tests/unit/`, 20 test files).
+- End-to-end harness: 47 passed, 0 failed, 0 skipped
+  (`tests/run_e2e.sh`, full fixture corpus bound).
+- Doctor: core toolchain READY, exit 0.
+- Unified CLI smoke: all 23 `nar` subcommands
+  (doctor, input, triage, fingerprint, engines, unity,
+  unreal, il2cpp, flutter, godot, rn, pak, dex, native,
+  perms, strings, network, security, assets, compare,
+  analyze, report, runtime, version) answer `--help`
+  with exit 0.
+- Orchestrated case, executed end to end on the demo
+  fixture: 10/10 stages ok (triage, perms, strings,
+  fingerprint, engines, dex, native, network, security,
+  assets); emitted report.md + report.json +
+  report.html + case.json + execution-log.json and the
+  companions assets.json, dex.json (+ dex/classes.json,
+  dex/methods.json), endpoints.json, engines.json,
+  fingerprint.json, native.json, security-findings.json;
+  cold run 9.2 s. A second identical run exercised the
+  stage cache: execution log records 7 stages "cached",
+  3 "ok", wall time 4.4 s.
+- Version consistency: skill.yaml, SKILL.md
+  frontmatter, .claude-plugin/plugin.json,
+  pyproject.toml, README version line, nar.py VERSION,
+  narlib __version__, nar-analyze NAR_VERSION and
+  registry.json registry_version all read 2.4.0
+  (grep-verified in this pass).
+
+Capability statuses reconciled against this executed
+baseline live in NAR_GAP_ANALYSIS.md (Evolution Phase 0
+reconciliation addendum, 2026-11-24); the forward plan
+lives in NAR_IMPLEMENTATION_PLAN.md (evolution section).
+Nothing in this addendum re-labels a device-dependent
+row: physical-device runtime rows remain
+IMPLEMENTED_BUT_UNVERIFIED, and no test in this pass
+ran on a physical device.
+
+## Evolution Phase 1 addendum (2026-11-24) — docs/version guards
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_docs_consistency.py: 10/10 pass —
+  README structure block names every scripts/ (25 files),
+  narlib/ (14), frida/ (4), references/ (22) and schemas/
+  (11) file; stated guide count (22) equals the tree;
+  SKILL.md routing targets all exist; version consistency
+  across 18 locations agrees at 2.4.0; a planted version
+  mismatch in a temp copy is detected; the brand headline
+  carries no version number.
+- Doctor hygiene: after removing all `__pycache__` under
+  scripts/, a full nar-doctor.sh run leaves zero
+  `__pycache__` directories under scripts/ and still
+  reports Core toolchain: READY (exit 0).
+- Full battery: pytest 154/154, e2e harness 47/47
+  (0 skipped), doctor READY.
+
+## Evolution Phase 2 addendum (2026-11-24) — companions, compile_sdk, AAR/JAR
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_companions.py: 11/11 pass — the four
+  companion projections validate against their shipped
+  schemas on synthetic stage data; degraded-source
+  projections carry an explicit unavailable field and
+  still validate; planted AAR (manifest + classes.jar
+  with 2 classes + R.txt + res/ + one jni lib) and JAR
+  summaries report exact counts; a class-only archive
+  keeps the shipped zip identification and reports its
+  missing MANIFEST.MF as a fact when summarized as a jar;
+  compileSdkVersion is parsed off a planted stub-aapt2
+  badging package line (34), with the Codename field not
+  captured.
+- Live verification: nar-fingerprint on the SDK-built
+  demo fixture reports compile_sdk "34" (provenance:
+  aapt2 dump badging). A full nar-analyze case on the
+  same fixture emits application.json, manifest.json,
+  native-inventory.json and frameworks.json (all
+  schema-valid at write time), registered additively in
+  report.json companions; application.json carries the
+  fixture's package identity and compile_sdk 34.
+- Full battery: pytest 165/165, doctor READY; the e2e
+  analyze cases (app + game fixtures) assert the four
+  companions exist, parse, and carry their kind markers.
+
+## Evolution Phase 3 addendum (2026-11-24) — DEX/ELF depth
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_android_intel.py: 6/6 pass — synthetic
+  DEX code item with a known try range + typed handler +
+  catch-all + debug offset parses exactly; a no-try item
+  reports none; dexdis block summary on a known-branch
+  method yields the exact two blocks and edge set;
+  synthetic @Metadata parses (mv [1,9,0], kind 1) with
+  the stream-desync regression case (string index 300
+  inside an array element placed before mv/k); synthetic
+  ELF64 with .rela.plt + .comment yields the planted
+  JUMP_SLOT entry with its symbol resolved and clang +
+  gcc fingerprints as observed; a section-less ELF claims
+  no relocations and no fingerprints.
+- Independent cross-checks (this phase, real fixtures):
+  SDK dexdump vs narlib on a corpus DEX — methods with
+  tries 484/484, try items 1,178/1,178, handler entries
+  1,357/1,357; readelf -r vs narlib on the demo native
+  library — .rela.dyn 3, .rela.plt 2, total 5, PLT/GOT 2,
+  all agree (readelf also corrected the AArch64
+  JUMP_SLOT type number to 1026); dexdis oracle harness
+  re-run on the corpus DEX — FULL AGREEMENT, 230,836
+  instructions compared, 0 mismatches, 709 payloads,
+  0 mismatches.
+- Real-target runs: nar-dex over a Kotlin corpus fixture
+  reports 10,213 classes with parsed @Metadata (metadata
+  versions 1.8.0 and 2.2.0 dominant; kind names class /
+  file facade / synthetic class) and 14,762 try items /
+  16,703 handler entries across its DEX files; nar-native
+  on the demo fixture reports the readelf-matching
+  relocation summary and the clang fingerprint.
+- Full battery: pytest 171/171, doctor READY; e2e in the
+  phase battery.
+
+## Evolution Phase 4 addendum (2026-11-24) — engines
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_engine_intel.py: 5/5 pass — synthetic
+  Addressables catalog (locations, types, decoded entry
+  table with per-type/per-provider counts exact); the
+  REAL bundles fixture catalog (6,798 locations, 24,820
+  entries decoded, all three index fields validated);
+  planted text RN bundle (2 TurboModules, 1 Fabric
+  component, 1 NativeModules reference, source map entry
+  + sourceMappingURL detected); planted Flutter APK
+  (5-entry inventory, JSON manifest declared keys = 2);
+  synthetic Godot pack classification ([gd_scene header
+  -> scene, PNG magic -> texture, RSRC -> binary resource
+  with type name 'PackedScene', .gd -> script by
+  extension, encrypted .png entry unclassified).
+- tests/unit/test_uasset.py: +2 synthetic-layout tests —
+  a versioned 1011 package (extension tail incl. the
+  overridable payload: operation 3, experimental flag)
+  and a 1012 package (complete type names:
+  ArrayProperty<NameProperty> rendering + inner type,
+  flags-carried bool, nested struct children values,
+  GUID + extension tail behind the flags byte), both
+  asserting the parser's synthetic-verification label.
+- Real-target runs: nar-unity on the bundles fixture
+  (catalog above); nar-rn on the Hermes fixture
+  (architecture markers TurboModuleRegistry /
+  codegenNativeComponent / NativeModules /
+  __turboModuleProxy all present; names honestly not
+  extracted); nar-flutter on the Flutter fixture (370
+  entries, 2,845,674 bytes, by-type counts);
+  nar-godot on the real pack (396 entries classified:
+  36 scenes, 89 compiled scripts, 58 textures, 65 import
+  metadata, 1 binary resource, 136 unknown).
+- Full battery: pytest 178/178, doctor READY; e2e in the
+  phase battery (new cases: unity-catalog, flutter-assets,
+  godot-types; rn-positive extended with the markers line).
+
+## Evolution Phase 5 addendum (2026-11-24) — protection + network
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_signatures.py: 9/9 pass — the
+  signature database loads (version 1.0.0, schema 1;
+  counts: 7 categories, 11 packers, 6 RASP markers,
+  1 licensing marker, 4 Widevine forms); its canonical
+  digest equals the digest of the pre-extraction code
+  literals (pinned in the test); malformed databases
+  (missing file, wrong schema, bad matcher kind) are
+  hard errors; nar-triage's module constants ARE the
+  loaded database.
+- Behavioral equivalence, executed directly: nar-triage
+  --json from the pre-change tree vs the extracted tree
+  on pairip-so, pairip-jiagu-dex, stub-unattributed and
+  the demo fixture — outputs identical except the new
+  protection_signatures provenance field.
+- tests/unit/test_network_phase5.py: 7/7 pass —
+  redact_url counts per planted shape (query param,
+  userinfo, multi-param); analyze() over planted URLs
+  reports exactly 5 redacted values with no secret
+  substring anywhere in the serialized report and the
+  3 sensitive classifications preserved; both network
+  companions validate against their schemas, degraded
+  (no-stage) projections are explicit, and the
+  architecture projection's paths carry no query strings.
+- Real case run on the demo fixture: network-analysis
+  and api-architecture companions emitted + validated;
+  endpoints document carries the redaction block.
+- Full battery: pytest 194/194, e2e 52/52 (protection
+  cases pass unchanged), doctor READY with the new
+  protection-signatures check ok.
+
+## Evolution Phase 6 addendum (2026-11-24) — runtime + security
+
+New executed evidence (local + live emulator):
+
+- tests/unit/test_runtime_sessions.py: 8/8 pass —
+  session records built from recorded status snapshots
+  validate against runtime-session.schema.json for both
+  kinds; the no-device record keeps
+  IMPLEMENTED_BUT_UNVERIFIED; plan records carry 6
+  step-planned events and the target's real SHA-256;
+  device errors land in the record's errors list;
+  write/read round-trip. make_finding validates
+  verification_status against the vocabulary (default
+  UNVERIFIED); the security-findings schema accepts new
+  AND legacy (field-less) findings and rejects values
+  outside the vocabulary; nar-security over the demo
+  fixture emits only in-vocabulary statuses and the
+  report validates.
+- Live session record: nar-runtime plan --session-out
+  into a scratch case dir recorded the attached
+  emulator (attached: true, label verified-live, 7
+  events, target hash set).
+- LIVE jni-trace (API 26 emulator, Frida 17.27.4,
+  dynamic-registration demo variant built for this
+  phase; full log in the runtime-test workspace):
+  attach — "[jni-register] class=…DetailsActivity
+  methods=1 via JNIEnv table", the per-method
+  "[jni-register]" line (method name, signature, and
+  the resolved symbol in the variant library), "[jni-entry]"
+  on invocation; logcat shows the registered method
+  returning its string. Spawn (resume-first recipe,
+  pid continuity confirmed after a 50 s settle) —
+  class-level [jni-register] captured. First attempts
+  (CLI attach timeout under contention; transient
+  empty pidof) recorded in the attempt log; the live
+  run caught the Frida-17 Memory-statics defect in
+  jni-trace.js, fixed in-cycle and re-captured.
+- Full battery: pytest 202/202, e2e 52/52, doctor READY.
+
+## Evolution Phase 7 addendum (2026-11-24) — assets + comparison
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_assets_audio.py: 7/7 pass — WAV
+  (2 ch / 44100 Hz / exactly 2.0 s from data÷byte-rate),
+  Ogg Vorbis (final granule → exactly 3.0 s), MP3 Xing
+  (100 frames → 2.612 s, basis names the Xing count),
+  MP3 CBR estimate (2.0 s, basis labeled an estimate),
+  FLAC + M4A + truncated WAV all unmeasured with
+  reasons; inventory attaches the audio block to audio
+  entries only.
+- tests/unit/test_compare_artifacts.py: 4/4 pass —
+  the feature map validates against
+  compare-feature-map.schema.json and carries the
+  fabricated deltas (permission, method delta, endpoint
+  add); the build-noise separation counts the signing
+  change as churn and the DEX change as content, with
+  the signing dimension itself never hidden; the
+  Markdown renders the same deltas; write_artifacts
+  round-trips all three files.
+- Planted-pair e2e (new case): nar-compare --out on
+  the demo pair emits all three artifacts; assertions
+  on the added permission, the +2 method delta, and
+  the endpoint change (1 added / 1 removed) pass —
+  the endpoint assertion exposed and fixed the
+  group-dict iteration defect in the extended diff.
+- Full battery: pytest 213/213, e2e 53/53, doctor READY.
+
+## Evolution Phase 8 addendum (2026-11-24) — evidence + orchestration
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_phase8_orchestration.py: 7/7 pass —
+  correlation joins over fabricated stage documents
+  (known pair matched/CONFIRMED; planted declaration
+  declaration-only; unclaimed export export-only;
+  component matched + declaration-only; endpoint
+  code-referenced via string-reference classes;
+  library matched by class prefix; degraded inputs
+  produce noted empty sections, all schema-valid);
+  the fact-class → verification mapping; budget tests
+  (exhausted total budget stops a stage unrun with a
+  budget-exceeded execution-log entry; a 1 ms stage
+  cap on a real tool records budget-exceeded, no
+  hang); case bundle round-trip on a synthetic case
+  (4 files) with cache-key verification, and a
+  tampered file failing verify by name.
+- Real case run (demo fixture): correlations.json —
+  jni_matched 1 (CONFIRMED, static-export),
+  components_matched 2, endpoints 1 code-referenced /
+  1 no-code-reference; JNI entries embedded in
+  native.json; counts in report.json. Full-case schema
+  sweep: 13/13 documents valid (fingerprint, findings,
+  execution log, correlations, endpoints, case, six
+  companions, assets).
+- Real bundle round-trip: a 35-file case exported,
+  imported to a fresh directory, verify OK; appending
+  to the imported report.json makes verify FAIL
+  naming the manifest mismatch (exit 1), cache
+  integrity independently OK (7 entries).
+- e2e (new cases): correlations.json consistency on
+  the app case; case bundle round-trip + tamper on
+  the app case. Full battery: pytest 220/220,
+  e2e 55/55, doctor READY.
+
+## Evolution Phase 9 addendum (2026-11-24) — reporting + CLI
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_phase9_reporting_cli.py: 9/9 pass —
+  dashboard dependency graph rendered from a synthetic
+  native.json (section + inline SVG present, a label
+  carrying markup characters escaped, a cyclic pair
+  rendered, zero external references: no http(s)://,
+  src=, href=, <link, @import), absent/empty graph
+  renders no section, a 161-node graph truncates at
+  120 with the native.json note; unified CLI: --help
+  lists the five new verbs beside the old, each new
+  verb's --help exits 0, `nar tools --json` returns
+  the 35-tool registry view, identify/validate run on
+  a synthetic APK (format apk, valid=True), a full
+  case export → import → verify round-trip through
+  `nar case`, unknown case subcommand exits 2.
+- e2e (10 new cases, all PASS): cli tools JSON;
+  --help sweep for tools/identify/validate/benchmark/
+  case; identify + validate on the demo fixture;
+  `nar case verify` + `nar case export` on the real
+  app case; dashboard graph section + offline SVG +
+  zero external references on a synthetic case;
+  `nar benchmark` smoke on a demo-only corpus (runs
+  emitted, JSON parses).
+- Full battery: pytest 229/229, e2e 65/65
+  (0 skipped), doctor READY.
+
+## Evolution Phase 10 addendum (2026-11-24) — skill + integrations
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_phase10_guide_audit.py: 5/5 pass —
+  every (references|scripts) link target in SKILL.md +
+  all 22 guides exists; every nar-*.py/sh filename
+  mentioned exists; every --flag on a line naming a
+  nar script is defined by that script; every
+  backticked `nar <verb>` is a real dispatcher verb;
+  SKILL.md frontmatter parses (name nar, version ==
+  narlib version) and plugin.json parses with a
+  matching version.
+- One-time scripted audit (same extraction, wider
+  net): block-level flag attribution 0 mismatches;
+  51 flag tokens defined by no nar script, each read
+  in context — all external-tool flags (bundletool,
+  apksigner, jadx, frida-tools, oatdump, GDRE,
+  mitmproxy, dotnet-install, pip, node --check),
+  including one guide correction note (--jvm-args is
+  documented as NOT a jadx flag). Discrepancies fixed:
+  1 stale capability claim (DEX guide scope limit),
+  2 discoverability gaps (session records, nar tools).
+- Full battery: pytest 234/234, e2e 65/65
+  (0 skipped), doctor READY.
+
+## Evolution Phase 11 addendum (2026-11-24) — testing + benchmarks
+
+New executed evidence (local, this branch):
+
+- tests/unit/test_phase11_mutations.py: 5/5 pass —
+  DEX (bad magic, half-truncated, inflated
+  string_ids count, empty), ELF (bad magic,
+  16-byte truncation, invalid EI_CLASS, empty), PAK
+  (zero-filled, half-truncated, empty), IoStore TOC
+  (bad magic, half/40-byte truncation, empty) and Zen
+  (flipped magic byte, half/24-byte truncation,
+  empty) inputs each raise exactly the parser's named
+  error type (DexError / ElfError / PakError /
+  IoStoreError / ZenError) on construct + materialize.
+  Two defects found by the corpus and fixed in-phase:
+  narlib.dex header-table extent validation (was: a
+  bare struct.error leaked from strings() on an
+  inflated count), narlib.elf EI_CLASS validation
+  (was: invalid class silently treated as 32-bit).
+- Benchmark run (tests/benchmarks/run_benchmarks.py,
+  full local corpus): 28/28 timing runs exit 0.
+  Metrics as measured — protection (real: 1 protected
+  + 9 clean): precision 1.0, recall 1.0, 0 FP;
+  engines (real): recall 1.0, 6/6 labeled positives;
+  engines (synthetic): accuracy 1.0, 8/8 (first run
+  0.875 was a runner label typo — "Xamarin /.NET" vs
+  the canonical "Xamarin / .NET"; the engine detected
+  the fixture at score 44; corrected + re-run);
+  formats (real): accuracy 1.0, 10/10. Engine
+  precision on the real corpus: NOT RUN (no labeled
+  engine-negative real corpus). Peak memory:
+  nar-analyze on the largest fixture (273,366,540 B)
+  → peak RSS 1,887,338,496 B (nar-analyze process
+  only; stage subprocess peaks excluded), 304.69 s.
+- Full battery: pytest 239/239, e2e 65/65
+  (0 skipped), doctor READY.
+
+## Evolution Phase 12 addendum (2026-11-24) — release preparation
+
+New executed evidence (local, this branch):
+
+- Version consistency at 2.5.0: test_docs_consistency
+  + test_phase10_guide_audit pass with all 18
+  version-bearing locations at 2.5.0; `nar version`
+  prints "NAR 2.5.0".
+- CLI smoke, all verbs: 28 verbs (27 dispatcher verbs
+  + the case router) each run with --help → exit 0;
+  `nar version` → 2.5.0. 29/29 invocations clean.
+- Final battery: pytest 239/239, e2e 65/65
+  (0 skipped), doctor "Core toolchain: READY".
+- Whole-evolution-diff greps (ba2ad2e..HEAD):
+  banned identifiers 0 hits; forbidden credits
+  0 hits.
+- Tree state: clean on branch `evolution`;
+  release-ready. No merge, push, tag, or publication
+  performed (owner's explicit decision reserved).
