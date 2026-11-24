@@ -1,0 +1,108 @@
+{
+ "after_w4": {
+  "date": "2026-11-24",
+  "method": "Identical harness (measure252.py), identical inputs and commands as the W0 runs above; fresh --out dir for analyze. stdout_bytes for the two nar-unreal runs differ from W0 because W2/W3 added report fields in between; the after outputs are byte-identical to the W3 after outputs and to pre-W4 outputs on this tree (see the update report).",
+  "program": "NAR 2.5.2 update \u2014 W4 after-optimization measurements",
+  "runs": [
+   {
+    "command": "python3 scripts/nar-unreal.py <utoc> --json",
+    "delta_peak_rss_bytes": -218791936,
+    "delta_peak_rss_percent": -84.5,
+    "delta_wall_seconds": -0.46,
+    "exit_code": 0,
+    "label": "unreal-utoc-ue53",
+    "peak_rss_bytes": 40079360,
+    "stdout_bytes": 194422,
+    "wall_seconds": 0.48
+   },
+   {
+    "command": "python3 scripts/nar-unreal.py <utoc> --json",
+    "delta_peak_rss_bytes": -96616448,
+    "delta_peak_rss_percent": -77.3,
+    "delta_wall_seconds": -0.33,
+    "exit_code": 0,
+    "label": "unreal-utoc-tocv8",
+    "peak_rss_bytes": 28352512,
+    "stdout_bytes": 193823,
+    "wall_seconds": 0.34
+   },
+   {
+    "command": "python3 scripts/nar-native.py <elf> --json",
+    "delta_peak_rss_bytes": -260034560,
+    "delta_peak_rss_percent": -84.7,
+    "delta_wall_seconds": -0.64,
+    "exit_code": 0,
+    "label": "native-largest-elf",
+    "peak_rss_bytes": 46964736,
+    "stdout_bytes": 143813,
+    "wall_seconds": 1.2
+   },
+   {
+    "command": "python3 scripts/nar-analyze.py <apk> --out <case>",
+    "delta_peak_rss_bytes": -2973696,
+    "delta_peak_rss_percent": -0.16,
+    "delta_wall_seconds": -32.98,
+    "exit_code": 0,
+    "label": "analyze-273mb",
+    "note": "Peak essentially unchanged (-0.16%, within noise): the analyze peak does not live in the optimized tools. Live sampling during the after run showed nar-analyze itself at ~386 MB while its stage subprocesses ran, spiking to a ~1.54 GB plateau immediately after the nar-dex subprocess exited and staying there. The DEX stage document for this input is 298 MB compact (373 MB as the indented companion); nar-analyze captures that stdout whole, json.loads it into a full dict graph, json.dumps it twice (stage cache + companion), and retains it for correlations. Fixing that means restructuring the orchestrator's stage plumbing, which W4 explicitly did not do.",
+    "peak_rss_bytes": 1885212672,
+    "stdout_bytes": 10103,
+    "wall_seconds": 429.75
+   }
+  ]
+ },
+ "battery_baseline": {
+  "doctor": "Core toolchain: READY",
+  "e2e": "65 passed, 0 failed, 0 skipped",
+  "pytest": "246 passed, 0 failed"
+ },
+ "correctness_oracles_to_recheck_in_w4": [
+  "IoStore directory index file counts on the local sets: 6,743 files (UE 5.3 set) and 2,184 files (br-work TOC v8 set, 528 dirs)",
+  "Zen package parses: 684 stored packages (UE 5.3 set) and 525 stored packages (TOC v8 set), 0 failures",
+  "nar-unreal JSON reports on both IoStore sets: identical verdicts, container counts, chunk counts and package counts before/after optimization"
+ ],
+ "date": "2026-11-24",
+ "machine": "Linux x86_64 (shared VM, 1.5 vCPU)",
+ "method": "Each measurement ran the command once in a fresh wrapper process; peak RSS is the wrapper's RUSAGE_CHILDREN ru_maxrss (the direct child's own peak; grandchildren excluded), wall is subprocess wall time. Identical inputs and commands are re-run after optimization in W4; the local path bindings for each role live outside the repo (role labels only here).",
+ "oracle_correction_w4": "The TOC v8 oracle line originally read 13,494 files for the TOC v8 set; that count belongs to the OTHER local TOC v8 set (extracted under nar-ue5-hunt/biy/), not to the br-work set the benchmarks and sweeps use. The br-work set's directory index names 2,184 files in 528 dirs (re-measured in W4 before and after optimization, identical). The UE 5.3 set's 6,743 files were likewise re-confirmed.",
+ "program": "NAR 2.5.2 update \u2014 W0 performance baseline",
+ "runs": [
+  {
+   "command": "python3 scripts/nar-unreal.py <utoc> --json",
+   "exit_code": 0,
+   "input_role": "local UE 5.3 IoStore set: bare .utoc (885,376 B) with sibling .ucas (219,935,664 B); 7,171 chunks, TOC v5",
+   "label": "unreal-utoc-ue53",
+   "peak_rss_bytes": 258871296,
+   "stdout_bytes": 187146,
+   "wall_seconds": 0.94
+  },
+  {
+   "command": "python3 scripts/nar-unreal.py <utoc> --json",
+   "exit_code": 0,
+   "input_role": "local TOC v8 IoStore set: bare .utoc (327,627 B) with sibling .ucas (97,140,736 B); 2,912 chunks",
+   "label": "unreal-utoc-tocv8",
+   "peak_rss_bytes": 124968960,
+   "stdout_bytes": 186186,
+   "wall_seconds": 0.67
+  },
+  {
+   "command": "python3 scripts/nar-native.py <elf> --json",
+   "exit_code": 0,
+   "input_role": "largest ELF in the 273 MB fixture (arm64 shared library, 81,159,656 B), extracted to a scratch file",
+   "label": "native-largest-elf",
+   "peak_rss_bytes": 306999296,
+   "stdout_bytes": 143813,
+   "wall_seconds": 1.84
+  },
+  {
+   "command": "python3 scripts/nar-analyze.py <apk> --out <case>",
+   "exit_code": 0,
+   "input_role": "the 273 MB fixture (273,366,540 B game APK, FIX_UNITY_BUNDLES role)",
+   "label": "analyze-273mb",
+   "note": "Phase 11 measured the same input on the 2.5.0 tree at peak RSS 1,887,338,496 B / wall 304.69 s; the W0 peak agrees within 0.05%, the W0 wall is slower (shared-box load during the baseline window). W4 compares against THESE W0 numbers with the identical harness.",
+   "peak_rss_bytes": 1888186368,
+   "wall_seconds": 462.73
+  }
+ ],
+ "tree": "branch update-2.5.2 at 7f16b7f (== main, NAR 2.5.1), untouched"
+}

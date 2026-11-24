@@ -2,6 +2,87 @@
 
 ## Unreleased
 
+## 2.5.2 (2026-11-24)
+
+Reliability, performance and consistency update driven
+by a repository audit. Full record:
+NAR_2.5.2_UPDATE_REPORT.md. Research by Bakr Fayez.
+
+- Skill YAML is valid YAML now. skill.yaml and the
+  SKILL.md frontmatter both failed a real YAML parser
+  (unquoted colons in the title/description values) in
+  every shipped 2.x release; the values are quoted,
+  the metadata text is unchanged, and validation is
+  parser-based (tests/unit/test_yaml_validation.py,
+  with malformed-YAML regression cases) instead of
+  regex-only. nar-doctor gained an optional skill-yaml
+  check that reports honestly when no YAML parser is
+  available. Correction to the 2.5.0 entry below: its
+  Phase 10 line "programmatic frontmatter validation"
+  overstated the check — validation was regex-level
+  and the frontmatter was in fact invalid YAML until
+  this release.
+- Unreal capability reporting is generated from the
+  parsers' own capability facts (narlib uasset/zen/
+  iostore `capabilities()`), so reporting cannot drift
+  from the parser again: the UE5 property tag
+  extensions (object version 1011 and 1012+) are
+  reported as implemented (synthetic-verified), not
+  unsupported. A consistency test pins report text to
+  the capability source.
+- Unreal analysis limits are configurable:
+  nar-unreal --max-packages / --max-containers /
+  --max-chunks / --max-names and --all-packages /
+  --all-containers / --all-details, with the previous
+  hardcoded values kept as defaults. Every capped
+  collection now reports total / processed / skipped /
+  failed counts; nothing truncates silently.
+- Memory and speed: nar-unreal, nar-native and
+  nar-pak read large files through memory mapping
+  (new narlib.mmapio) instead of loading them whole,
+  nar-native processes APK libraries one at a time,
+  and the ELF relocation summary streams instead of
+  materializing every relocation. Measured on
+  identical inputs: peak RSS on the local IoStore
+  sets fell 84.5% and 77.3%, on the largest local ELF
+  84.7%, with wall times roughly halved; parser
+  outputs are byte-identical. A full nar-analyze run
+  on the 273 MB reference fixture did not improve
+  (its peak is the orchestrator's DEX-stage JSON
+  round-trip; see the update report).
+- Defects fixed: narlib.elf no longer leaks bare
+  struct.error or silently tolerates out-of-bounds
+  program/section header offsets; nar-analyze now
+  records a fatal and exits nonzero on a non-container
+  target instead of exiting 0; nar-pak bounds
+  decompression at the index-promised size per entry
+  instead of inflating fully before checking;
+  nar-doctor's nar-scripts check now compiles every
+  bundled script (24), not a hand-listed 10.
+- Reproducible testing: tests/synthetic_fixtures.py
+  + tests/generate_fixtures.py generate the public
+  synthetic fixture set (DEX, ELF, pak, IoStore, Zen,
+  classic/1011/1012 UAsset variants, Godot pack) with
+  a committed expected-output manifest
+  (tests/expected_outputs.json, builder intent);
+  NAR_TEST_MATRIX.md documents the five test
+  categories. A clean clone runs the public suite:
+  private-corpus tests SKIP, never fail or fake-pass
+  (clean-extraction proof: 295 passed, 8 skipped,
+  0 failed).
+- Consistency: NAR_CAPABILITY_MATRIX.md (new, 47
+  capabilities with status + evidence) and 14
+  documentation corrections across
+  NAR_ARCHITECTURE.md, NAR_GAP_ANALYSIS.md,
+  references and README, reconciling docs with the
+  code (module/schema inventories, registry facts,
+  doctor checks).
+- Security/regression tests: 29 new tests
+  (tests/unit/test_security_regression.py) covering
+  invalid offsets, hostile archives, absurd-count
+  memory guards, invalid container metadata,
+  per-entry extraction failures and path traversal.
+
 ## 2.5.1 (2026-11-24)
 
 Schema-layer patch, found by an end-to-end validation run

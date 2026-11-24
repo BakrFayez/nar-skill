@@ -19,6 +19,128 @@ project's own demo build pipeline or planted-marker copies.
 4. **Regression** — 1.x script outputs on the corpus diffed
    before/after 2.0 changes; additive-only JSON changes pass.
 
+## Test categories (2.5.2 W5)
+
+Every test in this repo belongs to exactly one category
+below. The categories exist so a reader can tell, before
+running anything, what a clean clone can and cannot
+reproduce, and what an absence produces: a SKIP, a
+NOT RUN record, or nothing at all (the test simply is
+not part of that run).
+
+### Public Synthetic Tests — runnable from a clean clone
+
+The pytest unit suite's self-contained tests: every
+`tests/unit/test_*.py` case except the fixture-bound
+cases listed under Private Corpus Tests below. Inputs
+are synthetic bytes built inside the test files, plus,
+since 2.5.2, the shared fixture library
+`tests/synthetic_fixtures.py` (builders imported from
+the existing test files where cleanly importable; the
+Zen builder is a documented minimal equivalent) with
+its regression suite
+`tests/unit/test_synthetic_fixtures.py` and the
+builder-intent manifest `tests/expected_outputs.json`.
+
+- Run: `python3 -m pytest tests/unit/ -q` (pytest, plus
+  PyYAML for the YAML-validation tests — the `test`
+  extra in `pyproject.toml`). Fixture generation check:
+  `python3 tests/generate_fixtures.py --out DIR`.
+- Absence produces: nothing. No private file is needed;
+  on a clean clone every case in this category passes,
+  except the Private Corpus cases (SKIP) and the
+  PyYAML-gated cases (SKIP when PyYAML is absent).
+  This is what `nar-ci` runs (unit suite + syntax +
+  unified-CLI smoke; the harness below is not in CI).
+
+### Private Corpus Tests — unit cases bound to $NAR_FIXTURES
+
+Four unit files contain individual cases bound to the
+private corpus (the rest of each file is public
+synthetic):
+
+- `tests/unit/test_engine_intel.py` —
+  `test_unity_catalog_real_fixture` (the Unity bundles
+  APK under `$NAR_FIXTURES/games/`).
+- `tests/unit/test_schemas.py` —
+  `GeneratedCaseSchemaTest` (4 tests; the class skips
+  in `setUpClass`) and
+  `DexSidecarSchemaTest.test_classes_and_methods_validate`,
+  both on the demo APK (`demo/` role).
+- `tests/unit/test_phase8_orchestration.py` — one
+  stage-timeout test on the demo APK.
+- `tests/unit/test_runtime_sessions.py` — one
+  nar-security findings test on the demo APK.
+
+- Run: `NAR_FIXTURES=/path/to/corpus python3 -m pytest
+  tests/unit/ -q`.
+- Absence produces: SKIP with a reason (`pytest.skip` /
+  `skipTest` / `SkipTest`, "fixture absent") — never a
+  failure, never a pass. Measured with an empty
+  `$NAR_FIXTURES`: those four files report 19 passed,
+  8 skipped, 0 failed.
+
+### Real-World Authorized Tests — local-only
+
+The end-to-end harness and the corpus sweeps:
+`tests/run_e2e.sh` (65 cases) runs every bundled script
+against real, locally authorized app/game files bound
+by role through `$NAR_FIXTURES/manifest.env` (the
+`FIX_*` roles listed in the harness header), including
+the synthetic demo APKs under `$NAR_FIXTURES/demo/`,
+which are built by a local pipeline and are not in this
+repo. The labeled real corpora used by the benchmark
+runner's accuracy metrics belong to this category too.
+
+- Run: `bash tests/run_e2e.sh` (optionally with
+  `NAR_FIXTURES` set; the default is the local fixture
+  tree).
+- Absence produces: SKIP per case, never PASS; the
+  harness exits 0 only when every non-skipped case
+  passes. These tests are never run in CI and their
+  fixtures are never committed.
+
+### Optional Tool Integration Tests — probed, never required
+
+No test hard-requires an external tool binary (jadx,
+apktool, Frida, adb, and the rest of the registry).
+Tool access goes through the capability registry
+(`scripts/narlib/registry.py`), where
+`available=False` is a normal probe result, never an
+error; `tests/unit/test_registry.py` pins that
+contract (tools declared `unavailable` probe
+unavailable; `python3` probes available). The runtime
+session tests use fabricated probe records instead of
+live tools, and tool-backed script paths (the jadx /
+baksmali adapters, the Frida templates, the doctor's
+toolchain report) are exercised only by the e2e
+harness and the doctor on a host that has the tools.
+The one library-level gate is PyYAML:
+`tests/unit/test_yaml_validation.py` (module-level
+`skipif`) and the YAML class in
+`tests/unit/test_docs_consistency.py` (`skipIf`).
+
+- Run: the normal unit suite; install the tools (or
+  PyYAML) to exercise the corresponding paths.
+- Absence produces: probe records reporting the tool
+  unavailable, or a SKIP for the PyYAML-gated tests —
+  never a unit failure.
+
+### Performance Benchmarks — measured, local corpus
+
+`tests/benchmarks/run_benchmarks.py` with the recorded
+baseline in `tests/benchmarks/baseline-2.5.2.json`
+(the 2.5.2 W0 baseline plus the W4 after-optimization
+record on identical inputs).
+
+- Run: `python3 tests/benchmarks/run_benchmarks.py
+  [--out FILE] [--no-metrics] [--no-memory]`.
+- Absence produces: NOT RUN, not SKIP and not PASS —
+  any metric whose labeled corpus is not bound locally
+  is reported NOT RUN with the reason, and timings are
+  measured only on the inputs actually present.
+  Nothing is estimated or extrapolated.
+
 ## Matrix
 
 | Area (brief §) | Test | Fixture / input | Layer | Status at audit |
@@ -1699,3 +1821,46 @@ New executed evidence (local, this branch):
 - Tree state: clean on branch `evolution`;
   release-ready. No merge, push, tag, or publication
   performed (owner's explicit decision reserved).
+
+## Addendum (2026-11-24) — 2.5.1 schema guards + 2.5.2 W1–W5
+
+The addenda above end at 2.5.0 (pytest 239). The executed
+record since then (full detail in CHANGELOG.md for
+2.5.1 and in NAR_2.5.2_UPDATE_REPORT.md for 2.5.2):
+
+- 2.5.1: tests/unit/test_schemas.py gains a parse-all
+  guard over all 24 schemas and generated-case validation
+  of a real demo-fixture document set (report / engines /
+  dex / native + DEX sidecars).
+- 2.5.2 W1: tests/unit/test_yaml_validation.py (18 tests,
+  real PyYAML parsing of skill.yaml + SKILL.md
+  frontmatter, malformed variants must fail) plus YAML
+  classes in test_docs_consistency.py and
+  test_phase10_guide_audit.py. Note: the Phase 10
+  addendum's "SKILL.md frontmatter parses" was a
+  regex-level check; the frontmatter in fact failed a
+  real YAML parser until W1 — the parser-level tests
+  above are the current evidence.
+- 2.5.2 W2: tests/unit/test_unreal.py gains capability /
+  generated-limitations tests (capability values pinned
+  to the parsers' own constants; a synthetic 1011
+  package's report shows the implemented status).
+- 2.5.2 W3: the same file gains configurable-limits
+  tests (historical defaults pinned; raised and lifted
+  caps process more/everything with correct
+  total/processed/skipped/failed counts; cap hits always
+  leave a note + counts).
+- 2.5.2 W4: tests/unit/test_mmapio.py (8 tests; synthetic
+  iostore / Zen / uasset / ELF inputs parse identically
+  as bytes and as forced mmaps, plus the helper's own
+  cases). The docs-consistency guard caught the new
+  module missing from the README structure block in this
+  workstream; fixed in-cycle.
+- 2.5.2 W5: tests/unit/test_synthetic_fixtures.py
+  (18 tests, no private files) and the "Test categories"
+  section at the top of this matrix. Clean-extraction
+  proof: 295 passed / 8 skipped / 0 failed with an empty
+  $NAR_FIXTURES.
+- Battery at W5 end (pre-W6): pytest 303 passed /
+  0 failed, e2e 65 passed / 0 failed / 0 skipped,
+  doctor READY.

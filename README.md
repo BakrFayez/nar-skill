@@ -4,8 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.5.1
-
+Version 2.5.2
 Research by Bakr Fayez
 
 NAR is an AI agent skill for Android APK reverse engineering. It covers all Android apps and games, old and new: regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
@@ -55,6 +54,33 @@ Every module also runs through the unified CLI
 (`python3 scripts/nar.py dex|native|network|security|engines …`)
 or standalone, exactly as in 1.x.
 
+## What's new in 2.5.2
+
+A reliability, performance and consistency update (see
+CHANGELOG.md and NAR_2.5.2_UPDATE_REPORT.md): the skill
+YAML now parses under a real YAML parser with
+parser-based validation; Unreal capability reporting is
+generated from the parsers' own capability facts and
+its analysis limits are configurable with full
+total/processed/skipped/failed accounting; the Unreal,
+native and pak tools read large files through memory
+mapping (peak memory down ~77–85% on the local
+reference corpora, outputs byte-identical); three
+parser/orchestrator defects found by the new
+security-regression tests are fixed; and the test
+system is reproducible from a clean clone with public
+synthetic fixtures, documented categories, and a
+capability matrix (NAR_CAPABILITY_MATRIX.md).
+
+## What's new in 2.5.1
+
+A schema-layer patch (see CHANGELOG.md): the report,
+engine, and timeline schemas were repaired to match the
+documents the tools actually write, and new schemas for
+the DEX and native case documents brought the schema set
+to 24, guarded by parse-all and generated-case regression
+tests. No tool behavior changed.
+
 ## What's new in 2.5.0
 
 The TOTAL INTELLIGENCE EVOLUTION release: every audited
@@ -84,8 +110,10 @@ alongside timings.
   across 18 engine/framework families, with optional deep-dive
   confirmation (`nar-engines.py --deep`), plus dedicated
   Unity (`nar-unity.py`, optional UnityPy census) and Unreal
-  (`nar-unreal.py`, IoStore entry-level parsing and
-  UAsset-level package inspection) deep dives.
+  (`nar-unreal.py`, generation evidence, pak inventory and
+  IoStore inventory) deep dives. (IoStore entry-level
+  parsing arrived in 2.1.0 and UAsset-level package
+  inspection in 2.2.0 — see CHANGELOG.md.)
 - **DEX and native intelligence**: a built-in DEX parser
   (classes, methods, fields, call edges, reflection and
   dynamic-loading evidence, Kotlin inventory, jadx/baksmali
@@ -256,6 +284,7 @@ nar-skill/
   CONTRIBUTING.md           How to contribute
   pyproject.toml            Package metadata + tool configuration
   NAR_ARCHITECTURE.md       System architecture (2.0 program record)
+  NAR_CAPABILITY_MATRIX.md  Capability matrix: one row per capability area, with status + evidence
   NAR_AUDIT.md              Repository audit + reconciliation record
   NAR_GAP_ANALYSIS.md       Capability baseline with per-area statuses
   NAR_IMPLEMENTATION_PLAN.md  Phase plans and completion records
@@ -351,6 +380,7 @@ nar-skill/
       formats.py            Magic + structure format identification
       hashing.py            Streaming hashes
       iostore.py            Unreal IoStore (UTOC/UCAS) parser
+      mmapio.py             Read-only file mapping (mmap) for the parsers
       oat.py                OAT / VDEX / ODEX / ART parser
       registry.py           Capability-registry reader
       safearchive.py        Guarded archive extraction (slip/bomb/traversal)
@@ -364,6 +394,9 @@ nar-skill/
       network-observe.js
   tests/
     run_e2e.sh              End-to-end script test harness (fixtures via $NAR_FIXTURES)
+    synthetic_fixtures.py   Shared synthetic-fixture builder library (clean-clone reproducible)
+    generate_fixtures.py    Fixture generator CLI (writes the synthetic set + manifest)
+    expected_outputs.json   Builder-intent expected-output manifest for the synthetic set
     unit/                   Pytest unit suite (parsers, guards, schemas, registry)
     benchmarks/
       run_benchmarks.py     Fixture-corpus benchmark runner (timings, accuracy metrics, peak memory)
@@ -375,6 +408,18 @@ nar-skill/
   .claude-plugin/
     plugin.json             Claude Code plugin manifest
 ```
+
+## Running the tests
+
+The unit suite runs from a clean clone (private-corpus cases SKIP when their fixtures are absent):
+
+```bash
+python3 -m pytest tests/unit/ -q
+python3 tests/generate_fixtures.py --out /tmp/nar-fixtures
+bash tests/run_e2e.sh   # needs the local fixture corpus via $NAR_FIXTURES
+```
+
+See the "Test categories" section of `NAR_TEST_MATRIX.md` for what each category needs and what an absence produces.
 
 ## Legitimate use
 

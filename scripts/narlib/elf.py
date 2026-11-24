@@ -54,7 +54,9 @@ def _str_at(blob, off):
 
 class Elf:
     def __init__(self, data, name="lib.so"):
-        if len(data) < 52 or not data.startswith(b"\x7fELF"):
+        # Slice comparison, not startswith: data may be an
+        # mmap (narlib.mmapio), which has no startswith.
+        if len(data) < 52 or data[:4] != b"\x7fELF":
             raise ElfError(f"{name}: not an ELF file")
         if data[4] not in (1, 2):
             raise ElfError(
@@ -63,6 +65,13 @@ class Elf:
         self.name = name
         self.data = data
         self.is_64 = data[4] == 2
+        # The fixed header is 64 bytes (ELF64) / 52 bytes
+        # (ELF32); a shorter buffer would leak a bare
+        # struct.error from the unpack below.
+        if len(data) < (64 if self.is_64 else 52):
+            raise ElfError(
+                f"{name}: truncated ELF header "
+                f"({len(data)} bytes)")
         self.endian = "<" if data[5] != 2 else ">"
         e = self.endian
         if self.is_64:
@@ -85,6 +94,10 @@ class Elf:
             e = self.endian
             for i in range(self.phnum):
                 off = self.phoff + i * self.phentsize
+                if off + self.phentsize > len(self.data):
+                    raise ElfError(
+                        f"{self.name}: program header {i} at "
+                        f"{off:#x} extends past end of file")
                 if self.is_64:
                     p_type, _fl, p_off, p_v, _p, filesz, _m, align = \
                         struct.unpack_from(e + "IIQQQQQQ",
@@ -104,10 +117,16 @@ class Elf:
             out = []
             e = self.endian
             raw = []
-            for i in range(self.shnum):
+            # shoff == 0 means "no section header table"
+            # (with shnum == 0, or extended numbering this
+            # parser does not decode); never read headers
+            # from offset 0, which is the ELF header itself.
+            for i in range(self.shnum if self.shoff else 0):
                 off = self.shoff + i * self.shentsize
                 if off + self.shentsize > len(self.data):
-                    break
+                    raise ElfError(
+                        f"{self.name}: section header {i} at "
+                        f"{off:#x} extends past end of file")
                 if self.is_64:
                     vals = struct.unpack_from(e + "IIQQQQIIQQ",
                                               self.data, off)
@@ -117,6 +136,16 @@ class Elf:
                 raw.append({"name_off": vals[0], "type": vals[1],
                             "offset": vals[4], "size": vals[5],
                             "link": vals[6], "entsize": vals[9]})
+            # SHN_XINDEX (0xffff) is the extended-index
+            # escape (real index in section 0's sh_link);
+            # it keeps the old no-string-table behaviour.
+            # Any other index outside the table is corrupt.
+            if raw and self.shstrndx >= len(raw) \
+                    and self.shstrndx != 0xFFFF:
+                raise ElfError(
+                    f"{self.name}: section name string table "
+                    f"index {self.shstrndx} out of range "
+                    f"({len(raw)} sections)")
             strtab = b""
             if 0 <= self.shstrndx < len(raw):
                 s = raw[self.shstrndx]
@@ -228,7 +257,15 @@ class Elf:
         names resolve through the relocation section's
         linked symbol table; unmapped type numbers are
         reported numerically."""
-        out = []
+        return list(self._iter_relocations())
+
+    def _iter_relocations(self):
+        """Yield the relocations() entries one at a time.
+
+        A large library can carry hundreds of thousands
+        of relocations; consumers that only count them
+        (relocation_summary, hence facts()) must not
+        materialize the whole list of dicts to do so."""
         e = self.endian
         sections = self.sections()
         names_by_machine = RELOC_NAMES.get(self.machine, {})
@@ -261,32 +298,34 @@ class Elf:
                         e + "II", blob, off)
                     sym = r_info >> 8
                     rtype = r_info & 0xFF
-                out.append({
+                yield {
                     "section": s["name"], "offset": r_offset,
                     "type": rtype,
                     "type_name": names_by_machine.get(
                         rtype, f"type-{rtype}"),
                     "symbol_index": sym,
                     "symbol": sym_names[sym]
-                    if sym < len(sym_names) else None})
-        return out
+                    if sym < len(sym_names) else None}
 
     def relocation_summary(self):
         """Counts over relocations(): totals, per-section,
         per-type, and the PLT/GOT subset (.rela.plt/.rel.plt
-        entries — the lazy-binding surface)."""
-        entries = self.relocations()
+        entries — the lazy-binding surface). Counted by
+        streaming _iter_relocations(), so the summary's
+        memory does not grow with the relocation count."""
         by_section = {}
         by_type = {}
         plt_got = 0
-        for entry in entries:
+        total = 0
+        for entry in self._iter_relocations():
+            total += 1
             by_section[entry["section"]] = \
                 by_section.get(entry["section"], 0) + 1
             by_type[entry["type_name"]] = \
                 by_type.get(entry["type_name"], 0) + 1
             if entry["section"] in (".rela.plt", ".rel.plt"):
                 plt_got += 1
-        return {"total": len(entries), "by_section": by_section,
+        return {"total": total, "by_section": by_section,
                 "by_type": by_type, "plt_got": plt_got}
 
     def comment_strings(self):

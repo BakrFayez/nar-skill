@@ -47,6 +47,7 @@ Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
 """
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -54,7 +55,11 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import iostore as _iostore_mod  # noqa: E402
+from narlib import uasset as _uasset_mod  # noqa: E402
+from narlib import zen as _zen_mod  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
+from narlib.mmapio import mapped_file  # noqa: E402
 from narlib.iostore import (IoStoreError, extract_chunk,  # noqa: E402
                             parse_utoc)
 from narlib.uasset import UAssetError, parse_package  # noqa: E402
@@ -70,6 +75,107 @@ CONTAINER_CAP = 5
 # counts always cover every package found.
 PACKAGE_CAP = 5
 NAME_CAP = 500
+# Searchable-names detail kept per package.
+SEARCHABLE_CAP = 100
+# Pure display lists in the APK report (config files and
+# package files): their totals always appear alongside
+# (package_file_count and the *_counts records), so a
+# truncated display list never hides a total.
+DISPLAY_CAP = 25
+# In APK mode, IoStore package extraction considers this
+# many .utoc containers (the package cap itself applies
+# across them). --all-packages lifts this together with
+# the package cap; the report's iostore_package_counts
+# always records containers considered vs found.
+IOSTORE_PACKAGE_CONTAINER_CAP = 2
+
+
+class UnrealLimits:
+    """Resolved detail/processing limits for one run.
+
+    A field set to None means unlimited. The defaults are
+    exactly the historical caps above; the CLI flags in
+    main() are the only way to change them. Items are
+    always processed one at a time and each extracted
+    blob is released before the next item, so raising a
+    limit grows the report, not the peak in-flight data.
+    """
+
+    def __init__(self, max_packages=PACKAGE_CAP,
+                 max_containers=CONTAINER_CAP,
+                 max_chunks=ENTRY_CAP, max_names=NAME_CAP,
+                 max_searchable=SEARCHABLE_CAP,
+                 max_display=DISPLAY_CAP,
+                 max_iostore_package_containers=
+                 IOSTORE_PACKAGE_CONTAINER_CAP):
+        self.max_packages = max_packages
+        self.max_containers = max_containers
+        self.max_chunks = max_chunks
+        self.max_names = max_names
+        self.max_searchable = max_searchable
+        self.max_display = max_display
+        self.max_iostore_package_containers = \
+            max_iostore_package_containers
+
+    def describe(self):
+        def show(value):
+            return "unlimited" if value is None else value
+        return {
+            "max_packages": show(self.max_packages),
+            "max_containers": show(self.max_containers),
+            "max_chunks": show(self.max_chunks),
+            "max_names": show(self.max_names),
+            "max_searchable": show(self.max_searchable),
+            "max_display": show(self.max_display),
+            "max_iostore_package_containers":
+                show(self.max_iostore_package_containers),
+        }
+
+
+def limits_from_args(args):
+    """Build UnrealLimits from parsed CLI arguments.
+
+    Defaults equal today's behaviour exactly; the --all-*
+    flags lift their caps entirely (None)."""
+    limits = UnrealLimits(
+        max_packages=args.max_packages,
+        max_containers=args.max_containers,
+        max_chunks=args.max_chunks,
+        max_names=args.max_names)
+    if args.all_packages:
+        limits.max_packages = None
+        limits.max_iostore_package_containers = None
+    if args.all_containers:
+        limits.max_containers = None
+    if args.all_details:
+        limits.max_chunks = None
+        limits.max_names = None
+        limits.max_searchable = None
+        limits.max_display = None
+    return limits
+
+
+def _account(total, processed, failed=0):
+    """Structured cap accounting: every capped collection
+    reports total / processed / skipped / failed, where
+    failed counts items attempted but recorded with an
+    error, and skipped counts items never attempted
+    because of the cap."""
+    return {"total": total, "processed": processed,
+            "skipped": total - processed - failed,
+            "failed": failed}
+
+
+def _capped(items, cap):
+    """Slice items to cap (None = unlimited); returns
+    (shown, accounting for the full collection)."""
+    if cap is None or len(items) <= cap:
+        return list(items), _account(len(items), len(items))
+    return list(items[:cap]), _account(len(items), cap)
+
+
+def _failed_count(records):
+    return sum(1 for r in records if r.get("error"))
 
 
 def run_json_tool(script, args, timeout=1200):
@@ -104,9 +210,11 @@ def pak_summary(data_path):
 
 
 def iostore_summary(utoc_bytes, name, ucas_name=None,
-                    ucas_size=None):
+                    ucas_size=None, limits=None):
     """Parse one .utoc into a presentation-ready container
     record (chunk detail capped; counts/totals complete)."""
+    if limits is None:
+        limits = UnrealLimits()
     try:
         parsed = parse_utoc(utoc_bytes, name)
     except IoStoreError as e:
@@ -114,10 +222,13 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
     parsed.pop("_blocks", None)
     entries = parsed.pop("entries")
     total = len(entries)
-    parsed["entries"] = entries[:ENTRY_CAP]
-    if total > ENTRY_CAP:
+    shown, counts = _capped(entries, limits.max_chunks)
+    parsed["entries"] = shown
+    parsed["entries_counts"] = counts
+    if counts["skipped"]:
         parsed["entries_capped"] = (
-            f"chunk detail capped at {ENTRY_CAP} of {total}; "
+            f"chunk detail limited to {limits.max_chunks} "
+            f"of {total} (--all-details to lift); "
             "counts and totals cover every chunk")
     parsed["entry"] = name
     if ucas_name:
@@ -126,7 +237,7 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
     return parsed
 
 
-def zen_package_summary(data, name):
+def zen_package_summary(data, name, limits=None):
     """Parse one Zen package into a presentation-ready
     record (detail capped the same way as classic
     packages; counts complete). A chunk whose header
@@ -135,6 +246,8 @@ def zen_package_summary(data, name):
     keeps its identification record with the parse
     reason in the note; it is never reported as a
     corrupt classic package."""
+    if limits is None:
+        limits = UnrealLimits()
     try:
         parsed = parse_zen_package(data, name)
     except ZenError as e:
@@ -144,54 +257,76 @@ def zen_package_summary(data, name):
             f"stopped: {e}")
         return record
     total_names = len(parsed["names"])
-    if total_names > NAME_CAP:
-        parsed["names"] = parsed["names"][:NAME_CAP]
+    shown, counts = _capped(parsed["names"], limits.max_names)
+    parsed["names"] = shown
+    parsed["names_counts"] = counts
+    if counts["skipped"]:
         parsed["names_capped"] = (
-            f"name detail capped at {NAME_CAP} of {total_names}; "
-            "counts cover every name")
+            f"name detail limited to {limits.max_names} of "
+            f"{total_names} (--max-names or --all-details "
+            "to lift); counts cover every name")
     for key in ("imports", "exports"):
         total = len(parsed[key])
-        if total > ENTRY_CAP:
-            parsed[key] = parsed[key][:ENTRY_CAP]
+        shown, counts = _capped(parsed[key], limits.max_chunks)
+        parsed[key] = shown
+        parsed[key + "_counts"] = counts
+        if counts["skipped"]:
             parsed[key + "_capped"] = (
-                f"{key} detail capped at {ENTRY_CAP} of {total}; "
+                f"{key} detail limited to "
+                f"{limits.max_chunks} of {total} "
+                "(--max-chunks or --all-details to lift); "
                 "counts cover every entry")
     parsed["entry"] = name
     parsed["zen_header_size"] = parsed["summary"]["header_size"]
     return parsed
 
 
-def package_summary(data, name, uexp_data=None):
+def package_summary(data, name, uexp_data=None, limits=None):
     """Parse one package into a presentation-ready record
     (name/import/export detail capped; counts complete).
     Zen (IoStore-native) chunks dispatch to the Zen
     parser; everything else to the classic one."""
+    if limits is None:
+        limits = UnrealLimits()
     if _is_zen_package(data):
-        return zen_package_summary(data, name)
+        return zen_package_summary(data, name, limits)
     try:
         parsed = parse_package(data, name, uexp_data)
     except UAssetError as e:
         return {"entry": name, "error": f"package parse failed: {e}"}
     total_names = len(parsed["names"])
-    if total_names > NAME_CAP:
-        parsed["names"] = parsed["names"][:NAME_CAP]
+    shown, counts = _capped(parsed["names"], limits.max_names)
+    parsed["names"] = shown
+    parsed["names_counts"] = counts
+    if counts["skipped"]:
         parsed["names_capped"] = (
-            f"name detail capped at {NAME_CAP} of {total_names}; "
-            "counts cover every name")
+            f"name detail limited to {limits.max_names} of "
+            f"{total_names} (--max-names or --all-details "
+            "to lift); counts cover every name")
     for key in ("imports", "exports", "depends"):
         total = len(parsed[key])
-        if total > ENTRY_CAP:
-            parsed[key] = parsed[key][:ENTRY_CAP]
+        shown, counts = _capped(parsed[key], limits.max_chunks)
+        parsed[key] = shown
+        parsed[key + "_counts"] = counts
+        if counts["skipped"]:
             parsed[key + "_capped"] = (
-                f"{key} detail capped at {ENTRY_CAP} of {total}; "
+                f"{key} detail limited to "
+                f"{limits.max_chunks} of {total} "
+                "(--max-chunks or --all-details to lift); "
                 "counts cover every entry")
     searchable = parsed["searchable_names"]
-    if len(searchable) > 100:
+    s_total = len(searchable)
+    if limits.max_searchable is not None \
+            and s_total > limits.max_searchable:
         parsed["searchable_names"] = dict(
-            list(searchable.items())[:100])
+            list(searchable.items())[:limits.max_searchable])
+    parsed["searchable_names_counts"] = _account(
+        s_total, len(parsed["searchable_names"]))
+    if parsed["searchable_names_counts"]["skipped"]:
         parsed["searchable_names_capped"] = (
-            f"searchable-names detail capped at 100 of "
-            f"{len(searchable)}; counts cover every entry")
+            f"searchable-names detail limited to "
+            f"{limits.max_searchable} of {s_total} "
+            "(--all-details to lift); counts cover every entry")
     parsed["entry"] = name
     return parsed
 
@@ -218,7 +353,38 @@ def _package_generation(pkg):
     return None
 
 
-def _package_limitations():
+def unreal_capabilities():
+    """Compose the per-module capability facts (each
+    narlib module owns its own facts; this tool only
+    composes them)."""
+    return {
+        "uasset": _uasset_mod.capabilities(),
+        "zen": _zen_mod.capabilities(),
+        "iostore": _iostore_mod.capabilities(),
+    }
+
+
+def _package_limitations(caps=None):
+    """Generated from the narlib capability facts: every
+    factual claim below traces to a capabilities() field,
+    so the text cannot drift from the parsers."""
+    if caps is None:
+        caps = unreal_capabilities()
+    ua = caps["uasset"]
+    zn = caps["zen"]
+    tag = {t["ue5_object_version"]: t
+           for t in ua["tag_extension_layouts"]}
+    t1011 = tag[1011]
+    t1012 = tag["1012+"]
+    unv = ua["unversioned"]
+    zen_layouts = ", ".join(
+        f"{lay['layout']} ({lay['status']}, verification: "
+        f"{lay['verification']}"
+        + (f", {lay['real_packages_verified']:,} real "
+           f"packages verified"
+           if lay.get("real_packages_verified") else "")
+        + ")"
+        for lay in zn["layouts"])
     return [
         "Package property streams are parsed best-effort: "
         "values are decoded only for primitive types whose "
@@ -229,16 +395,29 @@ def _package_limitations():
         ".usmap mapping file to read properties; their "
         "property streams are reported as unparsed, with "
         "the reason.",
-        "UE5 property tag extensions (UE5 object version "
-        ">= 1011) are reported as unsupported rather than "
-        "guessed at.",
-        "Zen (IoStore-native) packages are parsed from "
-        "their Zen header: name map, import/export maps "
-        "and bundle entries are decoded, while the "
-        "dependency-bundle and imported-package-name "
-        "sections are located and measured, not decoded, "
-        "and versioned Zen property tag streams inside "
-        "exports are located and measured, not decoded.",
+        f"UE5 property tag extensions are implemented: "
+        f"UE5 object version 1011 uses the "
+        f"{t1011['layout']} layout ({t1011['status']}, "
+        f"verification: {t1011['verification']}) and UE5 "
+        f"object version 1012+ uses the "
+        f"{t1012['layout']} layout ({t1012['status']}, "
+        f"verification: {t1012['verification']}); "
+        f"{ua['tag_extension_note']}.",
+        f"Unversioned packages are read under a stated "
+        f"assumption: the UE5 {unv['assumed_ue5_object_version']} "
+        f"table layout plus the final UE4 "
+        f"({unv['assumed_ue4_object_version']}) layout, "
+        f"accepted only when the structure validates end "
+        f"to end.",
+        "Kismet/Blueprint graphs are not decoded by "
+        "this build.",
+        f"Zen (IoStore-native) packages are parsed from "
+        f"their Zen header (layouts: {zen_layouts}): "
+        f"name map, import/export maps and bundle entries "
+        f"are decoded, while the dependency-bundle and "
+        f"imported-package-name sections are located and "
+        f"measured, not decoded, and Zen export property "
+        f"streams are located and measured, not decoded.",
     ]
 
 
@@ -279,22 +458,34 @@ def _zen_package_record(blob, path):
     }
 
 
-def iostore_packages(utoc_bytes, ucas_bytes, container_name):
+def iostore_packages(utoc_bytes, ucas_bytes, container_name,
+                     limits=None):
     """Extract and parse the packages a container's
-    directory index names (.uasset/.umap chunks)."""
+    directory index names (.uasset/.umap chunks).
+
+    Returns (records, accounting): the accounting covers
+    every package the index names, including the ones
+    the cap skipped and the ones extraction failed on.
+    Packages are extracted and parsed one at a time; each
+    blob is released before the next chunk is read."""
+    if limits is None:
+        limits = UnrealLimits()
     out = []
     if ucas_bytes is None:
-        return out
+        return out, _account(0, 0)
     try:
         container = parse_utoc(utoc_bytes, container_name)
     except IoStoreError:
-        return out
-    for entry in container["entries"]:
-        path = entry.get("file") or ""
-        if not path.lower().endswith((".uasset", ".umap")):
-            continue
-        if len(out) >= PACKAGE_CAP:
+        return out, _account(0, 0)
+    named = [entry for entry in container["entries"]
+             if (entry.get("file") or "").lower().endswith(
+                 (".uasset", ".umap"))]
+    total = len(named)
+    for entry in named:
+        if limits.max_packages is not None \
+                and len(out) >= limits.max_packages:
             break
+        path = entry.get("file") or ""
         try:
             blob = extract_chunk(container, ucas_bytes,
                                  entry["index"])
@@ -302,30 +493,42 @@ def iostore_packages(utoc_bytes, ucas_bytes, container_name):
             out.append({"entry": path, "container": container_name,
                         "error": f"IoStore extraction failed: {e}"})
             continue
-        record = package_summary(blob, path)
+        record = package_summary(blob, path, limits=limits)
         record["container"] = container_name
         out.append(record)
-    return out
+        blob = None
+    failed = _failed_count(out)
+    return out, _account(total, len(out) - failed, failed)
 
 
-def pak_packages(pak_path, out_dir):
+def pak_packages(pak_path, out_dir, limits=None):
     """Extract and parse a pak's .uasset/.umap entries.
 
     Uses nar-pak's own extractor entry by entry (exact-name
     matches, .uexp siblings included); extraction failures
     (encrypted, unsupported compression) are recorded per
     package, never fatal.
+
+    Returns (records, total, accounting): total counts
+    every package entry in the pak, including the ones
+    the cap skipped and the ones extraction failed on.
+    Entries are extracted one at a time; each blob is
+    released before the next entry is read.
     """
+    if limits is None:
+        limits = UnrealLimits()
     listing = run_json_tool("nar-pak.py", [pak_path])
     if not listing or not listing.get("supported"):
-        return [], 0
+        return [], 0, _account(0, 0)
     entries = listing.get("entries") or []
     asset_names = [e["name"] for e in entries
                    if e["name"].lower().endswith(
                        (".uasset", ".umap"))]
     by_lower = {e["name"].lower(): e["name"] for e in entries}
     out = []
-    for name in asset_names[:PACKAGE_CAP]:
+    wanted_names = asset_names if limits.max_packages is None \
+        else asset_names[:limits.max_packages]
+    for name in wanted_names:
         stem = name.rsplit(".", 1)[0]
         wanted = [name]
         uexp_name = by_lower.get((stem + ".uexp").lower())
@@ -351,38 +554,59 @@ def pak_packages(pak_path, out_dir):
             continue
         record = package_summary(
             blobs[name], name,
-            blobs.get(uexp_name) if uexp_name else None)
+            blobs.get(uexp_name) if uexp_name else None,
+            limits=limits)
         out.append(record)
-    return out, len(asset_names)
+        blobs = {}
+    failed = _failed_count(out)
+    return out, len(asset_names), _account(
+        len(asset_names), len(out) - failed, failed)
 
 
-def analyze(target, work_dir=None):
-    report = {"tool": "nar-unreal", "version": "2.5.1",
+def analyze(target, work_dir=None, limits=None):
+    if limits is None:
+        limits = UnrealLimits()
+    report = {"tool": "nar-unreal", "version": "2.5.2",
               "target": os.path.abspath(target),
-              "target_sha256": sha256_of(target)}
+              "target_sha256": sha256_of(target),
+              "limits": limits.describe()}
     lower = target.lower()
     if lower.endswith((".uasset", ".umap")):
         stem = target.rsplit(".", 1)[0]
-        uexp_data = None
-        if os.path.exists(stem + ".uexp"):
-            with open(stem + ".uexp", "rb") as fh:
-                uexp_data = fh.read()
-        with open(target, "rb") as fh:
+        # Bare packages are mapped, not read whole (the
+        # parsers slice only what they touch); the mapping
+        # lives until the package record is built.
+        with contextlib.ExitStack() as stack:
+            uexp_data = None
+            if os.path.exists(stem + ".uexp"):
+                uexp_data = stack.enter_context(
+                    mapped_file(stem + ".uexp"))
+            data = stack.enter_context(mapped_file(target))
             pkg = package_summary(
-                fh.read(), os.path.basename(target), uexp_data)
+                data, os.path.basename(target), uexp_data,
+                limits=limits)
         report["verdict"] = "package"
         report["generation"] = _package_generation(pkg)
         report["packages"] = [pkg]
+        report["capabilities"] = unreal_capabilities()
         report["limitations"] = _package_limitations()
         return report
     if lower.endswith(".pak"):
         report["verdict"] = "pak-container"
         report["paks"] = [pak_summary(target)]
         if work_dir:
-            pkgs, total = pak_packages(
-                target, os.path.join(work_dir, "pak-assets"))
+            pkgs, total, pkg_counts = pak_packages(
+                target, os.path.join(work_dir, "pak-assets"),
+                limits=limits)
             report["pak_packages"] = pkgs
             report["pak_package_file_count"] = total
+            report["pak_package_counts"] = pkg_counts
+            if pkg_counts["skipped"]:
+                report["pak_packages_capped"] = (
+                    f"package parsing limited to "
+                    f"{limits.max_packages} of {total} "
+                    "(--max-packages or --all-packages to "
+                    "lift); counts cover every package")
             report["limitations"] = _package_limitations()
         else:
             report["limitations"] = [
@@ -394,27 +618,48 @@ def analyze(target, work_dir=None):
     if lower.endswith(".utoc"):
         sibling = target[:-5] + ".ucas"
         ucas_name = ucas_size = None
-        ucas_bytes = None
-        if os.path.exists(sibling):
-            ucas_name = os.path.basename(sibling)
-            ucas_size = os.path.getsize(sibling)
-            with open(sibling, "rb") as fh:
-                ucas_bytes = fh.read()
-        with open(target, "rb") as fh:
-            utoc_bytes = fh.read()
-        container = iostore_summary(
-            utoc_bytes, os.path.basename(target),
-            ucas_name, ucas_size)
-        report["verdict"] = "iostore-container"
-        report["generation"] = "UE5-era (IoStore packaging)"
-        report["iostore_files"] = [os.path.basename(target)]
-        report["iostore_containers"] = [container]
-        report["limitations"] = _iostore_limitations()
-        pkgs = iostore_packages(
-            utoc_bytes, ucas_bytes, os.path.basename(target))
-        if pkgs:
-            report["iostore_packages"] = pkgs
-            report["limitations"] += _package_limitations()
+        # Bare IoStore set: map the .utoc and the sibling
+        # .ucas instead of reading them whole — the .ucas
+        # is the large file (hundreds of MB in the wild)
+        # and extract_chunk slices only the blocks of the
+        # chunks actually extracted. The mappings live
+        # until every record below is built (records hold
+        # parsed data only, never mapping references).
+        with contextlib.ExitStack() as stack:
+            ucas_bytes = None
+            if os.path.exists(sibling):
+                ucas_name = os.path.basename(sibling)
+                ucas_size = os.path.getsize(sibling)
+                ucas_bytes = stack.enter_context(
+                    mapped_file(sibling))
+            utoc_bytes = stack.enter_context(
+                mapped_file(target))
+            container = iostore_summary(
+                utoc_bytes, os.path.basename(target),
+                ucas_name, ucas_size, limits=limits)
+            report["verdict"] = "iostore-container"
+            report["generation"] = "UE5-era (IoStore packaging)"
+            report["iostore_files"] = [os.path.basename(target)]
+            report["iostore_containers"] = [container]
+            report["iostore_container_counts"] = _account(
+                1, 0 if container.get("error") else 1,
+                1 if container.get("error") else 0)
+            report["capabilities"] = unreal_capabilities()
+            report["limitations"] = _iostore_limitations()
+            pkgs, pkg_counts = iostore_packages(
+                utoc_bytes, ucas_bytes,
+                os.path.basename(target), limits=limits)
+            report["iostore_package_counts"] = pkg_counts
+            if pkg_counts["skipped"]:
+                report["iostore_packages_capped"] = (
+                    f"package parsing limited to "
+                    f"{limits.max_packages} of "
+                    f"{pkg_counts['total']} (--max-packages or "
+                    "--all-packages to lift); counts cover "
+                    "every package")
+            if pkgs:
+                report["iostore_packages"] = pkgs
+                report["limitations"] += _package_limitations()
         return report
     if lower.endswith(".ucas"):
         report["verdict"] = "iostore-data"
@@ -466,47 +711,97 @@ def analyze(target, work_dir=None):
                 asset_names.append(name)
             elif "/config/" in ln and ln.endswith(".ini"):
                 configs.append(name)
-        for name in utoc_names[:CONTAINER_CAP]:
+        # APK/zip mode boundary: members materialize via
+        # zf.read() (decompression requires it); only the
+        # bare-file paths above map their files.
+        container_names = utoc_names \
+            if limits.max_containers is None \
+            else utoc_names[:limits.max_containers]
+        for name in container_names:
             ucas_name = ucas_by_prefix.get(name[:-5].lower())
             ucas_size = (infos[ucas_name].file_size
                          if ucas_name else None)
             containers.append(iostore_summary(
-                zf.read(name), name, ucas_name, ucas_size))
-        if len(utoc_names) > CONTAINER_CAP:
-            containers.append({
-                "note": f"{len(utoc_names)} .utoc containers "
-                        f"found; only the first {CONTAINER_CAP} "
-                        "were parsed"})
-        for name in asset_names[:PACKAGE_CAP]:
+                zf.read(name), name, ucas_name, ucas_size,
+                limits=limits))
+        loose_names = asset_names \
+            if limits.max_packages is None \
+            else asset_names[:limits.max_packages]
+        for name in loose_names:
             stem = name.rsplit(".", 1)[0]
             uexp_entry = by_lower.get((stem + ".uexp").lower())
             packages.append(package_summary(
                 zf.read(name), name,
-                zf.read(uexp_entry) if uexp_entry else None))
-        for name in utoc_names[:2]:
+                zf.read(uexp_entry) if uexp_entry else None,
+                limits=limits))
+        # IoStore package extraction: the shared package
+        # cap applies across the containers considered, in
+        # order (today's behaviour). Each container is
+        # visited with only the remaining allowance, so no
+        # chunk is extracted past the cap; once the cap is
+        # spent, later considered containers are still
+        # visited with a zero allowance so their package
+        # totals are counted (index parse only, no
+        # extraction). Blobs live only inside
+        # iostore_packages, one chunk at a time.
+        io_considered = utoc_names \
+            if limits.max_iostore_package_containers is None \
+            else utoc_names[
+                :limits.max_iostore_package_containers]
+        io_counts_total = 0
+        io_counts_failed = 0
+        remaining = limits.max_packages
+        for name in io_considered:
             ucas_name = ucas_by_prefix.get(name[:-5].lower())
             if not ucas_name:
                 continue
-            io_packages.extend(iostore_packages(
-                zf.read(name), zf.read(ucas_name), name))
-            if len(io_packages) >= PACKAGE_CAP:
-                io_packages = io_packages[:PACKAGE_CAP]
-                break
+            sub_limits = UnrealLimits(
+                max_packages=remaining,
+                max_containers=limits.max_containers,
+                max_chunks=limits.max_chunks,
+                max_names=limits.max_names,
+                max_searchable=limits.max_searchable,
+                max_display=limits.max_display,
+                max_iostore_package_containers=None)
+            records, sub_counts = iostore_packages(
+                zf.read(name), zf.read(ucas_name), name,
+                limits=sub_limits)
+            io_counts_total += sub_counts["total"]
+            io_counts_failed += sub_counts["failed"]
+            io_packages.extend(records)
+            if remaining is not None:
+                remaining -= len(records)
+                if remaining < 0:
+                    remaining = 0
     pak_pkgs = []
     pak_pkg_total = 0
+    pak_counts_failed = 0
     if work_dir:
+        remaining = limits.max_packages
         for entry_name, tmp in extracted_paks:
-            pkgs, total = pak_packages(
+            sub_limits = UnrealLimits(
+                max_packages=remaining,
+                max_containers=limits.max_containers,
+                max_chunks=limits.max_chunks,
+                max_names=limits.max_names,
+                max_searchable=limits.max_searchable,
+                max_display=limits.max_display,
+                max_iostore_package_containers=
+                limits.max_iostore_package_containers)
+            pkgs, total, sub_counts = pak_packages(
                 tmp, os.path.join(
                     work_dir, "pak-assets",
-                    os.path.basename(entry_name)))
+                    os.path.basename(entry_name)),
+                limits=sub_limits)
             pak_pkg_total += total
+            pak_counts_failed += sub_counts["failed"]
             for rec in pkgs:
                 rec["container"] = entry_name
             pak_pkgs.extend(pkgs)
-            if len(pak_pkgs) >= PACKAGE_CAP:
-                pak_pkgs = pak_pkgs[:PACKAGE_CAP]
-                break
+            if remaining is not None:
+                remaining -= len(pkgs)
+                if remaining <= 0:
+                    break
     generation = None
     if iostore:
         generation = "UE5-era (IoStore packaging)"
@@ -531,6 +826,55 @@ def analyze(target, work_dir=None):
             "--work DIR (entries are extracted there first); "
             "loose and IoStore-resident packages are parsed "
             "in place.")
+    container_failed = _failed_count(containers)
+    container_counts = _account(
+        len(utoc_names), len(containers) - container_failed,
+        container_failed)
+    loose_failed = _failed_count(packages)
+    package_counts = _account(
+        len(asset_names), len(packages) - loose_failed,
+        loose_failed)
+    io_failed = _failed_count(io_packages)
+    io_package_counts = _account(
+        io_counts_total, len(io_packages) - io_failed,
+        io_failed)
+    io_package_counts["containers_considered"] = \
+        len(io_considered)
+    io_package_counts["containers_total"] = len(utoc_names)
+    pak_package_counts = _account(
+        pak_pkg_total, len(pak_pkgs) - pak_counts_failed,
+        pak_counts_failed)
+    config_shown, config_counts = _capped(
+        configs, limits.max_display)
+    files_shown, files_counts = _capped(
+        asset_names, limits.max_display)
+    if container_counts["skipped"]:
+        limitations.append(
+            f"container parsing limited to "
+            f"{limits.max_containers} of {len(utoc_names)} "
+            "(--max-containers or --all-containers to "
+            "lift); counts cover every container")
+    if package_counts["skipped"]:
+        limitations.append(
+            f"loose package parsing limited to "
+            f"{limits.max_packages} of {len(asset_names)} "
+            "(--max-packages or --all-packages to lift); "
+            "counts cover every package")
+    if io_package_counts["skipped"]:
+        limitations.append(
+            f"IoStore package parsing limited to "
+            f"{len(io_packages)} of {io_counts_total} "
+            f"across the {len(io_considered)} container(s) "
+            "considered for package extraction "
+            "(--max-packages or --all-packages to lift); "
+            "counts cover every package in the containers "
+            "considered")
+    if pak_package_counts["skipped"]:
+        limitations.append(
+            f"pak package parsing limited to "
+            f"{len(pak_pkgs)} of {pak_pkg_total} "
+            "(--max-packages or --all-packages to lift); "
+            "counts cover every package in the paks visited")
     report.update({
         "verdict": "unreal" if (unreal_hint or paks or iostore
                                 or asset_names)
@@ -541,26 +885,52 @@ def analyze(target, work_dir=None):
         "paks": paks,
         "iostore_files": iostore,
         "iostore_containers": containers,
-        "config_files": configs[:25],
-        "package_files": asset_names[:25],
+        "iostore_container_counts": container_counts,
+        "config_files": config_shown,
+        "config_file_counts": config_counts,
+        "package_files": files_shown,
+        "package_file_counts": files_counts,
         "package_file_count": len(asset_names),
         "packages": packages,
+        "package_counts": package_counts,
         "iostore_packages": io_packages,
+        "iostore_package_counts": io_package_counts,
         "pak_packages": pak_pkgs,
+        "pak_package_counts": pak_package_counts,
         "pak_package_file_count": pak_pkg_total,
+        "capabilities": unreal_capabilities(),
         "limitations": limitations,
     })
     return report
 
 
-def _iostore_limitations():
+def _iostore_limitations(caps=None):
+    """Generated from narlib.iostore.capabilities()."""
+    if caps is None:
+        caps = unreal_capabilities()
+    io = caps["iostore"]
+    versions = io["toc_versions"]
+    lo, hi = io["toc_version_range"]
+    version_names = ", ".join(
+        versions[str(v)] if str(v) in versions
+        else versions[v]
+        for v in range(lo, hi + 1))
+    di_layouts = ", ".join(
+        lay["layout"] for lay in io["directory_index_layouts"])
+    decoded = ", ".join(io["compression_methods_decoded"])
     return [
         "IoStore chunk payloads are inventoried, not "
         "extracted, in APK mode; extraction is a narlib "
         "capability exercised by the unit suite.",
-        "IoStore compression methods other than None/Zlib "
-        "(e.g. Oodle) are named, not decoded; containers "
-        "flagged Encrypted are inventoried, never decrypted.",
+        f"IoStore TOC versions {lo}-{hi} are implemented "
+        f"({version_names}); directory-index layouts are "
+        f"implemented: {di_layouts}.",
+        f"IoStore compression methods decoded: {decoded}; "
+        f"compression methods other than {decoded} "
+        f"(e.g. Oodle) are named, not decoded.",
+        "IoStore containers flagged Encrypted, including "
+        "AES-sealed indexes, are inventoried, never "
+        "decrypted.",
     ]
 
 
@@ -608,6 +978,17 @@ def human(report):
                   f"{di.get('files_named')} files named")
         if c.get("entries_capped"):
             print(f"    {c['entries_capped']}")
+    for key in ("iostore_container_counts", "package_counts",
+                "iostore_package_counts", "pak_package_counts",
+                "pak_package_counts"):
+        counts = report.get(key)
+        if counts and (counts.get("skipped")
+                       or counts.get("failed")):
+            print(f"{key}: {counts}")
+    for capped_key in ("iostore_packages_capped",
+                       "pak_packages_capped"):
+        if report.get(capped_key):
+            print(f"    {report[capped_key]}")
     pkg_groups = (("packages", report.get("packages")),
                   ("iostore_packages",
                    report.get("iostore_packages")),
@@ -681,9 +1062,47 @@ def main(argv=None):
     p.add_argument("--json", action="store_true")
     p.add_argument("--work", metavar="DIR",
                    help="extraction dir for parsing bundled paks")
+    p.add_argument("--max-packages", type=int,
+                   default=PACKAGE_CAP, metavar="N",
+                   help="packages fully parsed per source "
+                        f"(default {PACKAGE_CAP})")
+    p.add_argument("--max-containers", type=int,
+                   default=CONTAINER_CAP, metavar="N",
+                   help="IoStore containers parsed in APK "
+                        f"mode (default {CONTAINER_CAP})")
+    p.add_argument("--max-chunks", type=int,
+                   default=ENTRY_CAP, metavar="N",
+                   help="chunk/import/export detail kept per "
+                        f"container or package (default "
+                        f"{ENTRY_CAP})")
+    p.add_argument("--max-names", type=int, default=NAME_CAP,
+                   metavar="N",
+                   help="name detail kept per package "
+                        f"(default {NAME_CAP})")
+    p.add_argument("--all-packages", action="store_true",
+                   help="parse every package (lifts "
+                        "--max-packages and the APK-mode "
+                        "IoStore package-extraction container "
+                        "limit); items are still processed "
+                        "one at a time, but the report grows "
+                        "with every package")
+    p.add_argument("--all-containers", action="store_true",
+                   help="parse every IoStore container "
+                        "(lifts --max-containers)")
+    p.add_argument("--all-details", action="store_true",
+                   help="keep all chunk/name/import/export/"
+                        "searchable detail and all display-"
+                        "list entries (lifts --max-chunks, "
+                        "--max-names and the detail caps); "
+                        "the report grows with every entry")
     args = p.parse_args(argv)
+    for flag in ("max_packages", "max_containers",
+                 "max_chunks", "max_names"):
+        if getattr(args, flag) < 0:
+            p.error(f"--{flag.replace('_', '-')} must be >= 0")
     try:
-        report = analyze(args.target, args.work)
+        report = analyze(args.target, args.work,
+                         limits_from_args(args))
     except (FileNotFoundError, zipfile.BadZipFile) as e:
         print(f"nar-unreal: {e}", file=sys.stderr)
         return 2

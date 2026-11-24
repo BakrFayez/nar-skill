@@ -41,10 +41,11 @@ Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
 """
 import argparse
+import contextlib
 import fnmatch
-import gzip
 import hashlib
 import json
+import mmap
 import os
 import struct
 import sys
@@ -464,11 +465,48 @@ def _parse_index_encoded(data, version, index_offset, index_size):
     return mount, entries, (False, 5), deleted
 
 
+_TINY_BYTES = 64 * 1024
+
+
+@contextlib.contextmanager
+def _mapped(path):
+    """Read-only mmap of path (bytes fallback for tiny
+    files or when mmap fails). A local, stdlib-only copy
+    of the narlib.mmapio idea: this script stays
+    standalone by design, so it does not import narlib.
+    The index parser and the entry extractors slice only
+    the ranges they touch, so a mapped pak is never
+    materialized whole."""
+    size = os.path.getsize(path)
+    if size <= _TINY_BYTES:
+        with open(path, "rb") as fh:
+            yield fh.read()
+        return
+    fh = open(path, "rb")
+    try:
+        try:
+            mapping = mmap.mmap(fh.fileno(), 0,
+                                access=mmap.ACCESS_READ)
+        except (OSError, ValueError):
+            fh.seek(0)
+            yield fh.read()
+            return
+        try:
+            yield mapping
+        finally:
+            mapping.close()
+    finally:
+        fh.close()
+
+
 def list_pak(path):
     if not os.path.isfile(path):
         raise FileNotFoundError(f"not a file: {path}")
-    with open(path, "rb") as fh:
-        data = fh.read()
+    with _mapped(path) as data:
+        return _list_pak_data(path, data)
+
+
+def _list_pak_data(path, data):
     version, index_offset, index_size = find_footer(data)
     report = {
         "file": os.path.basename(path),
@@ -548,6 +586,32 @@ def list_pak(path):
     return report
 
 
+def _decompress_capped(raw, use_gzip, limit, what):
+    """Decompress one zlib/gzip stream with an allocation
+    bound: at most ``limit`` bytes of output are ever
+    materialized (plus one probe byte). The index/header
+    already promise the entry's uncompressed size, and the
+    extractors verify the result against it afterwards —
+    but without a cap, a hostile entry whose stream expands
+    far beyond its promised size would be fully inflated
+    before that check could refuse it. Raises PakError when
+    the stream is corrupt, truncated, or expands past the
+    promised size."""
+    d = zlib.decompressobj(31 if use_gzip else zlib.MAX_WBITS)
+    try:
+        out = d.decompress(bytes(raw), limit + 1)
+    except zlib.error as e:
+        raise PakError(f"decompression failed: {e}") from e
+    if len(out) > limit or d.unconsumed_tail:
+        raise PakError(
+            f"{what} expands past the {limit:,} bytes the "
+            "index promises; refusing to inflate it further")
+    if not d.eof:
+        raise PakError(f"decompression failed: {what} is a "
+                       "truncated stream")
+    return out
+
+
 def extract_entry(data, version, layout, entry):
     """Return the decompressed bytes of one entry.
 
@@ -597,24 +661,20 @@ def extract_entry(data, version, layout, entry):
         raw = data[r.pos:r.pos + size]
         if len(raw) != size:
             raise PakError("compressed entry is truncated in the file")
-        try:
-            out = (zlib.decompress(raw) if method == 1
-                   else gzip.decompress(raw))
-        except (zlib.error, OSError, EOFError) as e:
-            raise PakError(f"decompression failed: {e}") from e
+        out = _decompress_capped(raw, method == 2, uncompressed,
+                                 "compressed entry")
     elif method in (1, 2):
         chunks = []
+        done = 0
         for start, end in blocks:
             raw = data[start:end]
             if len(raw) != end - start:
                 raise PakError("compression block is truncated in the file")
-            try:
-                if method == 1:
-                    chunks.append(zlib.decompress(raw))
-                else:
-                    chunks.append(gzip.decompress(raw))
-            except (zlib.error, OSError, EOFError) as e:
-                raise PakError(f"decompression failed: {e}") from e
+            chunk = _decompress_capped(
+                raw, method == 2, uncompressed - done,
+                "compression block")
+            chunks.append(chunk)
+            done += len(chunk)
         out = b"".join(chunks)
     else:
         raise PakError(
@@ -676,17 +736,18 @@ def extract_entry_encoded(data, entry):
         use_gzip = entry["compression"].lower() == "gzip"
         block_sizes = entry["compression_block_sizes"] or [size]
         chunks = []
+        done = 0
         pos = r.pos
         for block_size in block_sizes:
             raw = data[pos:pos + block_size]
             if len(raw) != block_size:
                 raise PakError("compression block is truncated in "
                                "the file")
-            try:
-                chunks.append(gzip.decompress(raw) if use_gzip
-                              else zlib.decompress(raw))
-            except (zlib.error, OSError, EOFError) as e:
-                raise PakError(f"decompression failed: {e}") from e
+            chunk = _decompress_capped(
+                raw, use_gzip, uncompressed - done,
+                "compression block")
+            chunks.append(chunk)
+            done += len(chunk)
             pos += block_size
         out = b"".join(chunks)
     else:
@@ -715,47 +776,51 @@ def extract_pak(path, pattern, out_dir):
     report = list_pak(path)
     if not report.get("supported"):
         return report
-    with open(path, "rb") as fh:
-        data = fh.read()
-    _mount, _entries, layout = _parse_index(
-        data, report["pak_version"], report["index_offset"],
-        report["index_size_bytes"])
-    matched = [e for e in report["entries"]
-               if e["name"] == pattern
-               or fnmatch.fnmatchcase(e["name"], pattern)]
-    report["extract_pattern"] = pattern
-    report["extract_out_dir"] = os.path.abspath(out_dir)
-    report["extract_matched"] = len(matched)
-    extracted = []
-    errors = []
-    for entry in matched:
-        try:
-            if report["pak_version"] >= 10:
-                blob = extract_entry_encoded(data, entry)
-            else:
-                blob = extract_entry(
-                    data, report["pak_version"], layout, entry)
-        except PakError as e:
-            errors.append({"name": entry["name"], "error": str(e)})
-            continue
-        rel = entry["name"].replace("\\", "/").lstrip("/")
-        parts = [p for p in rel.split("/") if p not in ("", ".", "..")]
-        if not parts:
-            errors.append({"name": entry["name"],
-                           "error": "entry name has no safe relative path"})
-            continue
-        dest = os.path.join(out_dir, *parts)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        with open(dest, "wb") as fh:
-            fh.write(blob)
-        extracted.append({
-            "name": entry["name"],
-            "out_path": os.path.abspath(dest),
-            "size_bytes": len(blob),
-            "sha256": hashlib.sha256(blob).hexdigest(),
-        })
-    report["extracted"] = extracted
-    report["extract_errors"] = errors
+    # Extraction reads only the matched entries' ranges
+    # from the mapping (plus their entry headers).
+    with _mapped(path) as data:
+        _mount, _entries, layout = _parse_index(
+            data, report["pak_version"], report["index_offset"],
+            report["index_size_bytes"])
+        matched = [e for e in report["entries"]
+                   if e["name"] == pattern
+                   or fnmatch.fnmatchcase(e["name"], pattern)]
+        report["extract_pattern"] = pattern
+        report["extract_out_dir"] = os.path.abspath(out_dir)
+        report["extract_matched"] = len(matched)
+        extracted = []
+        errors = []
+        for entry in matched:
+            try:
+                if report["pak_version"] >= 10:
+                    blob = extract_entry_encoded(data, entry)
+                else:
+                    blob = extract_entry(
+                        data, report["pak_version"], layout, entry)
+            except PakError as e:
+                errors.append({"name": entry["name"],
+                               "error": str(e)})
+                continue
+            rel = entry["name"].replace("\\", "/").lstrip("/")
+            parts = [p for p in rel.split("/")
+                     if p not in ("", ".", "..")]
+            if not parts:
+                errors.append({
+                    "name": entry["name"],
+                    "error": "entry name has no safe relative path"})
+                continue
+            dest = os.path.join(out_dir, *parts)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as fh:
+                fh.write(blob)
+            extracted.append({
+                "name": entry["name"],
+                "out_path": os.path.abspath(dest),
+                "size_bytes": len(blob),
+                "sha256": hashlib.sha256(blob).hexdigest(),
+            })
+        report["extracted"] = extracted
+        report["extract_errors"] = errors
     return report
 
 

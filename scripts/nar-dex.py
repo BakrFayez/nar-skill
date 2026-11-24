@@ -456,7 +456,7 @@ def baksmali_index(dex_bytes_path, out_dir):
 
 def analyze(target, out_dir=None, use_jadx=False,
             use_baksmali=False, disasm=None):
-    report = {"tool": "nar-dex", "version": "2.5.1",
+    report = {"tool": "nar-dex", "version": "2.5.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
     artifact = compiled_artifact_info(target)

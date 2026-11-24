@@ -1,0 +1,296 @@
+{
+  "design": "Builder intent, not parser measurement: each entry records the facts the fixture builder deliberately constructed. The regression tests in tests/unit/test_synthetic_fixtures.py assert that the real parsers report exactly these facts for the generated files.",
+  "fixtures": {
+    "dex": {
+      "facts": {
+        "class_def_count": 0,
+        "dex_version": "039",
+        "field_count": 0,
+        "method_id_count": 1,
+        "method_ref": [
+          "LFoo;",
+          "hello"
+        ],
+        "proto_count": 1,
+        "string_count": 2,
+        "strings": [
+          "LFoo;",
+          "hello"
+        ],
+        "type_count": 1,
+        "types": [
+          "LFoo;"
+        ]
+      },
+      "file_sizes": {
+        "synthetic.dex": 158
+      },
+      "files": [
+        "synthetic.dex"
+      ]
+    },
+    "elf": {
+      "facts": {
+        "arch": "AArch64",
+        "elf_class": "ELF64",
+        "needed": [
+          "libbar.so"
+        ],
+        "program_header_count": 2,
+        "section_count": 0,
+        "section_names": [],
+        "soname": "libfoo.so",
+        "type": "ET_DYN"
+      },
+      "file_sizes": {
+        "libsynthetic.so": 277
+      },
+      "files": [
+        "libsynthetic.so"
+      ]
+    },
+    "godot_pck": {
+      "facts": {
+        "encrypted": false,
+        "engine_version": "4.3.0",
+        "file_count": 2,
+        "file_paths": [
+          "res://hello.txt",
+          "res://project.godot"
+        ],
+        "format_version": 2,
+        "total_content_bytes": 52
+      },
+      "file_sizes": {
+        "synthetic.pck": 268
+      },
+      "files": [
+        "synthetic.pck"
+      ]
+    },
+    "iostore": {
+      "facts": {
+        "chunk_count": 3,
+        "chunk_type_names": [
+          "ExportBundleData",
+          "BulkData",
+          "PackageStoreEntry"
+        ],
+        "compressed_block_count": 4,
+        "compression_methods": [
+          "None",
+          "Zlib"
+        ],
+        "directory_index": {
+          "directory_count": 2,
+          "file_count": 3,
+          "file_paths": [
+            "../../../SyntheticGame/Content/ChunkA.uasset",
+            "../../../SyntheticGame/Content/ChunkB.ubulk",
+            "../../../SyntheticGame/global_names.bin"
+          ],
+          "layout": "classic",
+          "mount_point": "../../../SyntheticGame/"
+        },
+        "entries_by_type": {
+          "BulkData": 1,
+          "ExportBundleData": 1,
+          "PackageStoreEntry": 1
+        },
+        "layout": "current",
+        "toc_version": 6,
+        "toc_version_name": "OnDemandMetaData",
+        "total_chunk_bytes": 6386
+      },
+      "file_sizes": {
+        "synthetic.ucas": 5343,
+        "synthetic.utoc": 558
+      },
+      "files": [
+        "synthetic.ucas",
+        "synthetic.utoc"
+      ]
+    },
+    "pak": {
+      "facts": {
+        "compression_by_entry": {
+          "Game/Content/oodle.uasset": "Oodle",
+          "Game/Content/stored.uasset": "None",
+          "Game/Content/zlib1.uasset": "Zlib",
+          "Game/Content/zlib2.uasset": "Zlib"
+        },
+        "entry_count": 4,
+        "entry_names": [
+          "Game/Content/stored.uasset",
+          "Game/Content/zlib1.uasset",
+          "Game/Content/zlib2.uasset",
+          "Game/Content/oodle.uasset"
+        ],
+        "index_encrypted": false,
+        "mount_point": "../../../",
+        "pak_version": 11,
+        "supported": true
+      },
+      "file_sizes": {
+        "synthetic.pak": 1072
+      },
+      "files": [
+        "synthetic.pak"
+      ]
+    },
+    "uasset_ue4": {
+      "facts": {
+        "counts": {
+          "exports": 2,
+          "imports": 3,
+          "names": 33,
+          "searchable_names": 1,
+          "soft_object_paths": 0,
+          "soft_package_references": 1
+        },
+        "file_version_ue4": 513,
+        "file_version_ue5": null,
+        "folder_name": "/Game/Synthetic",
+        "legacy_file_version": -6,
+        "unversioned": false
+      },
+      "file_sizes": {
+        "synthetic_ue4.uasset": 1660
+      },
+      "files": [
+        "synthetic_ue4.uasset"
+      ]
+    },
+    "uasset_ue5_1010": {
+      "facts": {
+        "counts": {
+          "exports": 1,
+          "imports": 1,
+          "names": 21,
+          "searchable_names": 1,
+          "soft_object_paths": 1,
+          "soft_package_references": 1
+        },
+        "export_properties_status": "parsed",
+        "export_tag_layout": "classic",
+        "file_version_ue4": 522,
+        "file_version_ue5": 1010,
+        "folder_name": "/Game/Synthetic5",
+        "legacy_file_version": -8,
+        "unversioned": false
+      },
+      "file_sizes": {
+        "synthetic_ue5_1010.uasset": 980
+      },
+      "files": [
+        "synthetic_ue5_1010.uasset"
+      ]
+    },
+    "uasset_ue5_1011": {
+      "facts": {
+        "counts": {
+          "exports": 1,
+          "imports": 1,
+          "names": 21,
+          "searchable_names": 1,
+          "soft_object_paths": 1,
+          "soft_package_references": 1
+        },
+        "export_properties_status": "parsed",
+        "export_tag_layout": "ue5-tag-extension",
+        "file_version_ue4": 522,
+        "file_version_ue5": 1011,
+        "folder_name": "/Game/Synthetic5",
+        "legacy_file_version": -8,
+        "unversioned": false
+      },
+      "file_sizes": {
+        "synthetic_ue5_1011.uasset": 963
+      },
+      "files": [
+        "synthetic_ue5_1011.uasset"
+      ]
+    },
+    "uasset_ue5_1012": {
+      "facts": {
+        "counts": {
+          "exports": 1,
+          "imports": 1,
+          "names": 21,
+          "searchable_names": 1,
+          "soft_object_paths": 1,
+          "soft_package_references": 1
+        },
+        "export_properties_status": "parsed",
+        "export_tag_layout": "ue5-complete-type-name",
+        "file_version_ue4": 522,
+        "file_version_ue5": 1012,
+        "folder_name": "/Game/Synthetic5",
+        "legacy_file_version": -8,
+        "unversioned": false
+      },
+      "file_sizes": {
+        "synthetic_ue5_1012.uasset": 1163
+      },
+      "files": [
+        "synthetic_ue5_1012.uasset"
+      ]
+    },
+    "uasset_unversioned": {
+      "facts": {
+        "counts": {
+          "exports": 1,
+          "imports": 1,
+          "names": 6,
+          "searchable_names": 0,
+          "soft_object_paths": 0,
+          "soft_package_references": 0
+        },
+        "file_version_ue4": 0,
+        "file_version_ue5": null,
+        "folder_name": "/Game/Unversioned",
+        "legacy_file_version": -7,
+        "unversioned": true
+      },
+      "file_sizes": {
+        "synthetic_unversioned.uasset": 507
+      },
+      "files": [
+        "synthetic_unversioned.uasset"
+      ]
+    },
+    "zen": {
+      "facts": {
+        "counts": {
+          "bulk_data_map": 1,
+          "export_bundle_entries": 2,
+          "exports": 1,
+          "imported_public_export_hashes": 1,
+          "imports": 3,
+          "names": 7
+        },
+        "format": "zen-package",
+        "layout": "ue5_3_plus",
+        "names": [
+          "None",
+          "/Script/CoreUObject",
+          "Class",
+          "MyPackage",
+          "MyObject",
+          "MyClass",
+          "Object"
+        ],
+        "package_name": "MyPackage",
+        "trailer_magic_ok": true
+      },
+      "file_sizes": {
+        "synthetic_zen.uasset": 403
+      },
+      "files": [
+        "synthetic_zen.uasset"
+      ]
+    }
+  },
+  "generated_by": "tests/generate_fixtures.py",
+  "schema": 1
+}

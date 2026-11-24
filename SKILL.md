@@ -1,8 +1,8 @@
 ---
 name: nar
-description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis.
+description: "Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis."
 metadata:
-  version: "2.5.1"
+  version: "2.5.2"
 ---
 
 # NAR: Nirous Android Reversing
@@ -50,7 +50,10 @@ bash scripts/nar-doctor.sh
 
 It checks java, apktool, jadx, aapt2, apksigner, zipalign, and python3
 (core), plus adb, frida, ghidra, kuna, bundletool, il2cppdumper,
-mitmproxy, tshark, godotpcktool, gdre, and hermes-dec (optional).
+cpp2il, mitmproxy, tshark, godotpcktool, gdre, and hermes-dec
+(optional), and three self-checks: the bundled scripts compile
+and the protection-signature database loads (both core), and
+skill YAML validity (optional, when a YAML parser is present).
 Exit 0 means the core toolchain is ready. If a core tool is missing, read
 [setup and doctor](references/setup-and-doctor.md) and fix that one tool;
 do not repeat the whole setup for every question. `--json` gives
@@ -95,7 +98,7 @@ investigation with triage unless the question already names a deeper target.
 | Unity IL2CPP game: what is the game logic? | `python3 scripts/nar-il2cpp.py game.apk` (locates the pair, runs Il2CppDumper, summarizes), then Ghidra; Addressables content: `python3 scripts/nar-unity.py` parses catalog.json into a location inventory | [Unity IL2CPP](references/unity-il2cpp.md) |
 | Godot game: what is in the `.pck` and the scripts? | `python3 scripts/nar-godot.py game.apk` (pack listing + encryption flag, per-entry resource-type classification), GodotPckTool extract, GDRE Tools decompile | [native libs and JNI](references/native-libs-and-jni.md) |
 | Unreal game: what is inside the `.pak` packs? | Extract the `.pak`, then `python3 scripts/nar-pak.py game.pak` (list, or `--extract` entries) | [native libs and JNI](references/native-libs-and-jni.md) |
-| Unreal game: what is inside a `.uasset` / `.umap` package? | `python3 scripts/nar-unreal.py asset.uasset` (summary + name/import/export tables, resolved references, best-effort property tags), or the APK / `.utoc` / `.pak` holding it | [native libs and JNI](references/native-libs-and-jni.md) |
+| Unreal game: what is inside a `.uasset` / `.umap` package? | `python3 scripts/nar-unreal.py asset.uasset` (summary + name/import/export tables, resolved references, best-effort property tags; the report carries `limits` + generated `capabilities`, and `--max-packages` / `--max-containers` / `--max-chunks` / `--max-names` / `--all-packages` / `--all-containers` / `--all-details` lift the detail caps with total/processed/skipped/failed accounting), or the APK / `.utoc` / `.pak` holding it | [native libs and JNI](references/native-libs-and-jni.md) |
 | React Native app: what is in the JS bundle? | `python3 scripts/nar-rn.py app.apk` (Hermes vs JSC, bytecode version, counts, source-map detection, native-module inventory), then hermes-dec decompile | [React Native](references/react-native.md) |
 | Flutter/Dart app: what is in `libapp.so`? | `python3 scripts/nar-flutter.py app.apk` (Dart/Flutter versions, AOT markers, flutter_assets inventory), then Dart AOT strings and symbols | [Flutter and Dart](references/flutter-dart.md) |
 | What does it do on the network? | mitmproxy capture, tshark pcap reading | [network traffic](references/network-traffic.md) |

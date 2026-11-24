@@ -302,23 +302,32 @@ NAR_SCRIPTS_OK=""
 NAR_SCRIPTS_DETAIL=""
 if [ -n "$PY_BIN" ]; then
   NAR_SCRIPTS_OK="ok"
-  NAR_SCRIPTS_DETAIL="all bundled scripts compile"
+  # Compile EVERY scripts/*.py (glob, not a hand-maintained name
+  # list, so the checked set cannot drift from the tree again):
+  # the detail text claims all bundled scripts compile, so the
+  # loop must actually cover all of them.
   # Compile into a throwaway dir: py_compile otherwise writes
   # __pycache__ next to every script in the tree.
   PYC_DIR="$(mktemp -d 2>/dev/null || echo "")"
-  for s in nar-triage.py nar-strings.py nar-perms.py nar-compare.py nar-pak.py nar-analyze.py nar-il2cpp.py nar-flutter.py nar-godot.py nar-rn.py; do
-    if [ ! -f "$SCRIPT_DIR/$s" ]; then
-      NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="missing scripts/$s"; break
-    fi
+  NAR_SCRIPTS_COUNT=0
+  for script_path in "$SCRIPT_DIR"/*.py; do
+    [ -f "$script_path" ] || continue
+    s="$(basename "$script_path")"
+    NAR_SCRIPTS_COUNT=$((NAR_SCRIPTS_COUNT + 1))
     if [ -n "$PYC_DIR" ]; then
-      COMPILE_OK="$("$PY_BIN" -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' "$SCRIPT_DIR/$s" "$PYC_DIR/$s.pyc" 2>/dev/null && echo 1)"
+      COMPILE_OK="$("$PY_BIN" -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' "$script_path" "$PYC_DIR/$s.pyc" 2>/dev/null && echo 1)"
     else
-      COMPILE_OK="$("$PY_BIN" -m py_compile "$SCRIPT_DIR/$s" 2>/dev/null && echo 1)"
+      COMPILE_OK="$("$PY_BIN" -m py_compile "$script_path" 2>/dev/null && echo 1)"
     fi
     if [ -z "$COMPILE_OK" ]; then
       NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="scripts/$s does not compile"; break
     fi
   done
+  if [ "$NAR_SCRIPTS_COUNT" -eq 0 ]; then
+    NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="no bundled scripts found under scripts/"
+  elif [ -n "$NAR_SCRIPTS_OK" ]; then
+    NAR_SCRIPTS_DETAIL="all bundled scripts compile ($NAR_SCRIPTS_COUNT scripts)"
+  fi
   [ -n "$PYC_DIR" ] && rm -rf "$PYC_DIR"
 fi
 check "nar-scripts" "core" "$NAR_SCRIPTS_OK" "$NAR_SCRIPTS_DETAIL" "The scripts bundled with the skill are missing or broken; reinstall the skill"
@@ -331,6 +340,26 @@ if [ -n "$PY_BIN" ] && [ -f "$SIG_DB" ]; then
   if [ -n "$SIG_DETAIL" ]; then SIG_OK="ok"; fi
 fi
 check "protection-signatures" "core" "$SIG_OK" "$SIG_DETAIL" "scripts/protection-signatures.json is missing or unreadable; nar-triage cannot run its protection scan without it — reinstall the skill"
+
+# --- skill YAML (optional: skill.yaml + SKILL.md frontmatter must ---
+# --- parse as YAML when a YAML parser is available to python3) ---
+# Optional by design: PyYAML is a test-only dependency, never a
+# runtime one, so a missing parser reports "unavailable" and an
+# invalid file reports a warning — neither touches the core
+# verdict (the verdict loop only fails core checks).
+SKILL_YAML_OK=""; SKILL_YAML_DETAIL=""; SKILL_YAML_FORCED=""
+SKILL_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -n "$PY_BIN" ] && "$PY_BIN" -c "import yaml" 2>/dev/null; then
+  YAML_OUT="$("$PY_BIN" -c 'import sys, yaml; root = sys.argv[1]; d = yaml.safe_load(open(root + "/skill.yaml", encoding="utf-8")); assert isinstance(d, dict), "skill.yaml is not a mapping"; t = open(root + "/SKILL.md", encoding="utf-8").read(); assert t.startswith("---\n"), "SKILL.md has no frontmatter fence"; f = yaml.safe_load(t.split("---\n", 2)[1]); assert isinstance(f, dict), "SKILL.md frontmatter is not a mapping"; print("skill.yaml + SKILL.md frontmatter parse as valid YAML")' "$SKILL_ROOT" 2>&1)"
+  if [ $? -eq 0 ]; then
+    SKILL_YAML_OK="ok"
+    SKILL_YAML_DETAIL="$YAML_OUT"
+  else
+    SKILL_YAML_FORCED="warning"
+    SKILL_YAML_DETAIL="skill YAML invalid: $(printf '%s' "$YAML_OUT" | tail -n 1)"
+  fi
+fi
+check "skill-yaml" "optional" "$SKILL_YAML_OK" "$SKILL_YAML_DETAIL" "unavailable (no YAML parser): install PyYAML for python3 (pip install pyyaml) to enable skill YAML validation" "$SKILL_YAML_FORCED"
 
 # --- verdict ---
 CORE_OK=1

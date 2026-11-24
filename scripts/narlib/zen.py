@@ -146,6 +146,65 @@ VERSIONING_NOTE = (
     "per package")
 
 
+# Real packages the current (UE 5.3+) layout was verified
+# against: the stored Zen packages of the two local
+# IoStore corpora (684 + 525). The other two layouts have
+# synthetic fixtures only.
+ZEN_UE5_3_PLUS_REAL_PACKAGES = 1209
+
+
+def capabilities():
+    """Structured capability facts for this parser (the
+    source nar-unreal composes its Zen limitations from).
+    """
+    return {
+        "module": "narlib.zen",
+        "format": "zen-package",
+        "layouts": [
+            {"layout": "ue5_3_plus",
+             "status": "implemented",
+             "verification": "real",
+             "real_packages_verified":
+                 ZEN_UE5_3_PLUS_REAL_PACKAGES},
+            {"layout": "pre_ue5_3",
+             "status": "implemented",
+             "verification": "synthetic"},
+            {"layout": "ea_legacy",
+             "status": "implemented",
+             "verification": "synthetic"},
+        ],
+        "decoded": [
+            "Zen header",
+            "versioning info when the writer recorded it",
+            "per-package name map",
+            "bulk data map",
+            "imported public export hashes",
+            "import map",
+            "export map",
+            "export bundle entries",
+            "pre-5.3 graph data (package ids plus "
+            "per-package bundle counts)",
+        ],
+        "not_decoded": [
+            {"item": "dependency-bundle sections",
+             "status": "located-and-measured-not-decoded"},
+            {"item": "imported-package-name contents",
+             "status": "located-and-measured-not-decoded"},
+            {"item": "Zen export property streams",
+             "status": "located-and-measured-not-decoded"},
+            {"item": "Verse cell import/export map "
+                     "contents",
+             "status": "located-and-measured-not-decoded"},
+        ],
+        "requires_usmap": {
+            "item": ("property streams of Zen packages "
+                     "flagged PKG_UnversionedProperties"),
+            "requirement": ".usmap",
+            "status": "requires-usmap",
+        },
+    }
+
+
 class ZenError(Exception):
     pass
 

@@ -20,6 +20,11 @@ import sys
 import tempfile
 import unittest
 
+try:
+    import yaml
+except ImportError:  # PyYAML is a test-only dependency (2.5.2 W1)
+    yaml = None
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
@@ -179,6 +184,40 @@ class VersionConsistencyTest(unittest.TestCase):
         self.assertIn("NAR — NIROUS ANDROID INTELLIGENCE", pyproject)
         self.assertNotIn("NAR 2.0 —", readme)
         self.assertNotIn("NAR 2.0 —", pyproject)
+
+
+@unittest.skipIf(yaml is None,
+                 "PyYAML is not installed, so real YAML parsing "
+                 "cannot run; install the pyproject 'test'/'dev' "
+                 "extras (pyyaml) to enable this check")
+class YamlValidityTest(unittest.TestCase):
+    """Parser-based augmentation of the regex version grabs
+    (2.5.2 W1): skill.yaml and the SKILL.md frontmatter must
+    parse with a real YAML parser, and the parsed versions
+    must agree with the regex-collected ones. The full parser
+    suite lives in tests/unit/test_yaml_validation.py."""
+
+    def test_skill_yaml_parses_and_version_agrees(self):
+        data = yaml.safe_load(_read(ROOT, "skill.yaml"))
+        self.assertIsInstance(data, dict)
+        self.assertIsInstance(data["name"], str)
+        self.assertIsInstance(data["description"], str)
+        self.assertTrue(data["description"].strip())
+        self.assertIsInstance(data["include_in_prompt"], bool)
+        found = collect_versions(ROOT)
+        self.assertEqual(str(data["version"]), found["skill.yaml"])
+
+    def test_skill_md_frontmatter_parses_and_version_agrees(self):
+        text = _read(ROOT, "SKILL.md")
+        self.assertTrue(text.startswith("---\n"))
+        front = text.split("---\n", 2)[1]
+        data = yaml.safe_load(front)
+        self.assertIsInstance(data, dict)
+        self.assertEqual(data["name"], "nar")
+        self.assertIsInstance(data["description"], str)
+        self.assertTrue(data["description"].strip())
+        found = collect_versions(ROOT)
+        self.assertEqual(data["metadata"]["version"], found["SKILL.md"])
 
 
 if __name__ == "__main__":

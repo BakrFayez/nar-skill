@@ -1,5 +1,17 @@
 # NAR Architecture — 2.0
 
+> Inventory addendum (2.5.2 W6, 2026-11-24): the design
+> below is the 2.0 architecture, unchanged in shape. The
+> module, schema, registry, and CLI inventories in this
+> document were re-audited against the shipped 2.5.1 tree
+> (plus the 2.5.2 workstreams W1–W5) and corrected in
+> place: the `narlib` list now names all 18 modules, the
+> schema count is 24, the registry count is 35 tools /
+> 9 unavailable, and the runtime subsystem also persists
+> structured session records (`runtime-session.json`,
+> Evolution Phase 6). The per-capability status record
+> lives in `NAR_CAPABILITY_MATRIX.md`.
+
 NAR 2.0 keeps the 1.x layout that works (standalone scripts in
 `scripts/`, guides in `references/`, the repo root as the skill)
 and adds a shared core plus new intelligence modules beside the
@@ -36,10 +48,11 @@ existing scripts. Nothing working is moved or renamed: every
                 └───────────────┬────────────────────────────┘
                                 ▼
    External tools (orchestrated, never copied): apktool, jadx,
-   aapt2, apksigner, bundletool, baksmali, Il2CppDumper,
-   hermes-dec, GodotPckTool, GDRE, Ghidra, Kuna, readelf/nm,
-   mitmproxy, tshark, adb, frida — each declared in
-   scripts/registry.json with version checks and limitations.
+   aapt2, apksigner, bundletool, baksmali/smali, Il2CppDumper,
+   Cpp2IL, hermes-dec, GodotPckTool, GDRE, Ghidra, Kuna,
+   readelf/nm/objdump, mitmproxy, tshark, adb, frida — each
+   declared in scripts/registry.json with version checks and
+   limitations (35 tools declared; 9 registered unavailable).
 ```
 
 ## Core library (`scripts/narlib/`)
@@ -68,9 +81,41 @@ by nothing.
 - `narlib/dex.py` — DEX parser primitives (header, string/type/
   proto/field/method tables, class defs, code-item scan for
   invoke/reflection/native evidence) with streaming bounds.
+- `narlib/dexdis.py` — DEX bytecode disassembler (instruction
+  listings with operands resolved through the DEX's own tables,
+  plus a control-flow block summary).
 - `narlib/elf.py` — ELF parser primitives (headers, sections,
-  segments, dynamic table, symbol tables) for ELF32/64 on all
-  four Android architectures.
+  segments, dynamic table, symbol tables, relocations) for
+  ELF32/64 on all four Android architectures.
+- `narlib/dotnetmeta.py` — ECMA-335-lite reader for Cpp2IL
+  dummy-DLL output (TypeDef / MethodDef counts, namespaces).
+- `narlib/oat.py` — ART compiled-artifact parser (OAT header +
+  key-value store, VDEX fields + DEX carving, Dalvik ODEX,
+  ART image header; CDEX payloads identified, not decoded).
+- `narlib/iostore.py` — Unreal IoStore (UTOC/UCAS) parser:
+  TOC versions 0–10, classic + pooled directory-index layouts,
+  chunk inventory, None/Zlib extraction; owns the module's
+  `capabilities()` facts.
+- `narlib/uasset.py` — classic Unreal package parser
+  (FPackageFileSummary, name/import/export/depends tables,
+  best-effort property tags incl. the UE5 1011 / 1012+
+  tag-extension layouts); owns its `capabilities()` facts.
+- `narlib/zen.py` — Unreal Zen package parser (current,
+  pre-5.3 and Early Access layouts); owns its
+  `capabilities()` facts.
+- `narlib/signatures.py` — validating loader for the
+  versioned protection-signature database
+  (`scripts/protection-signatures.json`).
+- `narlib/companions.py` — brief-named case companion
+  projections (application / manifest / native-inventory /
+  frameworks / network-analysis / api-architecture),
+  schema-validated before writing.
+- `narlib/correlations.py` — cross-module correlation
+  records (DEX/ELF/manifest/network joins) for the
+  `correlations.json` companion.
+- `narlib/mmapio.py` — read-only file mapping (`mmap`)
+  helper so the parsers can run over large files without
+  whole-file reads (added in 2.5.2).
 
 ## Data flow (one analysis)
 
@@ -93,8 +138,11 @@ by nothing.
 6. **Comparison** — `nar-compare.py` keeps its 1.x output and
    gains the extended diff categories.
 7. **Reporting** — the orchestrator assembles `report.json`
-   plus the companion files that have data, `report.md`, and
-   (via `nar-report.py`) the offline HTML dashboard.
+   plus the companion files that have data (including the
+   brief-named projections from `narlib/companions.py` and
+   `correlations.json` from `narlib/correlations.py`),
+   `report.md`, and (via `nar-report.py`) the offline HTML
+   dashboard.
 8. **Case workspace** — every run lives in a case directory:
    `case.json` (id, input hash, config, stage states, tool
    versions, history). Completed stages are cached by
@@ -105,19 +153,31 @@ by nothing.
 `scripts/registry.json` is the single machine-readable
 declaration of tools and capabilities: name, kind, version
 probe, platforms, input formats, engines, required/optional,
-limitations, validation strategy. `nar-doctor.sh` stays the
-human-facing checker (bash, unchanged interface) and gains
-profile groupings; `narlib/registry.py` is the programmatic
-reader. The two are kept consistent by an e2e case.
+limitations, validation strategy (35 tools declared at
+2.5.1; 9 with kind `unavailable`). `nar-doctor.sh` stays the
+human-facing checker (bash, unchanged interface): a flat
+core/optional check list (22 checks at 2.5.2, including the
+bundled-scripts compile check, the protection-signatures
+database check, and the optional skill-YAML check) — it has
+no profile groupings. `narlib/registry.py` is the
+programmatic reader. The two are kept consistent by unit
+tests (`tests/unit/test_registry.py`) and the doctor's own
+checks, not by construction.
 
 ## Schemas
 
-`schemas/` holds JSON Schema documents for the 2.0 outputs
-(report, fingerprint, engine, endpoints, security findings,
-assets, comparison, execution log, case). Validation uses a
+`schemas/` holds JSON Schema documents for the structured
+outputs — 24 schemas at 2.5.1: report, fingerprint, engine,
+endpoints, security findings, assets, comparison,
+compare-feature-map, execution log, case, input, timeline,
+runtime-session, correlations, and the case companions and
+DEX/native documents (application, manifest, frameworks,
+native-inventory, network-analysis, api-architecture, dex,
+dex-classes, dex-methods, native). Validation uses a
 small stdlib structural validator (the project stays
 dependency-free at runtime); schemas are also valid inputs
-for standard validators in CI.
+for standard validators in CI. A parse-all regression test
+(`tests/unit/test_schemas.py`) loads every schema file.
 
 ## Runtime subsystem
 
@@ -142,7 +202,11 @@ remain unverified.
 
 - Every 1.1.0 script path and CLI flag keeps working.
 - `scripts/nar.py` (the unified `nar` CLI) is a wrapper: it
-  delegates to the same scripts and adds profiles, module
-  selection, and the report/doctor/tools verbs.
+  delegates to the same scripts, one verb per module (27
+  dispatcher verbs plus the `case` router and `version`,
+  at 2.5.1). It has no profile or `--module`/`--engine`
+  selection flags; module selection is the choice of verb,
+  and stage budgets live on `nar-analyze` itself
+  (`--stage-timeout` / `--total-budget`).
 - New JSON outputs are additive; 1.x JSON keys are not
   renamed or removed.

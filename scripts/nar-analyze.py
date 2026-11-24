@@ -48,7 +48,7 @@ try:
     from narlib import correlations as _correlations
     from narlib import evidence as _evidence
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.5.1"
+    NAR_VERSION = "2.5.2"
     _companions = None
     _correlations = None
     _evidence = None
@@ -566,6 +566,17 @@ def analyze(target, work_dir, out_dir=None):
         report["fatal"] = f"triage failed: {err}"
         return report
     report["triage"] = triage
+    # Triage records a hard error for a target that is not
+    # a ZIP/APK container at all (nar-triage's own CLI exits
+    # nonzero on it). Proceeding would dress a garbage file
+    # up as a degraded workup — including a default "apk"
+    # identity — so record the same fatal the missing-JSON
+    # path records. OBBs are exempt: an OBB may legitimately
+    # be a non-ZIP container, and the string stage below
+    # still runs on it by design.
+    if triage.get("error") and not triage.get("is_obb"):
+        report["fatal"] = f"triage failed: {triage['error']}"
+        return report
     badging = triage.get("badging") or {}
     manifest = triage.get("container_manifest") or {}
     report["identity"] = {

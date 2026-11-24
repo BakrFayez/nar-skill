@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nar-skill"
-version = "2.5.1"
+version = "2.5.2"
 description = "NAR — NIROUS ANDROID INTELLIGENCE: AI-agent skill for Android APK reverse engineering (apps and games)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -21,7 +21,8 @@ dependencies = []
 [project.optional-dependencies]
 unity = ["UnityPy>=1.10"]
 analysis = ["androguard>=4"]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pyyaml>=6"]
+test = ["pytest>=8", "pyyaml>=6"]
 
 [tool.setuptools]
 py-modules = []

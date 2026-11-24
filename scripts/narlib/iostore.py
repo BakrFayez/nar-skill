@@ -99,6 +99,43 @@ CHUNK_TYPES_LEGACY = {
     10: "ContainerHeader",
 }
 
+COMPRESSION_METHODS_DECODED = ["None", "Zlib"]
+
+
+def capabilities():
+    """Structured capability facts for this parser (the
+    source nar-unreal composes its IoStore limitations
+    from). TOC versions come from TOC_VERSIONS itself so
+    the report cannot drift from the parser's table.
+    """
+    return {
+        "module": "narlib.iostore",
+        "format": "iostore-utoc",
+        "toc_versions": dict(TOC_VERSIONS),
+        "toc_version_range": [min(TOC_VERSIONS),
+                              max(TOC_VERSIONS)],
+        "toc_layouts": [
+            {"layout": "current", "status": "implemented"},
+            {"layout": "legacy", "status": "implemented"},
+        ],
+        "directory_index_layouts": [
+            {"layout": "classic", "status": "implemented"},
+            {"layout": "pooled", "status": "implemented"},
+        ],
+        "compression_methods_decoded":
+            list(COMPRESSION_METHODS_DECODED),
+        "compression_methods_named_only": (
+            "any other named method (e.g. Oodle) is "
+            "named, not decoded"),
+        "encrypted": {
+            "status": "inventoried-never-decrypted",
+            "note": ("containers flagged Encrypted, "
+                     "including AES-sealed indexes, are "
+                     "inventoried, never decrypted"),
+        },
+    }
+
+
 INVALID_INDEX = 0xFFFFFFFF
 # Stack-safety cap on directory-index nesting depth. It
 # bounds true tree depth only; sibling chains are walked

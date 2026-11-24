@@ -1,6 +1,6 @@
 # Output schema
 
-NAR 2.0 evidence outputs are standardized JSON documents.
+NAR evidence outputs are standardized JSON documents.
 Their schemas live in `schemas/` (draft-07, written to the
 subset the built-in validator in `narlib.evidence` checks).
 
@@ -16,8 +16,8 @@ subset the built-in validator in `narlib.evidence` checks).
 | `endpoints.json` | endpoints | classified endpoint inventory, hosts, services |
 | `security-findings.json` | security-findings | findings in the §9.5 shape (below) |
 | `assets.json` | assets | full asset inventory with hashes and duplicates |
-| `dex.json`, `dex/classes.json`, `dex/methods.json` | — | DEX intelligence + enumeration companions |
-| `native.json` | — | ELF facts, JNI map, dependency graph |
+| `dex.json`, `dex/classes.json`, `dex/methods.json` | dex, dex-classes, dex-methods | DEX intelligence + enumeration companions (schemas added in 2.5.1) |
+| `native.json` | native | ELF facts, JNI map, dependency graph (schema added in 2.5.1) |
 | `case.json` | case | case id, input hash, stage states, tool versions |
 | `execution-log.json` | execution-log | one entry per tool run: stage, status, duration |
 | `cache/` | — | per-stage cached documents + keys (resume) |

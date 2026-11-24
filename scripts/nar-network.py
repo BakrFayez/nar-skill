@@ -312,7 +312,7 @@ def analyze(target, work_dir=None):
     for e in endpoints:
         by_class[e["classification"]] = \
             by_class.get(e["classification"], 0) + 1
-    return {"tool": "nar-network", "version": "2.5.1",
+    return {"tool": "nar-network", "version": "2.5.2",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "endpoints": endpoints, "hosts": sorted(hosts),

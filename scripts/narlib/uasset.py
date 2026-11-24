@@ -145,6 +145,88 @@ PROPERTY_CONFIDENCE = (
     "export instead of emitting guessed data")
 
 
+def capabilities():
+    """Structured capability facts for this parser.
+
+    This is the single source nar-unreal composes its
+    human-readable limitations from: every factual claim
+    in those limitations traces to a field here. Values
+    are derived from this module's own constants wherever
+    a constant exists, so the report cannot drift from
+    the parser's behaviour without a test noticing.
+    """
+    return {
+        "module": "narlib.uasset",
+        "format": "unreal-package",
+        "table_layouts": {
+            "ue4_object_versions": {
+                "oldest_loadable": OLDEST_LOADABLE_UE4,
+                "final": FINAL_UE4,
+                "status": "implemented",
+            },
+            "ue5_object_versions": {
+                "minimum": 1000,
+                "status": "implemented",
+                "note": ("version-gated summary fields "
+                         "through the UE5 layouts this "
+                         "parser reads end to end"),
+            },
+            "legacy_file_versions": {
+                "range": "-8 to -1",
+                "status": "implemented",
+                "exception": ("legacy file version -2 "
+                              "stores custom versions as "
+                              "enums; that form is not read"),
+            },
+        },
+        "tag_extension_layouts": [
+            {"ue5_object_version": 1011,
+             "layout": "ue5-tag-extension",
+             "status": "implemented",
+             "verification": "synthetic"},
+            {"ue5_object_version": "1012+",
+             "min_ue5_object_version": 1012,
+             "layout": "ue5-complete-type-name",
+             "status": "implemented",
+             "verification": "synthetic"},
+        ],
+        "tag_extension_note": (
+            "no real package with a recorded UE5 object "
+            "version >= 1011 is in the corpus, so both "
+            "tag-extension layouts are verified against "
+            "synthetic packages only"),
+        "unversioned": {
+            "status": "implemented",
+            "assumed_ue5_object_version":
+                ASSUMED_UE5_FOR_UNVERSIONED,
+            "assumed_ue4_object_version": FINAL_UE4,
+            "note": ("tables are read with the final UE4 "
+                     "layout plus the assumed UE5 layout "
+                     "and accepted only when the structure "
+                     "validates end to end"),
+        },
+        "property_decoding": {
+            "status": "best-effort",
+            "decoded": ("primitive types whose encoding "
+                        "is version-stable"),
+            "confidence": PROPERTY_CONFIDENCE,
+        },
+        "not_decoded": [
+            {"item": "class-specific export data after "
+                     "the tag stream",
+             "status": "located-and-measured-not-decoded"},
+            {"item": "Kismet/Blueprint graph decoding",
+             "status": "not-decoded"},
+        ],
+        "requires_usmap": {
+            "item": ("property streams of packages flagged "
+                     "PKG_UnversionedProperties"),
+            "requirement": ".usmap",
+            "status": "requires-usmap",
+        },
+    }
+
+
 class UAssetError(Exception):
     pass
 

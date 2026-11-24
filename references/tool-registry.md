@@ -16,7 +16,15 @@ known limitations.
    style entries where applicable),
 3. PATH lookup,
 4. Android SDK candidates (build-tools / platform-tools),
-5. the workspace tools tree (`~/workspace/tools/<name>`).
+   for entries marked as SDK tools,
+5. the entry's declared `workspace_subdirs` under
+   `~/workspace/` (for example `tools/jadx-cli/bin`).
+
+The registry currently declares 35 tools; 9 of them carry
+kind `unavailable` (see the rules below). The same 35 names,
+kinds, and required levels are what
+`python3 scripts/nar.py tools --json` reports (it probes
+this registry through `narlib.registry`).
 
 A probe returns `{available, path, version, note}` — the
 version is read from the tool itself (`--version`-style

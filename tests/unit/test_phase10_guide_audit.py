@@ -107,3 +107,20 @@ def test_skill_frontmatter_and_plugin_versions():
         ROOT, ".claude-plugin", "plugin.json")))
     assert plugin["version"] == version
     assert plugin["name"]
+    # Parser-based augmentation (2.5.2 W1): when PyYAML is
+    # importable, the frontmatter must also parse with a real
+    # YAML parser and agree with the regex grabs above. When it
+    # is not importable the regex checks above still stand on
+    # their own; the dedicated parser suite lives in
+    # tests/unit/test_yaml_validation.py and SKIPs honestly.
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
+    if yaml is not None:
+        parsed = yaml.safe_load(front)
+        assert isinstance(parsed, dict)
+        assert parsed["name"] == "nar"
+        assert isinstance(parsed["description"], str)
+        assert parsed["description"].strip()
+        assert parsed["metadata"]["version"] == version

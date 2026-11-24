@@ -891,3 +891,85 @@ remain synthetic-verified only; OAT beyond API 26
 x86_64 remains synthetic-only; Kismet / Blueprint
 graph decoding remains PLANNED; CI execution is
 GitHub-only (no push this cycle).
+
+## 2.5.2 W6 reconciliation addendum (2026-11-24)
+
+This addendum supersedes the earlier records where they
+conflict. It was produced by the W6 cross-system audit
+(code + executed tests are truth; the full fix log is in
+NAR_2.5.2_UPDATE_REPORT.md, W6 record, and the per-area
+status table now lives in NAR_CAPABILITY_MATRIX.md).
+
+- **How to read the Phase 0 reconciliation table.** That
+  table is a 2.4.0 snapshot, NOT the end state. Its PI
+  rows were moved by the Phase 1–11 addenda above: DEX
+  try/catch + debug-info presence and the disassembler
+  block summary (Phase 3), ELF relocations + compiler
+  fingerprints (Phase 3), Unity Addressables catalog
+  parse (Phase 4), the versioned protection-signature
+  database (Phase 5 — this also closes the Phase 0
+  Extensibility row's "versioned signature database"
+  item), network credential redaction + the named
+  network companions (Phase 5), runtime session records
+  (Phase 6), audio metadata + compare artifacts
+  (Phase 7), verification-status wiring + correlations
+  + orchestration budgets + case bundles (Phase 8),
+  dashboard dependency-graph rendering and the
+  `tools` / `identify` / `validate` / `benchmark` /
+  `case` CLI verbs (Phase 9), and benchmark accuracy
+  metrics + the parser mutation corpus (Phase 11). The
+  Phase 12 addendum summarized only Phases 9–12; this
+  paragraph is the missing index for Phases 1–8.
+- **AI skill interface — YAML correction.** The Phase 0
+  row's "frontmatter valid" and the Phase 10/12 records'
+  "frontmatter validated programmatically" were
+  inaccurate for the shipped 2.5.0/2.5.1 tree: the
+  validation was regex-only and both `skill.yaml` and
+  the SKILL.md frontmatter in fact FAILED a real YAML
+  parser (unquoted colons; proven in 2.5.2 W0/W1). 2.5.2
+  W1 fixed the quoting and added real-parser validation
+  (tests/unit/test_yaml_validation.py, a doctor
+  `skill-yaml` check, PyYAML as a test-only dependency).
+  The row is IMPLEMENTED_AND_TESTED again, now on
+  parser evidence.
+- **Unreal — tag extensions.** The Phase 0 row's
+  "Missing/unproven: UE5 tag-extension layouts (object
+  version >= 1011)" is superseded twice over: Phase 4
+  implemented both layouts (synthetic-verified), and
+  2.5.2 W2 made nar-unreal's limitations GENERATED from
+  `narlib` `capabilities()` facts (uasset / zen /
+  iostore), with the report carrying `capabilities`.
+  Status: implemented, synthetic-verified; a real
+  package with a recorded UE5 object version >= 1011
+  is still absent from the corpus.
+- **Unreal — limits.** No earlier addendum stated the
+  nar-unreal detail caps; the shipped code hardcoded
+  them (packages 5, containers 5, chunk detail 250,
+  names 500, with silent package truncation). 2.5.2 W3
+  made them configurable (`--max-*` / `--all-*`) with
+  total/processed/skipped/failed accounting on every
+  capped collection and a `limits` record in every
+  report. No silent truncation remains.
+- **Unreal — file-count clarification (not an error).**
+  The 13,494-file figure in the Phase 0 Unreal row and
+  the close-all-gaps addendum belongs to the historical
+  TOC v8 container set (674 directories). The TOC v8
+  set used by the 2.5.2 benchmarks (br-work role) names
+  2,184 directory-index files in 528 directories
+  (W3/W4 records in NAR_2.5.2_UPDATE_REPORT.md). Both
+  figures are correct for their own set.
+- **Memory layer (W4).** narlib gained `mmapio.py`;
+  nar-unreal / nar-native / nar-pak run their bare-file
+  paths over mappings, with measured peak-RSS reductions
+  on the benchmark sets (nar-analyze's peak is diagnosed
+  as its stage-JSON round-trip and is unchanged — see
+  the W4 record). No capability status changes.
+- **Testing — reproducibility (W5).** The Testing row
+  gains the documented test categories and the synthetic
+  fixture infrastructure (tests/synthetic_fixtures.py,
+  tests/generate_fixtures.py, tests/expected_outputs.json):
+  a clean extraction with an empty $NAR_FIXTURES runs
+  295 passed / 8 skipped / 0 failed. The one explicit
+  NOT RUN stands unchanged: real-corpus engine
+  precision (no labeled engine-negative real corpus
+  exists).

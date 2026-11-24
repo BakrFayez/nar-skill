@@ -136,7 +136,7 @@ def status():
                                 "ro.build.version.release")})
     verified = bool(devices)
     return {
-        "tool": "nar-runtime", "version": "2.5.1",
+        "tool": "nar-runtime", "version": "2.5.2",
         "adb": adb, "frida": frida,
         "devices": device_info,
         "device_error": err,
@@ -184,7 +184,7 @@ def plan(apk_path):
          "evidence": "app-private file inventory for the "
                      "case workspace"},
     ]
-    return {"tool": "nar-runtime", "version": "2.5.1",
+    return {"tool": "nar-runtime", "version": "2.5.2",
             "target": os.path.abspath(apk_path),
             "package_hint": package_hint,
             "verification_status": st["verification_status"],
@@ -210,7 +210,7 @@ def new_session(kind, st, target=None):
     carried through unchanged."""
     started = ev_mod.now_iso()
     record = {
-        "tool": "nar-runtime", "version": "2.5.1",
+        "tool": "nar-runtime", "version": "2.5.2",
         "session_id": "nar-rt-" + uuid.uuid4().hex[:12],
         "kind": kind,
         "started_at": started, "stopped_at": None,

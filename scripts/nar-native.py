@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import registry as reg_mod  # noqa: E402
 from narlib.elf import Elf, ElfError  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
+from narlib.mmapio import mapped_file  # noqa: E402
 
 SO_RE = re.compile(r"^(base/)?lib/([^/]+)/(.+\.so)$")
 
@@ -68,14 +69,28 @@ def analyze_elf(name, data, cross_check_path=None):
 
 
 def analyze(target, only_lib=None, work_dir=None):
-    report = {"tool": "nar-native", "version": "2.5.1",
+    report = {"tool": "nar-native", "version": "2.5.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
-    libs = []  # (display_name, data, temp_path_for_crosscheck)
+    # Libraries are processed ONE AT A TIME (parse, record,
+    # release) — never accumulated. A bare .so is parsed
+    # over a read-only mapping instead of a whole-file
+    # read; zip members still materialize via zf.read()
+    # (decompression requires it) but each member's bytes
+    # are released before the next member is read.
+    def process(display, data, temp_path):
+        try:
+            facts = analyze_elf(display, data, temp_path)
+        except ElfError as e:
+            report["libraries"].append({"name": display,
+                                        "error": str(e)})
+            return
+        facts["display_name"] = display
+        report["libraries"].append(facts)
+
     if target.lower().endswith(".so"):
-        with open(target, "rb") as fh:
-            libs.append((os.path.basename(target), fh.read(),
-                         target))
+        with mapped_file(target) as data:
+            process(os.path.basename(target), data, target)
     else:
         with zipfile.ZipFile(target) as zf:
             for name in sorted(zf.namelist()):
@@ -92,17 +107,9 @@ def analyze(target, only_lib=None, work_dir=None):
                         work_dir, f"{m.group(2)}-{m.group(3)}")
                     with open(temp_path, "wb") as fh:
                         fh.write(data)
-                libs.append((f"{m.group(2)}/{m.group(3)}", data,
-                             temp_path))
-    for display, data, temp_path in libs:
-        try:
-            facts = analyze_elf(display, data, temp_path)
-        except ElfError as e:
-            report["libraries"].append({"name": display,
-                                        "error": str(e)})
-            continue
-        facts["display_name"] = display
-        report["libraries"].append(facts)
+                process(f"{m.group(2)}/{m.group(3)}", data,
+                        temp_path)
+                data = None
     # Native dependency graph among bundled libraries. Entries
     # that failed ELF parsing carry {"name", "error"} instead of
     # the facts dict (no display_name/soname/needed): they take
