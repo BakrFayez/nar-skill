@@ -51,22 +51,40 @@ INVOKE_OPS = {0x6E: "virtual", 0x6F: "super", 0x70: "direct",
 DYNAMIC_OPS = {0xFC: "invoke-custom", 0xFD: "invoke-custom/range"}
 
 
+# DEX LEB128 values encode 32-bit quantities, so a valid
+# encoding is at most 5 bytes (DEX spec, "LEB128"). The
+# readers below enforce both the buffer bound and that
+# length cap and raise DexError on violation — a malformed
+# encoding must never leak a bare IndexError across the
+# narlib.dex boundary or spin on a crafted all-continuation
+# run (2.6.1 deep-audit remediation).
+_LEB128_MAX_BYTES = 5
+
+
 def _uleb128(data, off):
     result = 0
     shift = 0
-    while True:
+    for _ in range(_LEB128_MAX_BYTES):
+        if off >= len(data):
+            raise DexError(
+                f"ULEB128 at {off:#x} runs past end of data")
         byte = data[off]
         off += 1
         result |= (byte & 0x7F) << shift
         if not byte & 0x80:
             return result, off
         shift += 7
+    raise DexError(
+        f"ULEB128 at {off:#x} exceeds the 5-byte DEX limit")
 
 
 def _sleb128(data, off):
     result = 0
     shift = 0
-    while True:
+    for _ in range(_LEB128_MAX_BYTES):
+        if off >= len(data):
+            raise DexError(
+                f"SLEB128 at {off:#x} runs past end of data")
         byte = data[off]
         off += 1
         result |= (byte & 0x7F) << shift
@@ -75,6 +93,8 @@ def _sleb128(data, off):
             if byte & 0x40:
                 result |= -(1 << shift)
             return result, off
+    raise DexError(
+        f"SLEB128 at {off:#x} exceeds the 5-byte DEX limit")
 
 
 class DexError(Exception):
@@ -139,7 +159,8 @@ class Dex:
                     _len, pos = _uleb128(data, off)
                     end = data.index(b"\x00", pos)
                     out.append(data[pos:end].decode("utf-8", "replace"))
-                except (ValueError, IndexError, struct.error):
+                except (ValueError, IndexError, struct.error,
+                        DexError):
                     out.append("")
             self._strings = out
         return self._strings
@@ -194,11 +215,28 @@ class Dex:
              _static_values) = vals
             interfaces = []
             if interfaces_off:
+                # interfaces_off is class-def data, not a
+                # header table: the header extent check in
+                # __init__ cannot cover it. Validate the
+                # type_list extent here so a corrupt offset
+                # raises DexError, never a bare struct.error
+                # (2.6.1 deep-audit remediation).
+                if interfaces_off + 4 > len(self.data):
+                    raise DexError(
+                        f"{self.name}: interfaces_off "
+                        f"{interfaces_off:#x} outside file")
                 size = struct.unpack_from(
                     "<I", self.data, interfaces_off)[0]
+                if size > (len(self.data) - interfaces_off
+                           - 4) // 2:
+                    raise DexError(
+                        f"{self.name}: interface list ({size} "
+                        f"entries at {interfaces_off:#x}) "
+                        "extends past end of file")
                 for j in range(size):
                     tidx = struct.unpack_from(
-                        "<H", self.data, interfaces_off + 4 + j * 2)[0]
+                        "<H", self.data,
+                        interfaces_off + 4 + j * 2)[0]
                     if tidx < len(types):
                         interfaces.append(types[tidx])
             out.append({
@@ -250,7 +288,19 @@ class Dex:
             "<III", self.data, self.proto_ids_off + proto_idx * 12)
         params = []
         if params_off:
+            # Same discipline as class_defs' interface
+            # list: params_off is table data the header
+            # extent check cannot cover (2.6.1).
+            if params_off + 4 > len(self.data):
+                raise DexError(
+                    f"{self.name}: proto params_off "
+                    f"{params_off:#x} outside file")
             size = struct.unpack_from("<I", self.data, params_off)[0]
+            if size > (len(self.data) - params_off - 4) // 2:
+                raise DexError(
+                    f"{self.name}: proto parameter list "
+                    f"({size} entries at {params_off:#x}) "
+                    "extends past end of file")
             for j in range(size):
                 tidx = struct.unpack_from(
                     "<H", self.data, params_off + 4 + j * 2)[0]
@@ -353,7 +403,7 @@ class Dex:
             return info
         try:
             handler_count, _ = _uleb128(data, list_off)
-        except IndexError:
+        except (IndexError, DexError):
             info["tries_truncated"] = True
             return info
         info["handler_list_count"] = handler_count
@@ -378,7 +428,7 @@ class Dex:
                 if size <= 0:
                     catch_all, pos = _uleb128(data, pos)
                     entry["catch_all_addr"] = catch_all
-            except IndexError:
+            except (IndexError, DexError):
                 entry["truncated"] = True
             info["tries"].append(entry)
         return info
@@ -390,6 +440,8 @@ class Dex:
         strings and types to their text, fields/methods/enums
         to (kind, owner, name) tuples."""
         data = self.data
+        if off >= len(data):
+            raise DexError("encoded_value outside file")
         header = data[off]
         off += 1
         vtype, arg = header & 0x1F, header >> 5

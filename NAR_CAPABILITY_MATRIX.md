@@ -5,12 +5,17 @@ Research by Bakr Fayez
 One row per capability area. The skeleton is the area list
 of `NAR_GAP_ANALYSIS.md` (Phase-Zero baseline §§3–22, as
 reconciled by its dated addenda through the 2.5.2 W6
-reconciliation), refined where 2.5.x workstreams split an
+reconciliation), refined where later workstreams split an
 area. This matrix was compiled in 2.5.2 W6 (2026-11-24)
+and is maintained since: rows were extended by the 2.6.0
+upgrade (repair campaign R-001–R-020, recorded in
+`NAR_REPAIR_MATRIX.md` and `NAR_2.6.0_UPDATE_REPORT.md`)
+and by the 2.6.1 verification round (Unreal relationships
+joined into graph.json; the deep-audit remediation),
 from the repo's own tests, the executed records in
-`NAR_TEST_MATRIX.md` and `NAR_2.5.2_UPDATE_REPORT.md`,
-and the parsers' own `capabilities()` facts — it makes
-no claim that is not backed by one of those.
+`NAR_TEST_MATRIX.md`, and the parsers' own
+`capabilities()` facts — it makes no claim that is not
+backed by one of those.
 
 Status vocabulary (exactly one status per row — the
 strongest honest one; the Evidence column carries the
@@ -30,9 +35,10 @@ nuance):
   plan; the tooling names it instead of guessing.
 
 Corpora are named by role label only, as everywhere in
-this repo. Battery at compilation: pytest 303 passed,
-e2e 65 passed, doctor READY (2.5.2 W5 end; W6 numbers in
-the update report).
+this repo. Battery at the 2.6.0 compilation of this
+matrix: pytest 425 passed, e2e 65 passed, doctor READY
+(2.6.0 Phase 15; the 2.6.1 round's battery is recorded
+in `NAR_2.6.1_VERIFICATION_REPORT.md`).
 
 | Capability | Status | Evidence |
 |---|---|---|
@@ -51,7 +57,7 @@ the update report).
 | Real-corpus engine precision | Unsupported | NOT RUN — no labeled engine-negative real corpus exists, so precision on real data has never been measured (benchmark runner states this; Phase 11 record). This row is a measurement gap, not a code claim |
 | Unity analysis | Partially supported | IL2CPP location + Il2CppDumper summary and the optional Cpp2IL backend Tested (e2e IL2CPP case; narlib/dotnetmeta summary); Addressables catalog inventory Tested on a real catalog (6,798 locations, 24,820 entries) plus a synthetic catalog. Since 2.6.0 Phase 5 (R-012, partial): first-party UnityFS bundle header + blocks-info parsing and serialized-file header parsing (stored + Unity LZMA1 decompression via stdlib lzma), synthetic + real verified; LZ4/LZ4HC/LZHAM blocks are inventoried, never decoded (no stdlib decoder). Partial: Mono is inventory-level; AssetBundle object census only via optional UnityPy; no scene/prefab/material semantic inventory; full serialized-file object/type-tree parsing out of scope |
 | Unreal `.pak` archives (v1–7 classic index, v10/v11 encoded index) | Independently verified | E2e: 1,598 entries listed, extraction byte-verified against an independent parse; v10+ index regions SHA-1-verified. Versions 8/9 (FName-based index) are reported unsupported, plainly (tests/unit/test_pak.py) |
-| Unreal IoStore (.utoc/.ucas) | Independently verified | TOC versions 0–10 declared by narlib/iostore.py `capabilities()`; both directory-index layouts (classic, pooled) agree with an independent byte-walk oracle on all 6,743 named files of the UE 5.3 real set, and path-for-path on the historical TOC v8 set; chunk extraction for None/Zlib only (tests/unit/test_iostore.py). Since 2.6.0 Phase 5 (R-013): classic + Zen UObject relationship records (export class/super/outer/template resolved through the import/export tables + depends-map edges, bounded with accounting, labeled table-derived) in nar-unreal's standalone reports; Zen relationships are synthetic-verified only and Unreal edges are not joined into graph.json (recorded under R-008) |
+| Unreal IoStore (.utoc/.ucas) | Independently verified | TOC versions 0–10 declared by narlib/iostore.py `capabilities()`; both directory-index layouts (classic, pooled) agree with an independent byte-walk oracle on all 6,743 named files of the UE 5.3 real set, and path-for-path on the historical TOC v8 set; chunk extraction for None/Zlib only (tests/unit/test_iostore.py). Since 2.6.0 Phase 5 (R-013): classic + Zen UObject relationship records (export class/super/outer/template resolved through the import/export tables + depends-map edges, bounded with accounting, labeled table-derived) in nar-unreal's standalone reports; Zen relationships are synthetic-verified only. Since 2.6.1 (verification round, closing the R-008 remainder): the same relationship records join into graph.json as unreal_package / unreal_object nodes and unreal_* edges under the graph's provenance/confidence discipline (table-resolved = high, Zen cross-package resolution text = medium, unresolvable references kept explicitly unresolved at low), verified on a real Unreal case with counts reconciled against nar-unreal's own accounting (tests/unit/test_graph_unreal.py) |
 | Unreal classic packages (.uasset/.umap) | Partially supported | Summary + name/import/export/depends tables verified on synthetic byte-exact fixtures and a real UE4-era corpus incl. independent manual spec accounting on one small package (tests/unit/test_uasset.py). Best-effort property tags only; a real classic package with a recorded FileVersionUE5 is still absent from the corpus (evidence-negative over five titles) |
 | UE5 property tag extensions (object versions 1011 / 1012+) | Implemented | Implemented in narlib/uasset.py (1011 `ue5-tag-extension` tail; 1012+ `ue5-complete-type-name`), synthetic-verified only: tests/unit/test_uasset.py builders + a synthetic 1011 package run through nar-unreal in tests/unit/test_unreal.py. No real package recording >= 1011 is in the corpus |
 | Unreal Zen packages | Independently verified | Current (UE 5.3+) layout: 1,209 real stored packages parsed across two real corpora (684 + 525), independent byte-walk oracles agree 45/45 and 20/20 field checks on sampled packages (tests/unit/test_zen.py + sweeps in NAR_TEST_MATRIX.md) |

@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.6.0
+Version 2.6.1
 Research by Bakr Fayez
 
 NAR is an AI agent skill for Android APK reverse engineering. It covers all Android apps and games, old and new: regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
@@ -53,6 +53,27 @@ python3 scripts/nar.py analyze app.apk --out case/
 Every module also runs through the unified CLI
 (`python3 scripts/nar.py dex|native|network|security|engines …`)
 or standalone, exactly as in 1.x.
+
+## What's new in 2.6.1
+
+A verification and security-remediation round (see
+CHANGELOG.md and NAR_2.6.1_VERIFICATION_REPORT.md). A
+code-level audit's confirmed findings are fixed: the
+container-extraction ZIP path traversal is closed,
+the DEX LEB128 readers are bounded, archive reads sit
+under one resource budget, graph evidence cites only
+documents that exist in the case (cases now include
+permissions.json), and investigation output keeps
+UNVERIFIED findings out of verified_facts. Unreal
+package relationships join the unified graph.
+nar-analyze's peak memory on the 273 MB fixture drops
+from 1,887,891,456 to 1,532,669,952 bytes with
+byte-identical case outputs. Graph and investigation
+output was validated programmatically on six real
+cases; accuracy was re-measured on every labeled
+corpus that exists locally (endpoint classification
+is recorded as NOT RUN — no labeled corpus, no
+invented figure).
 
 ## What's new in 2.6.0
 

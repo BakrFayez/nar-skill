@@ -144,7 +144,7 @@ def analyze_elf(name, data, cross_check_path=None):
 
 
 def analyze(target, only_lib=None, work_dir=None):
-    report = {"tool": "nar-native", "version": "2.6.0",
+    report = {"tool": "nar-native", "version": "2.6.1",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     # Libraries are processed ONE AT A TIME (parse, record,

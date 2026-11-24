@@ -22,6 +22,12 @@ Rules:
 - Confidence is a string level copied or derived only
   from the source verification_status / detection
   confidence; no new confidence is invented.
+- Since 2.6.1, nar-unreal's package relationship records
+  (classic + Zen, produced by the analyze engine deep
+  dive) join as unreal_package / unreal_object nodes with
+  unreal_* edges under the same discipline: resolved
+  table references are direct evidence, unresolved ones
+  stay explicitly unresolved.
 
 The graph rebuilds from cached stage outputs: nar-analyze
 re-runs only changed stages (its existing cache) and then
@@ -37,7 +43,7 @@ NODE_KINDS = (
     "application", "dex_file", "class", "native_library",
     "jni_function", "network_endpoint", "component",
     "permission", "engine", "security_finding", "asset",
-    "network_library",
+    "network_library", "unreal_package", "unreal_object",
 )
 
 EDGE_KINDS = (
@@ -46,7 +52,17 @@ EDGE_KINDS = (
     "declares_component", "requests_permission",
     "detected_as", "finding_about", "depends_on",
     "references_class",
+    "unreal_class", "unreal_super", "unreal_outer",
+    "unreal_template", "unreal_depends",
 )
+
+# nar-unreal relationship kind -> graph edge kind (2.6.1:
+# Unreal package relationships joined into the graph).
+_UNREAL_EDGE_KINDS = {
+    "class": "unreal_class", "super": "unreal_super",
+    "outer": "unreal_outer", "template": "unreal_template",
+    "depends": "unreal_depends",
+}
 
 # verification_status -> graph confidence label
 _CONF = {
@@ -70,11 +86,28 @@ def _dotted(descriptor):
     return d.replace("/", ".")
 
 
+# Cap on accumulated merge evidence (2.6.1): a node or
+# edge merged from many sources keeps its first evidence
+# in "evidence" and up to this many further distinct
+# references in "evidence_also" — merges never silently
+# discard provenance, and the list stays bounded.
+_EVIDENCE_ALSO_CAP = 8
+
+
+def _add_also(record, ev):
+    if ev == record["evidence"]:
+        return
+    also = record.setdefault("evidence_also", [])
+    if ev in also or len(also) >= _EVIDENCE_ALSO_CAP:
+        return
+    also.append(ev)
+
+
 class _Graph:
     def __init__(self):
         self.nodes = {}
         self.edges = []
-        self._edge_keys = set()
+        self._edge_index = {}
         self.stages = set()
 
     def node(self, kind, key, label, stage, document,
@@ -88,32 +121,156 @@ class _Graph:
                 "evidence": _ev(stage, document, field_path),
                 "status": status,
             }
-        elif status and not self.nodes[nid].get("status"):
-            self.nodes[nid]["status"] = status
+        else:
+            existing = self.nodes[nid]
+            if status and not existing.get("status"):
+                existing["status"] = status
+            _add_also(existing,
+                      _ev(stage, document, field_path))
         return nid
 
     def edge(self, source, target, kind, confidence, stage,
              document, field_path, status=None):
         key = (source, target, kind, status)
-        if key in self._edge_keys:
+        if key in self._edge_index:
+            _add_also(self._edge_index[key],
+                      _ev(stage, document, field_path))
             return
-        self._edge_keys.add(key)
         self.stages.add(stage)
-        self.edges.append({
+        record = {
             "source": source, "target": target, "kind": kind,
             "confidence": confidence or "low",
             "status": status,
             "provenance": {"stage": stage,
                            "field_path": field_path},
             "evidence": _ev(stage, document, field_path),
-        })
+        }
+        self._edge_index[key] = record
+        self.edges.append(record)
+
+
+def _unreal_object_node(g, pkg_entry, side, index, label,
+                        field_path, status=None):
+    """One Unreal object node (an export, import, or Zen
+    object-index target inside one package)."""
+    if index is not None:
+        key = f"{pkg_entry}#{side}:{index}"
+    else:
+        key = f"{pkg_entry}#{side}:{label}"
+    return g.node("unreal_object", key, label, "unreal",
+                  "report.json", field_path, status=status)
+
+
+def _unreal_section(g, app_id, unreal_data, notes):
+    """Unreal package relationships (2.6.1): nar-unreal's
+    table-derived classic + Zen relationship records,
+    joined from the analyze report's engine sections.
+    unreal_data is a list of {"field_path", "record"}
+    items, one per inspected package; the record is the
+    nar-unreal package summary (itself possibly trimmed
+    by nar-analyze for the report companion).
+
+    Confidence follows the graph discipline: a reference
+    the package tables resolve to a named object is
+    direct evidence ("high"); a Zen cross-package
+    resolution text is the parser's own resolution
+    ("medium"); a reference the tables could not resolve
+    (index outside the map, no resolution text) is kept
+    as an explicitly "unresolved" node with a "low"
+    confidence edge — present, never upgraded, never
+    dropped. Capped relationship lists record their cap
+    in the graph notes, mirroring nar-unreal's own
+    accounting."""
+    for item in unreal_data or []:
+        record = item.get("record") or {}
+        base_path = item.get("field_path") or "engines"
+        entry = record.get("entry") or record.get("name")
+        rel = record.get("relationships")
+        if not entry or not isinstance(rel, dict):
+            continue
+        pid = g.node("unreal_package", entry, entry,
+                     "unreal", "report.json", base_path)
+        if app_id:
+            g.edge(app_id, pid, "contains", "high",
+                   "unreal", "report.json", base_path)
+        exports_by_index = {}
+        for exp in record.get("exports") or []:
+            if isinstance(exp, dict) \
+                    and exp.get("index") is not None:
+                exports_by_index[exp["index"]] = \
+                    exp.get("object_name")
+        counts = rel.get("counts") or {}
+        if counts.get("skipped"):
+            notes.append(
+                f"unreal package {entry}: relationship "
+                f"detail capped by nar-unreal "
+                f"({counts.get('processed')} of "
+                f"{counts.get('total')} edges joined into "
+                "the graph; counts in nar-unreal's own "
+                "record are complete)")
+        for j, edge in enumerate(rel.get("edges") or []):
+            kind = _UNREAL_EDGE_KINDS.get(edge.get("kind"))
+            if kind is None:
+                continue
+            src = edge.get("from") or {}
+            dst = edge.get("to") or {}
+            epath = f"{base_path}.relationships.edges[{j}]"
+            src_label = src.get("object_name") or \
+                f"export {src.get('index')}"
+            sid = _unreal_object_node(
+                g, entry, "export", src.get("index"),
+                src_label, epath)
+            dst_kind = dst.get("kind")
+            if dst_kind == "export":
+                label = dst.get("object_name") or \
+                    exports_by_index.get(dst.get("index")) or \
+                    f"export {dst.get('index')}"
+                status = None
+                conf = "high"
+                if dst.get("note"):
+                    status, conf = "unresolved", "low"
+                tid = _unreal_object_node(
+                    g, entry, "export", dst.get("index"),
+                    label, epath, status=status)
+            elif dst_kind == "import":
+                label = dst.get("object_name") or \
+                    f"import {dst.get('index')}"
+                status = None
+                conf = "high"
+                if dst.get("note") or \
+                        not dst.get("object_name"):
+                    status, conf = "unresolved", "low"
+                tid = _unreal_object_node(
+                    g, entry, "import", dst.get("index"),
+                    label, epath, status=status)
+            elif dst_kind in ("script-import",
+                              "package-import"):
+                resolved = dst.get("resolved")
+                if resolved:
+                    tid = _unreal_object_node(
+                        g, entry, dst_kind, None, resolved,
+                        epath)
+                    conf = "medium"
+                else:
+                    tid = _unreal_object_node(
+                        g, entry, dst_kind, None,
+                        f"unresolved {dst_kind} (from "
+                        f"export {src.get('index')}, "
+                        f"{edge.get('kind')})",
+                        epath, status="unresolved")
+                    conf = "low"
+            else:
+                continue
+            g.edge(sid, tid, kind, conf, "unreal",
+                   "report.json", epath)
 
 
 def build_graph(dex_data=None, native_data=None,
                 perms_data=None, network_data=None,
                 fingerprint_data=None, engines_data=None,
                 security_data=None, assets_data=None,
-                correlations_data=None, version="2.6.0"):
+                correlations_data=None, unreal_data=None,
+                version="2.6.1"):
     """Build the graph document. Any input may be None (a
     degraded stage): its nodes/edges are then absent and a
     note records the gap, mirroring correlations."""
@@ -134,25 +291,37 @@ def build_graph(dex_data=None, native_data=None,
                 "nodes/edges are absent, not fabricated")
 
     # --- application node ---------------------------------
+    # The node's evidence cites the document the package
+    # actually came from (2.6.1 deep-audit remediation:
+    # previously the node cited fingerprint.json even when
+    # the fingerprint stage was absent or the package came
+    # from the permissions data — a reference to evidence
+    # that does not exist in the case). The generic anchor
+    # node's provenance is the graph builder itself.
     app_id = None
     pkg = None
+    pkg_ev = None
     if fingerprint_data:
         props = fingerprint_data.get("properties") or {}
         entry = props.get("package") or {}
         if isinstance(entry, dict):
             pkg = entry.get("value")
+        if pkg:
+            pkg_ev = ("fingerprint", "fingerprint.json",
+                      "properties.package")
     if not pkg and perms_data:
         pkg = perms_data.get("package")
+        if pkg:
+            pkg_ev = ("permissions", "permissions.json",
+                      "package")
     if pkg:
-        app_id = g.node(
-            "application", pkg, pkg, "fingerprint",
-            "fingerprint.json", "properties.package")
+        app_id = g.node("application", pkg, pkg, *pkg_ev)
     else:
         # A generic application node still anchors
         # containment edges when the package is unknown.
         app_id = g.node(
             "application", "application", "application",
-            "fingerprint", "fingerprint.json", "properties",
+            "graph", "graph.json", "nodes",
             status="unidentified")
 
     # --- permissions --------------------------------------
@@ -491,6 +660,10 @@ def build_graph(dex_data=None, native_data=None,
                        "correlations", "correlations.json",
                        f"network_libraries[{li}]",
                        status=entry.get("status"))
+
+    # --- Unreal package relationships (2.6.1) ------------
+    if unreal_data:
+        _unreal_section(g, app_id, unreal_data, notes)
 
     nodes = [g.nodes[k] for k in sorted(g.nodes)]
     edges = sorted(

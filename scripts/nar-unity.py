@@ -565,7 +565,7 @@ def parse_unityfs_bundle(data, name=""):
 
 
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unity", "version": "2.6.0",
+    report = {"tool": "nar-unity", "version": "2.6.1",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     triage = run_json_tool("nar-triage.py", [target]) or {}

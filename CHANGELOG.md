@@ -2,6 +2,98 @@
 
 ## Unreleased
 
+## 2.6.1 (2026-11-24)
+
+Verification and security-remediation round: no new
+features beyond the two named integration items. An
+external review and a code-level deep audit of 2.6.0
+were worked claim by claim; every confirmed finding is
+fixed with regression tests, and the whole round is
+verified end to end on real targets. Full record:
+NAR_2.6.1_VERIFICATION_REPORT.md. Research by Bakr
+Fayez.
+
+- Security (deep-audit remediation): a ZIP path
+  traversal in nar-analyze's container extraction —
+  archive entry names were used as filesystem paths
+  with no containment check — is closed at all four
+  extraction call sites (contained destinations plus a
+  per-entry/total extraction budget); nar-triage now
+  refuses traversal member names into explicit rejected
+  lists instead of recording them as contained files.
+  The DEX parser's LEB128 readers are bounded with the
+  5-byte spec cap and raise DexError on overrun or
+  overlength encodings; class-def interface lists and
+  proto parameter lists are extent-validated. A unified
+  archive resource budget now caps the previously
+  unbounded member reads (React Native bundle and DEX
+  members, the IL2CPP pair extraction, container
+  extraction); the remaining archive readers were
+  audited and verified already bounded.
+- Evidence integrity: the graph's application node now
+  cites the document its package actually came from
+  (previously it cited the fingerprint document even
+  when the fingerprint stage was absent or the package
+  came from the permissions data — both reproduced by
+  execution before fixing); duplicate node/edge merges
+  accumulate further evidence references (capped)
+  instead of silently keeping only the first. Cases
+  now include permissions.json, the raw permissions
+  document the graph and investigation builders cite
+  as evidence — it was referenced by every case but
+  never written. Investigation output separates
+  UNVERIFIED findings into their own
+  unverified_findings section; they no longer sit
+  inside verified_facts.
+- Integration: Unreal package relationships (classic
+  and Zen, from the 2.6.0 work) are joined into the
+  unified graph when a case includes Unreal analysis —
+  package/object nodes and relationship edges under
+  the graph's provenance and confidence discipline,
+  verified against nar-unreal's own output on a real
+  title's real pak (counts reconcile exactly).
+- Performance (R-006): nar-analyze's peak on the
+  273 MB fixture was profiled to the DEX stage's JSON
+  round-trip and restructured — the stage now spools
+  to disk, promotes verbatim to the cache, extracts
+  the downstream projection element by element, and
+  writes the companion with a token-level
+  re-serializer. Every case output is byte-identical
+  to the pre-change run (modulo per-run work-dir
+  paths and one list ordering proven nondeterministic
+  across runs of the identical pre-change code). Peak
+  RSS: 1,887,891,456 → 1,532,669,952 bytes (−18.8%)
+  under the benchmark harness's discipline.
+- Accuracy: labeled-corpus measurements extended — a
+  synthetic format-identification corpus (5
+  builder-labeled files) is now measured alongside
+  the existing protection precision/recall, engine
+  recall and real format accuracy (all re-measured on
+  this tree; figures in the 2.6.1 baseline). Endpoint
+  classification is recorded explicitly as NOT RUN:
+  no labeled endpoint corpus exists, and no figure is
+  invented for it. Engine precision on real apps
+  remains NOT RUN for the same reason (no labeled
+  engine-negative corpus).
+- CI (prepared in the repo; applied via the web UI at
+  publication): the install step adds PyYAML so the
+  YAML validity tests run instead of skipping, and a
+  new public e2e job generates the synthetic fixtures
+  and runs the harness's new public mode
+  (NAR_E2E_PUBLIC=1), which exercises every case that
+  needs no private fixtures.
+- Verification: graph.json and investigation.json
+  were validated programmatically on six real cases
+  (schema validity, edge endpoints, count
+  reconciliation against the stage documents,
+  evidence resolution, hypothesis discipline, fact
+  subjects) — all checks pass on all six; companion
+  projections cross-checked with zero silent loss;
+  case export/import/verify exercised end to end.
+  Physical-device runtime testing remains NOT RUN
+  (no device attached); the exact owner checklist is
+  in the verification report.
+
 ## 2.6.0 (2026-11-24)
 
 Repository-wide repair and intelligence upgrade driven

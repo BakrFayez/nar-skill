@@ -12,6 +12,12 @@ document, and every item carries an evidence reference
 Sections:
 - verified_facts: items lifted directly from findings /
   correlations / stage inventories, with evidence.
+- unverified_findings: security findings whose own
+  verification_status is UNVERIFIED (2.6.1 deep-audit
+  remediation: they were previously reported inside
+  verified_facts with the status merely preserved on the
+  item — a finding that has not been verified does not
+  belong under a "verified" heading).
 - paths: prioritized next-step recommendations generated
   by explicit rules (each carries its rule id, triggering
   evidence and a confidence). A path is advice, not a fact.
@@ -61,8 +67,9 @@ def build_investigation(dex_data=None, native_data=None,
                         perms_data=None, network_data=None,
                         security_data=None,
                         correlations_data=None,
-                        engines_data=None, version="2.6.0"):
+                        engines_data=None, version="2.6.1"):
     facts, paths, hypotheses, unknowns = [], [], [], []
+    unverified = []
     notes = []
     for label, data in (
             ("dex", dex_data), ("native", native_data),
@@ -75,10 +82,14 @@ def build_investigation(dex_data=None, native_data=None,
                 f"{label} stage data unavailable; rules "
                 "depending on it did not run")
 
-    # ---- verified facts: security findings ---------------
+    # ---- facts: security findings, split by status -------
+    # A finding whose verification_status is UNVERIFIED
+    # (or absent, which defaults to UNVERIFIED) is
+    # reported under unverified_findings, never as a
+    # verified fact (2.6.1 deep-audit remediation).
     findings = (security_data or {}).get("findings") or []
     for i, f in enumerate(findings):
-        facts.append({
+        item = {
             "fact": f.get("title"),
             "kind": "security_finding",
             "subject": f.get("affected_component"),
@@ -88,7 +99,11 @@ def build_investigation(dex_data=None, native_data=None,
             "evidence": _ev(
                 "security", "security-findings.json",
                 f"findings[{i}]"),
-        })
+        }
+        if item["verification_status"] == "UNVERIFIED":
+            unverified.append(item)
+        else:
+            facts.append(item)
 
     # ---- verified facts + paths from correlations --------
     corr = correlations_data or {}
@@ -355,18 +370,24 @@ def build_investigation(dex_data=None, native_data=None,
         "kind": "investigation",
         "method": "deterministic-offline-rules",
         "verified_facts": facts,
+        "unverified_findings": unverified,
         "paths": paths,
         "hypotheses": hypotheses,
         "unknowns": unknowns,
         "counts": {
-            "verified_facts": len(facts), "paths": len(paths),
+            "verified_facts": len(facts),
+            "unverified_findings": len(unverified),
+            "paths": len(paths),
             "hypotheses": len(hypotheses),
             "unknowns": len(unknowns),
         },
         "notes": notes + [
             "Paths are rule-generated recommendations, not "
             "facts. Hypotheses are labeled as such and are "
-            "never merged into verified_facts."],
+            "never merged into verified_facts. Security "
+            "findings whose verification status is "
+            "UNVERIFIED are reported under "
+            "unverified_findings, not as verified facts."],
     }
 
 
@@ -380,6 +401,8 @@ def summarize_investigation(doc):
         "counts": doc.get("counts") or {},
         "top_paths": (doc.get("paths") or [])[:10],
         "verified_facts": doc.get("verified_facts") or [],
+        "unverified_findings":
+            doc.get("unverified_findings") or [],
         "hypotheses": doc.get("hypotheses") or [],
         "unknowns": doc.get("unknowns") or [],
     }

@@ -289,3 +289,17 @@ honestly where PyYAML is absent.
 - [x] Version metadata synchronized (18 guarded locations + 2 builder defaults)
 - [x] Release documentation complete (this report, CHANGELOG, repair matrix, capability matrix)
 - [ ] Publication: NOT DONE — owner's separate authorization required
+
+## Publication status (addendum, 2026-11-24)
+
+This report was written before publication, and its
+checklist above records that state. For the record, the
+publication it waited for has since happened, on
+2026-11-24: the `upgrade-2.6.0` branch was fast-forwarded
+into `main` (ceb9d4d) and pushed (remote main 0ef1817c);
+the GitHub Release "NAR 2.6.0" (tag v2.6.0) was published
+and marked Latest; and nar-ci run #12 for that push
+completed with conclusion Success. The unchecked
+"Publication" box above is therefore historical, not a
+pending item. (Appended by the 2.6.1 verification round;
+the original report text is unchanged.)

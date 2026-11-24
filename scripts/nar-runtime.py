@@ -574,7 +574,7 @@ def status():
             "capabilities": caps})
     verified = bool(devices)
     return {
-        "tool": "nar-runtime", "version": "2.6.0",
+        "tool": "nar-runtime", "version": "2.6.1",
         "adb": adb, "frida": frida,
         "devices": device_info,
         "device_error": err,
@@ -602,7 +602,7 @@ def diagnose(serial=None, package=None, recover=False):
     recovery = None
     if not adb["available"]:
         diag = diagnostics_from(adb, frida, [], states={})
-        return {"tool": "nar-runtime", "version": "2.6.0",
+        return {"tool": "nar-runtime", "version": "2.6.1",
                 "diagnostics": diag, "recovery": None,
                 "capabilities": []}
     states, _err = adb_device_states(adb["path"])
@@ -626,7 +626,7 @@ def diagnose(serial=None, package=None, recover=False):
             installed = app_installed(adb["path"], s, package)
     diag = diagnostics_from(adb, frida, caps_list, states=states,
                             package=package, installed=installed)
-    return {"tool": "nar-runtime", "version": "2.6.0",
+    return {"tool": "nar-runtime", "version": "2.6.1",
             "diagnostics": diag, "recovery": recovery,
             "capabilities": caps_list}
 
@@ -663,7 +663,7 @@ def plan(apk_path):
          "evidence": "app-private file inventory for the "
                      "case workspace"},
     ]
-    return {"tool": "nar-runtime", "version": "2.6.0",
+    return {"tool": "nar-runtime", "version": "2.6.1",
             "target": os.path.abspath(apk_path),
             "package_hint": package_hint,
             "verification_status": st["verification_status"],
@@ -689,7 +689,7 @@ def new_session(kind, st, target=None):
     carried through unchanged."""
     started = ev_mod.now_iso()
     record = {
-        "tool": "nar-runtime", "version": "2.6.0",
+        "tool": "nar-runtime", "version": "2.6.1",
         "session_id": "nar-rt-" + uuid.uuid4().hex[:12],
         "kind": kind,
         "started_at": started, "stopped_at": None,

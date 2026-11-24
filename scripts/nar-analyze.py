@@ -32,6 +32,7 @@ MIT License. See LICENSE in the repo root.
 import argparse
 import hashlib
 import json
+import mmap
 import os
 import subprocess
 import sys
@@ -51,7 +52,7 @@ try:
     from narlib import investigation as _investigation
     from narlib import safearchive as _safearchive
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.6.0"
+    NAR_VERSION = "2.6.1"
     _companions = None
     _correlations = None
     _evidence = None
@@ -205,14 +206,77 @@ def pick_base_apk(triage, names):
     return max(contained, key=lambda c: c.get("size_bytes", 0))["name"]
 
 
-def extract_entry(zf, name, dest):
+# Container-extraction discipline (2.6.1 deep-audit
+# remediation): every entry nar-analyze materializes from
+# a target container goes through _contained_join (no
+# absolute or '..' escape from the work directory — the
+# entry name is attacker-controlled) and the extraction
+# budget below. The ceilings are generous — far above any
+# real base APK / OBB / pak / utoc — and only refuse
+# absurd inflation; they are enforced on the declared
+# size and again on the streamed byte count, because a
+# crafted central directory can understate the size.
+MAX_EXTRACT_ENTRY_BYTES = 4 * 1024 * 1024 * 1024
+MAX_EXTRACT_TOTAL_BYTES = 8 * 1024 * 1024 * 1024
+_EXTRACT_BUDGET = {"used": 0}
+
+
+def _contained_join(root, *parts):
+    """Join parts under root, refusing any result that
+    escapes root (absolute parts, '..' traversal)."""
+    dest = os.path.normpath(os.path.join(root, *parts))
+    root_abs = os.path.abspath(root)
+    if dest != root_abs and \
+            not dest.startswith(root_abs + os.sep):
+        raise ValueError(
+            "archive entry path escapes the work "
+            f"directory: {os.path.join(*parts)!r}")
+    return dest
+
+
+def extract_entry(zf, name, root, *rel_parts):
+    """Extract one archive entry under root, contained
+    and capped. Raises ValueError when the destination
+    would escape root or the entry exceeds the extraction
+    budget; a partially written file is removed first."""
+    dest = _contained_join(root, *rel_parts)
+    info = zf.getinfo(name)
+    if info.file_size > MAX_EXTRACT_ENTRY_BYTES:
+        raise ValueError(
+            f"archive entry {name!r} declares "
+            f"{info.file_size} bytes, over the "
+            f"{MAX_EXTRACT_ENTRY_BYTES}-byte extraction cap")
+    if _EXTRACT_BUDGET["used"] + info.file_size \
+            > MAX_EXTRACT_TOTAL_BYTES:
+        raise ValueError(
+            f"archive entry {name!r} would exceed the "
+            f"{MAX_EXTRACT_TOTAL_BYTES}-byte total "
+            "extraction budget for this run")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    with zf.open(name) as src, open(dest, "wb") as dst:
-        while True:
-            chunk = src.read(1 << 20)
-            if not chunk:
-                break
-            dst.write(chunk)
+    written = 0
+    try:
+        with zf.open(name) as src, open(dest, "wb") as dst:
+            while True:
+                chunk = src.read(1 << 20)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_EXTRACT_ENTRY_BYTES or \
+                        _EXTRACT_BUDGET["used"] + written \
+                        > MAX_EXTRACT_TOTAL_BYTES:
+                    raise ValueError(
+                        f"archive entry {name!r} exceeded "
+                        "the extraction budget while "
+                        "streaming (declared size "
+                        "understated)")
+                dst.write(chunk)
+    except ValueError:
+        try:
+            os.unlink(dest)
+        except OSError:
+            pass
+        raise
+    _EXTRACT_BUDGET["used"] += written
     return dest
 
 
@@ -345,6 +409,415 @@ def run_cached_stage(stage, script, args, cache_key, out_dir):
     return data, err, False
 
 
+# ------------------------------------------------------------------
+# Streaming DEX stage (2.6.1 W4 — R-006 remediation).
+#
+# The DEX stage document is the pipeline's one giant stage
+# payload (hundreds of MB on large targets): the classic
+# path captured it as subprocess text, parsed it into a
+# full in-memory dict (~1.9 GB peak on the 273 MB fixture)
+# and retained the dict for the whole downstream. The
+# builders downstream, however, read only a slim
+# projection of it (class names, native-method refs,
+# entry points, string references — see narlib.correlations
+# and narlib.graph), and the cache/companion files are
+# serializations of the document, not consumers of the
+# dict. The streaming path therefore:
+#   1. spools the tool's stdout to a file (never a string),
+#   2. promotes the spool to the stage cache verbatim
+#      (minus print's trailing newline — byte-identical to
+#      the classic json.dump cache),
+#   3. extracts the projection + totals by streaming the
+#      cached document element by element (each dex_files
+#      element is parsed, projected and discarded),
+#   4. writes the indent=1 companion with a token-level
+#      re-serializer that copies scalar/string tokens
+#      verbatim and regenerates only whitespace — byte-
+#      identical to json.dump(doc, indent=1).
+# Any failure in the streaming machinery falls back to the
+# classic stage path (the caller performs the fallback);
+# behavior on malformed stage output mirrors run_json_tool
+# (a "produced no JSON" degradation, never a crash).
+
+def _json_skip_ws(mm, i):
+    n = len(mm)
+    while i < n and mm[i] in b" \t\r\n":
+        i += 1
+    return i
+
+
+def _json_value_end(mm, i):
+    """End offset (exclusive) of the JSON value starting at
+    or after offset i in the mapped bytes. Pure structural
+    scan — strings are skipped escape-aware and no value is
+    materialized. Raises ValueError on malformed input."""
+    i = _json_skip_ws(mm, i)
+    n = len(mm)
+    if i >= n:
+        raise ValueError("unexpected end of JSON input")
+    c = mm[i]
+    if c == 0x22:  # string
+        i += 1
+        while i < n:
+            b = mm[i]
+            if b == 0x5C:
+                i += 2
+                continue
+            if b == 0x22:
+                return i + 1
+            i += 1
+        raise ValueError("unterminated string in JSON input")
+    if c in (0x7B, 0x5B):  # { or [
+        depth = 0
+        while i < n:
+            b = mm[i]
+            if b == 0x22:
+                i = _json_value_end(mm, i)
+                continue
+            if b in (0x7B, 0x5B):
+                depth += 1
+            elif b in (0x7D, 0x5D):
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+            i += 1
+        raise ValueError("unterminated container in JSON")
+    while i < n and mm[i] not in b",}] \t\r\n":
+        i += 1
+    return i
+
+
+def _json_object_items(mm):
+    """Yield (key, value_start, value_end) for each member
+    of the top-level object of the mapped JSON document."""
+    i = _json_skip_ws(mm, 0)
+    if i >= len(mm) or mm[i] != 0x7B:
+        raise ValueError("top-level JSON value is not an object")
+    i = _json_skip_ws(mm, i + 1)
+    if i < len(mm) and mm[i] == 0x7D:
+        return
+    while True:
+        i = _json_skip_ws(mm, i)
+        kend = _json_value_end(mm, i)
+        key = json.loads(mm[i:kend])
+        i = _json_skip_ws(mm, kend)
+        if i >= len(mm) or mm[i] != 0x3A:
+            raise ValueError("expected ':' in JSON object")
+        vstart = _json_skip_ws(mm, i + 1)
+        vend = _json_value_end(mm, vstart)
+        yield key, vstart, vend
+        i = _json_skip_ws(mm, vend)
+        if i < len(mm) and mm[i] == 0x2C:
+            i += 1
+            continue
+        if i < len(mm) and mm[i] == 0x7D:
+            return
+        raise ValueError("expected ',' or '}' in JSON object")
+
+
+def _json_array_items(mm, start):
+    """Yield (start, end) spans of the elements of the
+    array whose '[' is at offset start."""
+    i = _json_skip_ws(mm, start + 1)
+    if i < len(mm) and mm[i] == 0x5D:
+        return
+    while True:
+        vstart = _json_skip_ws(mm, i)
+        vend = _json_value_end(mm, vstart)
+        yield vstart, vend
+        i = _json_skip_ws(mm, vend)
+        if i < len(mm) and mm[i] == 0x2C:
+            i += 1
+            continue
+        if i < len(mm) and mm[i] == 0x5D:
+            return
+        raise ValueError("expected ',' or ']' in JSON array")
+
+
+def _dex_file_projection(f):
+    """The slim per-file projection the report summary and
+    the correlation/graph builders consume — exactly the
+    fields they read, nothing else (the full document
+    lives on in the cache + companion files)."""
+    def _cname(c):
+        return c.get("class") if isinstance(c, dict) else c
+    out = {
+        "name": f.get("name"),
+        "class_count": f.get("class_count"),
+        "kotlin": f.get("kotlin"),
+        "classes": [{"class": _cname(c)}
+                    for c in f.get("classes") or []],
+        "native_methods": [
+            {"class": nm["class"], "name": nm["name"]}
+            for nm in f.get("native_methods") or []],
+        "entry_points": [
+            {"class": ep["class"],
+             "via_superclass": ep.get("via_superclass")}
+            for ep in f.get("entry_points") or []],
+        "string_references": [
+            {"string": r.get("string"),
+             "sample_classes": r.get("sample_classes")}
+            for r in f.get("string_references") or []],
+    }
+    if "error" in f:
+        out["error"] = f["error"]
+    return out
+
+
+def _dex_projection_from_file(path):
+    """Stream a DEX stage document from disk and return
+    {totals, dex_files: [projections]}. Each dex_files
+    element is parsed, projected and discarded before the
+    next is read, so the full document is never resident."""
+    totals = None
+    files = []
+    with open(path, "rb") as fh:
+        mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
+            for key, vs, ve in _json_object_items(mm):
+                if key == "dex_files":
+                    for es, ee in _json_array_items(mm, vs):
+                        files.append(_dex_file_projection(
+                            json.loads(mm[es:ee])))
+                elif key == "totals":
+                    totals = json.loads(mm[vs:ve])
+        finally:
+            mm.close()
+    return {"totals": totals, "dex_files": files}
+
+
+def _json_emit_value(mm, i, out, depth):
+    """Write the JSON value starting at/after offset i to
+    the binary file `out`, formatted exactly as
+    json.dump(value, indent=1) formats it at this depth:
+    string/scalar tokens are copied verbatim from the
+    source; only inter-token whitespace is generated.
+    Returns the offset just past the value."""
+    i = _json_skip_ws(mm, i)
+    c = mm[i]
+    if c not in (0x7B, 0x5B):
+        end = _json_value_end(mm, i)
+        out.write(mm[i:end])
+        return end
+    is_obj = c == 0x7B
+    close = 0x7D if is_obj else 0x5D
+    j = _json_skip_ws(mm, i + 1)
+    if j < len(mm) and mm[j] == close:
+        out.write(b"{}" if is_obj else b"[]")
+        return j + 1
+    out.write(b"{" if is_obj else b"[")
+    i += 1
+    count = 0
+    while True:
+        i = _json_skip_ws(mm, i)
+        if i < len(mm) and mm[i] == close:
+            out.write(b"\n" + b" " * depth
+                      + (b"}" if is_obj else b"]"))
+            return i + 1
+        if count:
+            out.write(b",")
+        out.write(b"\n" + b" " * (depth + 1))
+        if is_obj:
+            kend = _json_value_end(mm, i)
+            out.write(mm[i:kend])
+            i = _json_skip_ws(mm, kend) + 1  # past ':'
+            out.write(b": ")
+        i = _json_emit_value(mm, i, out, depth + 1)
+        count += 1
+        i = _json_skip_ws(mm, i)
+        if i < len(mm) and mm[i] == 0x2C:
+            i += 1
+
+
+def _dex_companion_from_cache(cache_path, companion_path):
+    """Write the indent=1 companion (dex.json) from the
+    cached stage document via the token re-serializer."""
+    with open(cache_path, "rb") as fh:
+        mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
+            with open(companion_path, "wb") as out:
+                _json_emit_value(mm, 0, out, 0)
+        finally:
+            mm.close()
+
+
+def _dex_stage_streamed(report, companions, apk_path,
+                        out_dir, dex_dir, cache_key_base,
+                        summarize):
+    """The DEX stage over the streaming path. Mirrors the
+    generic stage() bookkeeping (cache, companion,
+    registry, summary, limitation on degradation) while
+    never materializing the stage document. Returns the
+    slim projection document, or None on degradation.
+    Raises on streaming-machinery failures — the caller
+    falls back to the classic stage path."""
+    stage_name, script = "dex", "nar-dex.py"
+    key = hashlib.sha256(
+        f"{cache_key_base}|{stage_name}".encode()).hexdigest()
+    cache_path = _stage_cache_path(out_dir, stage_name)
+    key_path = cache_path + ".key"
+    if BUDGET["total_budget_s"] and BUDGET["t0"] and (
+            time.time() - BUDGET["t0"]
+            > BUDGET["total_budget_s"]):
+        EXEC_LOG.append({
+            "stage": stage_name, "module": script,
+            "tool": script, "tool_version": NAR_VERSION,
+            "status": "budget-exceeded", "duration_s": 0.0,
+            "budget": _budget_snapshot()})
+        report["limitations"].append(
+            f"2.0 stage {stage_name} degraded: total budget "
+            f"of {BUDGET['total_budget_s']}s exhausted "
+            f"before stage {stage_name}")
+        return None
+    cached = False
+    if os.path.isfile(cache_path) and os.path.isfile(key_path):
+        with open(key_path, encoding="utf-8") as fh:
+            if fh.read().strip() == key:
+                cached = True
+                EXEC_LOG.append({
+                    "stage": stage_name, "module": script,
+                    "tool": script, "tool_version": NAR_VERSION,
+                    "status": "cached", "duration_s": 0.0})
+    if not cached:
+        path = os.path.join(HERE, script)
+        cmd = [sys.executable, path, apk_path, "--out",
+               dex_dir, "--json"]
+        eff_timeout, budget_bound = _effective_timeout(
+            TOOL_TIMEOUT)
+        started = time.time()
+        os.makedirs(os.path.dirname(cache_path),
+                    exist_ok=True)
+        spool_path = cache_path + ".spool"
+        try:
+            with open(spool_path, "wb") as spool:
+                proc = subprocess.run(
+                    cmd, stdout=spool,
+                    stderr=subprocess.PIPE, text=True,
+                    timeout=eff_timeout)
+        except subprocess.TimeoutExpired:
+            EXEC_LOG.append({
+                "stage": script, "module": script,
+                "tool": script, "tool_version": None,
+                "status": ("budget-exceeded" if budget_bound
+                           else "failed"),
+                "duration_s": round(time.time() - started, 3),
+                "budget": _budget_snapshot()})
+            _quiet_unlink(spool_path)
+            report["limitations"].append(
+                f"2.0 stage {stage_name} degraded: {script} "
+                f"did not finish within {eff_timeout}s")
+            return None
+        except OSError as e:
+            EXEC_LOG.append({
+                "stage": script, "module": script,
+                "tool": script, "tool_version": None,
+                "status": "failed",
+                "duration_s": round(time.time() - started, 3)})
+            _quiet_unlink(spool_path)
+            report["limitations"].append(
+                f"2.0 stage {stage_name} degraded: {script} "
+                f"could not start: {e}")
+            return None
+        try:
+            data = _dex_projection_from_file(spool_path)
+        except Exception:
+            EXEC_LOG.append({
+                "stage": script, "module": script,
+                "tool": script, "tool_version": None,
+                "status": "failed",
+                "duration_s": round(time.time() - started, 3)})
+            tail = ""
+            if proc.stderr:
+                tail = proc.stderr.strip()[-300:]
+            if not tail:
+                try:
+                    with open(spool_path, "rb") as fh:
+                        fh.seek(0, 2)
+                        size = fh.tell()
+                        fh.seek(max(0, size - 4096))
+                        tail = fh.read().decode(
+                            "utf-8", "replace").strip()[-300:]
+                except OSError:
+                    tail = ""
+            _quiet_unlink(spool_path)
+            err = (f"{script} produced no JSON "
+                   f"(exit {proc.returncode})"
+                   + (f": {tail}" if tail else ""))
+            report["limitations"].append(
+                f"2.0 stage {stage_name} degraded: {err}")
+            return None
+        EXEC_LOG.append({
+            "stage": script, "module": script,
+            "tool": script, "tool_version": None,
+            "status": "ok",
+            "duration_s": round(time.time() - started, 3)})
+        # Promote the spool to the stage cache: the tool's
+        # stdout is json.dumps(report) + print's newline;
+        # the classic cache is json.dump of the same
+        # document (no trailing newline) — stream-copy all
+        # but a single trailing newline.
+        with open(spool_path, "rb") as src, \
+                open(cache_path, "wb") as dst:
+            _copy_minus_trailing_newline(src, dst)
+        _quiet_unlink(spool_path)
+        with open(key_path, "w", encoding="utf-8") as fh:
+            fh.write(key)
+    else:
+        data = _dex_projection_from_file(cache_path)
+    _dex_companion_from_cache(
+        cache_path, os.path.join(out_dir, "dex.json"))
+    companions[stage_name] = {"file": "dex.json",
+                              "cached": cached}
+    summarize(data)
+    return data
+
+
+def _quiet_unlink(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _copy_minus_trailing_newline(src, dst):
+    """Stream-copy src to dst, dropping exactly one
+    trailing newline if the source ends with one."""
+    hold = b""
+    while True:
+        chunk = src.read(1 << 22)
+        if not chunk:
+            break
+        data = hold + chunk
+        if len(data) > 1:
+            dst.write(data[:-1])
+            hold = data[-1:]
+        else:
+            hold = data
+    if hold and hold != b"\n":
+        dst.write(hold)
+
+
+def _unreal_graph_input(report):
+    """Assemble the graph builder's Unreal input (2.6.1)
+    from the report's engine deep-dive sections: one
+    {"field_path", "record"} item per inspected Unreal
+    package, in section order. Packages without a
+    relationships record contribute nothing."""
+    engines = report.get("engines") or {}
+    items = []
+    for section in ("unreal_packages",
+                    "unreal_iostore_packages",
+                    "unreal_pak_packages"):
+        for i, pkg in enumerate(engines.get(section) or []):
+            if isinstance(pkg, dict) \
+                    and isinstance(pkg.get("relationships"),
+                                   dict):
+                items.append({
+                    "field_path": f"engines.{section}[{i}]",
+                    "record": pkg})
+    return items
+
+
 def run_2_0_stages(report, apk_path, out_dir, work_dir,
                    perms_data=None):
     """The 2.0 module stages: fingerprint, engine fusion, DEX,
@@ -438,9 +911,25 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     eng_data = stage("engines", "nar-engines.py", [apk_path],
                      "engines.json", sum_engines)
     dex_dir = os.path.join(out_dir, "dex")
-    dex_data = stage("dex", "nar-dex.py",
-                     [apk_path, "--out", dex_dir],
-                     "dex.json", sum_dex)
+    # The DEX stage runs over the streaming path (2.6.1
+    # W4): its document is the pipeline's one giant payload
+    # and the classic capture/parse/retain round-trip set
+    # the whole run's memory peak. Any failure in the
+    # streaming machinery removes its partial artifacts
+    # and falls back to the classic stage path unchanged.
+    try:
+        dex_data = _dex_stage_streamed(
+            report, companions, apk_path, out_dir, dex_dir,
+            cache_key_base, sum_dex)
+    except Exception:
+        _cache_path = _stage_cache_path(out_dir, "dex")
+        for _p in (_cache_path, _cache_path + ".key",
+                   _cache_path + ".spool",
+                   os.path.join(out_dir, "dex.json")):
+            _quiet_unlink(_p)
+        dex_data = stage("dex", "nar-dex.py",
+                         [apk_path, "--out", dex_dir],
+                         "dex.json", sum_dex)
     nat_data = stage("native", "nar-native.py", [apk_path],
                      "native.json", sum_native)
     net_data = stage("network", "nar-network.py",
@@ -451,6 +940,22 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                      "security-findings.json", sum_security)
     assets_data = stage("assets", "nar-assets.py", [apk_path],
                         "assets.json", sum_assets)
+
+    # permissions.json: the raw nar-perms document, written
+    # verbatim as a case companion (2.6.1 W3 integration
+    # fix). The graph and investigation builders cite it as
+    # evidence (permissions[i].name, components.<kind>[i],
+    # package), but no stage ever wrote it — those evidence
+    # references pointed at a document that did not exist
+    # in the case. It is the permissions stage's own
+    # output, not a projection, so it is registered
+    # without the "projected" marker the projections use.
+    if perms_data is not None:
+        with open(os.path.join(out_dir, "permissions.json"),
+                  "w", encoding="utf-8") as fh:
+            json.dump(perms_data, fh, indent=1)
+        companions["permissions"] = {"file": "permissions.json",
+                                      "cached": False}
 
     # Brief-named companion projections (Evolution Phase 2):
     # application.json / manifest.json / native-inventory.json
@@ -623,7 +1128,9 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                 perms_data=perms_data, network_data=net_data,
                 fingerprint_data=fp_data, engines_data=eng_data,
                 security_data=sec_data, assets_data=assets_data,
-                correlations_data=corr, version=NAR_VERSION))
+                correlations_data=corr,
+                unreal_data=_unreal_graph_input(report),
+                version=NAR_VERSION))
         if graph_doc is not None:
             report["graph_summary"] = graph_doc["counts"]
     if _evidence is not None and _investigation is not None \
@@ -642,6 +1149,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
 
 
 def analyze(target, work_dir, out_dir=None):
+    _EXTRACT_BUDGET["used"] = 0
     report = {"tool": "nar-analyze", "version": NAR_VERSION,
               "nar_version": NAR_VERSION,
               "target": os.path.abspath(target),
@@ -714,11 +1222,17 @@ def analyze(target, work_dir, out_dir=None):
             names = zf.namelist()
             base = pick_base_apk(triage, names)
             if base:
-                apk_for_steps = extract_entry(
-                    zf, base, os.path.join(work_dir, "container", base))
-                step_notes.append(
-                    f"container: steps ran on the contained base APK"
-                    f" {base}")
+                try:
+                    apk_for_steps = extract_entry(
+                        zf, base, work_dir, "container", base)
+                    step_notes.append(
+                        f"container: steps ran on the contained"
+                        f" base APK {base}")
+                except ValueError as e:
+                    apk_for_steps = None
+                    step_notes.append(
+                        f"container base APK entry refused: "
+                        f"{e}; APK-level steps skipped")
             else:
                 apk_for_steps = None
                 step_notes.append("container holds no triageable base"
@@ -781,10 +1295,15 @@ def analyze(target, work_dir, out_dir=None):
         if triage.get("is_container"):
             for obb_name in report.get("contained_obbs", []):
                 with zipfile.ZipFile(target) as zf:
-                    obb_path = extract_entry(
-                        zf, obb_name,
-                        os.path.join(work_dir, "container",
-                                     os.path.basename(obb_name)))
+                    try:
+                        obb_path = extract_entry(
+                            zf, obb_name, work_dir, "container",
+                            os.path.basename(obb_name))
+                    except ValueError as e:
+                        report["limitations"].append(
+                            f"contained OBB {obb_name} not "
+                            f"extracted: {e}")
+                        continue
                 with zipfile.ZipFile(obb_path) as ozf:
                     for n in ozf.namelist():
                         if n.lower().endswith(".pak"):
@@ -828,9 +1347,14 @@ def analyze(target, work_dir, out_dir=None):
         pak_reports = []
         for src_zip, entry in pak_sources[:3]:
             with zipfile.ZipFile(src_zip) as zf:
-                pak_path = extract_entry(
-                    zf, entry, os.path.join(
-                        work_dir, "pak", os.path.basename(entry)))
+                try:
+                    pak_path = extract_entry(
+                        zf, entry, work_dir, "pak",
+                        os.path.basename(entry))
+                except ValueError as e:
+                    pak_reports.append(
+                        {"error": str(e), "entry": entry})
+                    continue
             data, err = run_json_tool("nar-pak.py", [pak_path])
             if data:
                 data = dict(data)
@@ -850,9 +1374,14 @@ def analyze(target, work_dir, out_dir=None):
         utoc_sources = [(scan_path, n) for n in flags["utocs"]]
         for src_zip, entry in utoc_sources[:3]:
             with zipfile.ZipFile(src_zip) as zf:
-                utoc_path = extract_entry(
-                    zf, entry, os.path.join(
-                        work_dir, "utoc", os.path.basename(entry)))
+                try:
+                    utoc_path = extract_entry(
+                        zf, entry, work_dir, "utoc",
+                        os.path.basename(entry))
+                except ValueError as e:
+                    utoc_reports.append(
+                        {"error": str(e), "entry": entry})
+                    continue
             data, err = run_json_tool("nar-unreal.py", [utoc_path])
             containers = (data or {}).get("iostore_containers") or []
             if containers:

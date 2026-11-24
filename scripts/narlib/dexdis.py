@@ -45,7 +45,7 @@ Bakr Fayez. MIT License. See LICENSE in the repo root.
 import json
 import struct
 
-from .dex import _uleb128
+from .dex import DexError, _uleb128
 
 # ------------------------------------------------------------------
 # Opcode table: opcode -> (mnemonic, format, reference kind).
@@ -450,7 +450,8 @@ class _Resolver:
                 values.append(val)
         except _Fail:
             raise
-        except (IndexError, struct.error, ValueError) as e:
+        except (IndexError, struct.error, ValueError,
+                DexError) as e:
             raise _Fail(f"call-site {idx} malformed: {e}", addr)
         bootstrap, name, proto = values[0], values[1], values[2]
         if name.startswith('"'):

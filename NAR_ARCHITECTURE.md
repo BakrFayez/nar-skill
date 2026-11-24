@@ -111,10 +111,12 @@ by nothing.
   carving.
 - `narlib/graph.py` — unified application intelligence graph
   (2.6.0 Phase 7, R-008): builds the `graph.json` case
-  companion (12 node kinds, edge kinds with provenance,
+  companion (14 node kinds, edge kinds with provenance,
   evidence references and source-derived confidence) from the
-  stage documents + correlations; queried via
-  `nar case graph`.
+  stage documents + correlations; since 2.6.1 the analyze
+  report's Unreal package relationship records join as
+  unreal_package / unreal_object nodes with unreal_* edges;
+  queried via `nar case graph`.
 - `narlib/investigation.py` — deterministic offline
   investigation layer (2.6.0 Phase 8, R-009): builds the
   `investigation.json` companion (verified facts / ranked

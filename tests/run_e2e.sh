@@ -4,6 +4,18 @@
 # Usage:
 #   bash tests/run_e2e.sh
 #   NAR_FIXTURES=/path/to/fixtures bash tests/run_e2e.sh
+#   NAR_E2E_PUBLIC=1 bash tests/run_e2e.sh
+#
+# Public mode (NAR_E2E_PUBLIC=1, used by CI): the private
+# fixture tree and its local manifest are NOT used at all.
+# Every fixture-bound case reports SKIP through its need()
+# guard; the cases that build their own synthetic inputs
+# (and the fixture-independent ones) still run. The doctor
+# case reports SKIP instead of FAIL in public mode when
+# the host lacks the full core toolchain (hosted CI
+# runners do not preinstall apktool / jadx / the Android
+# build-tools) — public mode goes red only on a real
+# failure in the fixture-independent subset.
 #
 # Fixtures are binary and never ship in this repo. The harness reads
 # them from $NAR_FIXTURES (default ~/workspace/nar-e2e-fixtures). A
@@ -42,12 +54,22 @@ SKILL="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 SCRIPTS="$SKILL/scripts"
 export NAR_FIXTURES="${NAR_FIXTURES:-$HOME/workspace/nar-e2e-fixtures}"
 F="$NAR_FIXTURES"
-[ -f "$F/manifest.env" ] && . "$F/manifest.env"
+# The local manifest binds the PRIVATE fixture tree; it
+# is never sourced in public mode.
+[ -z "${NAR_E2E_PUBLIC:-}" ] && [ -f "$F/manifest.env" ] && . "$F/manifest.env"
 
 PASS=0; FAIL=0; SKIP=0
 FAILED_CASES=""
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+if [ -n "${NAR_E2E_PUBLIC:-}" ]; then
+  # Public mode: point the fixture root at an empty dir so
+  # every fixture-bound case SKIPs via its need() guard.
+  F="$TMP/public-fixtures"
+  mkdir -p "$F"
+  echo "run_e2e: PUBLIC MODE (NAR_E2E_PUBLIC) — private fixtures not used; fixture-bound cases will SKIP"
+fi
 
 ok()   { PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); FAILED_CASES="$FAILED_CASES $1"; printf 'FAIL  %s  (%s)\n' "$1" "$2"; }
@@ -65,6 +87,8 @@ PY=python3
 "$SKILL/scripts/nar-doctor.sh" > "$TMP/doctor.log" 2>&1
 if [ $? -eq 0 ] && contains "$TMP/doctor.log" "Core toolchain: READY"; then
   ok "doctor: READY, exit 0"
+elif [ -n "${NAR_E2E_PUBLIC:-}" ]; then
+  skip "doctor" "core toolchain incomplete on this host (public mode: apktool/jadx/build-tools not required)"
 else
   bad "doctor" "not READY or non-zero exit; see nar-doctor.sh output"
 fi
@@ -520,6 +544,34 @@ sys.exit(0)
 PYEOF
   then ok "analyze: $1 brief-named companions emitted"
   else bad "analyze-$1-companions" "companion set missing or malformed"; fi
+  # Evidence integrity (2.6.1 W3): permissions.json is a
+  # real case companion, and every document graph.json
+  # cites as evidence (primary or accumulated) exists in
+  # the case directory — no dangling evidence references.
+  if [ -f "$TMP/analyze-$1/permissions.json" ] \
+     && [ -f "$TMP/analyze-$1/graph.json" ] \
+     && $PY - "$TMP/analyze-$1" <<'PYEOF'
+import json, os, sys
+base = sys.argv[1]
+graph = json.load(open(os.path.join(base, "graph.json")))
+docs = set()
+def collect(ev):
+    if isinstance(ev, dict) and ev.get("document"):
+        docs.add(ev["document"])
+for node in graph.get("nodes") or []:
+    collect(node.get("evidence"))
+    for ev in node.get("evidence_also") or []:
+        collect(ev)
+for edge in graph.get("edges") or []:
+    collect(edge.get("evidence"))
+    for ev in edge.get("evidence_also") or []:
+        collect(ev)
+missing = [d for d in docs
+           if not os.path.isfile(os.path.join(base, d))]
+sys.exit(1 if missing else 0)
+PYEOF
+  then ok "analyze: $1 evidence documents all present (incl. permissions.json)"
+  else bad "analyze-$1-evidence" "graph cites a document missing from the case"; fi
 }
 if need analyze-app "${FIX_APP:-}"; then analyze_case app "$FIX_APP"
 else skip "analyze-app" "FIX_APP unset or absent"; fi

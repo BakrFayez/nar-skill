@@ -260,14 +260,21 @@ def render(case_dir):
                 ["Kind", "Nodes", "Edges"], rows))
     inv_counts = investigation.get("counts") or {}
     facts = investigation.get("verified_facts") or []
+    # 2.6.1: unverified findings render in their own
+    # table, never among the verified facts. Cases from
+    # before the separation lack the key entirely and
+    # render exactly as they did (tolerant .get).
+    unverified = investigation.get("unverified_findings") or []
     inv_paths = investigation.get("paths") or []
     hyps = investigation.get("hypotheses") or []
     unknowns = investigation.get("unknowns") or []
-    if facts or inv_paths or hyps or unknowns:
+    if facts or unverified or inv_paths or hyps or unknowns:
         parts.append(
             "<h2>Investigation</h2>"
             f'<p class="sub">{esc(inv_counts.get("verified_facts", len(facts)))} '
             f"verified facts · "
+            f"{esc(inv_counts.get('unverified_findings', len(unverified)))} "
+            f"unverified findings · "
             f"{esc(inv_counts.get('paths', len(inv_paths)))} "
             f"ranked paths · "
             f"{esc(inv_counts.get('hypotheses', len(hyps)))} "
@@ -288,6 +295,19 @@ def render(case_dir):
                 f"<h3>Verified facts{esc(note)}</h3>" + table(
                     ["Fact", "Kind", "Subject", "Verification"],
                     rows))
+        if unverified:
+            rows = [(f.get("fact"), f.get("kind"),
+                     f.get("subject"),
+                     f.get("verification_status"))
+                    for f in unverified[:50]]
+            note = (" — first 50 shown; the full list is in "
+                    "investigation.json" if len(unverified) > 50
+                    else "")
+            parts.append(
+                f"<h3>Unverified findings (reported, not "
+                f"verified){esc(note)}</h3>" + table(
+                    ["Finding", "Kind", "Subject",
+                     "Verification"], rows))
         if inv_paths:
             rows = [(p.get("rank"), p.get("rule_id"),
                      p.get("priority"),

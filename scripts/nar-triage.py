@@ -1011,6 +1011,19 @@ def aapt2_badging(apk_path):
     return info, "ok"
 
 
+def _traversal_name(name):
+    """True when an archive entry name is absolute or
+    escapes its extraction root through '..' components
+    (either separator). Such names are never recorded as
+    contained APKs/OBBs a consumer may extract by name
+    (2.6.1 deep-audit remediation, defense in depth:
+    nar-analyze's extraction layer refuses them too)."""
+    if name.startswith(("/", "\\")):
+        return True
+    parts = name.replace("\\", "/").split("/")
+    return ".." in parts
+
+
 def triage(apk_path):
     if not os.path.isfile(apk_path):
         raise FileNotFoundError(f"not a file: {apk_path}")
@@ -1207,6 +1220,34 @@ def triage(apk_path):
             or n.lower().endswith("baseline.prof")
             or n.lower().endswith("baseline.profm"))
 
+        # Contained APKs/OBBs: traversal names (absolute
+        # or '..' escapes) are refused recording as
+        # extractable contained files and are listed
+        # separately with the reason (2.6.1).
+        def _contained(suffix):
+            safe, refused = [], []
+            for n in names:
+                if not n.lower().endswith(suffix):
+                    continue
+                if _traversal_name(n):
+                    refused.append({
+                        "name": n,
+                        "reason": "entry name is absolute or "
+                                  "traverses outside the "
+                                  "extraction root"})
+                else:
+                    safe.append({"name": n,
+                                 "size_bytes":
+                                     infos[n].file_size})
+            safe.sort(key=lambda a: a["name"])
+            refused.sort(key=lambda a: a["name"])
+            return safe, refused
+
+        contained_apks, contained_apks_rejected = \
+            _contained(".apk")
+        contained_obbs, contained_obbs_rejected = \
+            _contained(".obb")
+
         result.update({
             "zip_entries": len(names),
             "has_manifest": has_manifest,
@@ -1216,14 +1257,10 @@ def triage(apk_path):
                              or result["is_apks"]),
             "container_manifest": container_manifest_of(zf)
             if (result["is_xapk"] or result["is_apkm"]) else None,
-            "contained_apks": sorted(
-                ({"name": n, "size_bytes": infos[n].file_size}
-                 for n in names if n.lower().endswith(".apk")),
-                key=lambda a: a["name"]),
-            "contained_obbs": sorted(
-                ({"name": n, "size_bytes": infos[n].file_size}
-                 for n in names if n.lower().endswith(".obb")),
-                key=lambda a: a["name"]),
+            "contained_apks": contained_apks,
+            "contained_apks_rejected": contained_apks_rejected,
+            "contained_obbs": contained_obbs,
+            "contained_obbs_rejected": contained_obbs_rejected,
             "dex_files": sorted(dex, key=lambda d: d["name"]),
             "dex_count": len(dex),
             "dex_total_bytes": sum(d["size_bytes"] for d in dex),

@@ -75,6 +75,21 @@ FORMAT_LABELS_REAL = {
     "FIX_GODOT_PCK": "godot-pck",
 }
 
+# Synthetic format corpus (2.6.1 accuracy extension):
+# files written by tests/synthetic_fixtures.py, labeled by
+# the format each builder constructs. The uasset/Zen
+# builders are excluded — nar-input has no uasset format
+# id (those files are identified by nar-unreal, a
+# different surface), so labeling them here would grade
+# the wrong tool.
+FORMAT_LABELS_SYNTHETIC = {
+    "synthetic.dex": "dex",
+    "libsynthetic.so": "elf",
+    "synthetic.pck": "godot-pck",
+    "synthetic.pak": "unreal-pak",
+    "synthetic.utoc": "unreal-iostore",
+}
+
 
 def manifest_env():
     env = {}
@@ -288,6 +303,44 @@ def format_metrics(env):
             "accuracy": correct / labeled, "per_role": per_role}
 
 
+def format_synthetic_metrics():
+    """Format identification on the generated synthetic
+    corpus (labels = the format each builder constructs)."""
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    try:
+        import synthetic_fixtures
+    except ImportError as e:
+        return {"status": "not_run",
+                "reason": f"synthetic fixture builders not "
+                          f"importable: {e}"}
+    labeled = 0
+    correct = 0
+    per_file = {}
+    with tempfile.TemporaryDirectory() as td:
+        synthetic_fixtures.generate(td)
+        for name, expected in FORMAT_LABELS_SYNTHETIC.items():
+            path = os.path.join(td, name)
+            if not os.path.isfile(path):
+                per_file[name] = "not generated"
+                continue
+            doc = run_json("nar-input.py",
+                           ["identify", path, "--json"])
+            got = doc.get("format") if doc else None
+            labeled += 1
+            ok = got == expected
+            correct += 1 if ok else 0
+            per_file[name] = "correct" if ok else (
+                f"identified as {got!r}, expected {expected!r}")
+    if not labeled:
+        return {"status": "not_run",
+                "reason": "no synthetic format fixtures "
+                          "were generated"}
+    return {"status": "measured", "corpus": "synthetic",
+            "labeled": labeled, "correct": correct,
+            "accuracy": correct / labeled,
+            "per_file": per_file}
+
+
 def compute_metrics(env):
     return {
         "corpora_note": "role labels only; synthetic and "
@@ -296,6 +349,19 @@ def compute_metrics(env):
         "protection_attribution": protection_metrics(env),
         "engine_detection": engine_metrics(env),
         "format_identification": format_metrics(env),
+        "format_identification_synthetic":
+            format_synthetic_metrics(),
+        "endpoint_classification": {
+            "status": "not_run",
+            "reason": "no labeled endpoint corpus exists "
+                      "locally: ground truth would require "
+                      "hand-labeled URL classifications for "
+                      "real apps, and none is recorded. The "
+                      "network stage's classification is "
+                      "rule-based; its per-case counts are "
+                      "reported, but they are not measured "
+                      "against ground truth and no accuracy "
+                      "figure is claimed."},
     }
 
 
@@ -356,6 +422,13 @@ def main(argv=None):
         if fmt.get("status") == "measured":
             print(f"metrics: formats (real): accuracy "
                   f"{fmt['accuracy']} on {fmt['labeled']} labeled")
+        fmts = m["format_identification_synthetic"]
+        if fmts.get("status") == "measured":
+            print(f"metrics: formats (synthetic): accuracy "
+                  f"{fmts['accuracy']} on {fmts['labeled']} "
+                  "labeled")
+        print("metrics: endpoint classification NOT RUN "
+              "(no labeled endpoint corpus locally)")
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             json.dump(results, fh, indent=2)

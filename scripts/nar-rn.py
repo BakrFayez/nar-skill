@@ -51,6 +51,23 @@ HERMES_MAGIC = struct.pack("<Q", 0x1F1903C103BC1FC6)
 UNITYFS_MAGIC = b"UnityFS"
 BUNDLE_CANDIDATES = ("assets/index.android.bundle",)
 
+# Bounded member reads (2.6.1 deep-audit remediation):
+# the JS bundle and the DEX members are materialized
+# whole for parsing. A member whose declared size is
+# beyond any real bundle/DEX is refused with a note in
+# the report instead of being decompressed unbounded
+# into memory. Inputs under the caps are unaffected.
+MAX_BUNDLE_READ_BYTES = 256 * 1024 * 1024
+MAX_DEX_READ_BYTES = 256 * 1024 * 1024
+
+
+def _read_capped(zf, name, cap):
+    """zf.read(name) when the declared size is within
+    cap, else None (the caller records the refusal)."""
+    if zf.getinfo(name).file_size > cap:
+        return None
+    return zf.read(name)
+
 
 def find_bundle_candidates(names):
     """Split bundle-looking entries into (contract, fallbacks).
@@ -256,6 +273,14 @@ def bridge_mapping(zf, names, native_modules):
     dex_strings = set()
     dex_errors = []
     for dex_name in dex_names:
+        declared = zf.getinfo(dex_name).file_size
+        if declared > MAX_DEX_READ_BYTES:
+            dex_errors.append({
+                "dex": dex_name,
+                "error": f"declares {declared} bytes, over "
+                         f"the {MAX_DEX_READ_BYTES}-byte "
+                         "read cap; not read"})
+            continue
         try:
             dex = Dex(zf.read(dex_name), dex_name)
             defs = dex.class_defs()
@@ -390,14 +415,28 @@ def inspect(apk_path, work_dir):
         rejected = []
         if contract is not None:
             entry = contract
-            data = zf.read(entry)
+            data = _read_capped(zf, entry,
+                                MAX_BUNDLE_READ_BYTES)
+            if data is None:
+                report["note"] = (
+                    f"JS bundle {entry} declares over the "
+                    f"{MAX_BUNDLE_READ_BYTES}-byte read cap; "
+                    "not read")
+                return report
         else:
             for cand in fallbacks:
                 with zf.open(cand) as fh:
                     kind = classify_bundle_head(fh.read(8192))
                 if kind in ("hermes", "js"):
+                    data = _read_capped(
+                        zf, cand, MAX_BUNDLE_READ_BYTES)
+                    if data is None:
+                        rejected.append({
+                            "entry": cand,
+                            "kind": "bundle declares over "
+                                    "the read cap; not read"})
+                        continue
                     entry = cand
-                    data = zf.read(cand)
                     report["bundle_match"] = ("content-validated"
                                               " fallback asset")
                     break

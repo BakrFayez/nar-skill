@@ -53,6 +53,49 @@ from narlib.dotnetmeta import DotNetMetaError, summarize_dlls  # noqa: E402
 METADATA_MAGIC = 0xFAB11BAF
 DUMP_TIMEOUT = 1800  # seconds; big games dump slowly
 
+# Bounded pair extraction (2.6.1 deep-audit remediation):
+# the IL2CPP pair is streamed out of the APK, but a
+# crafted entry could inflate without limit. The cap
+# matches narlib.safearchive's per-file ceiling — far
+# above any real libil2cpp.so / global-metadata.dat —
+# and is enforced on the declared size and again on the
+# streamed byte count.
+MAX_PAIR_ENTRY_BYTES = 1024 * 1024 * 1024
+
+
+def _extract_capped(zf, entry, dst_path):
+    """Stream one zip entry to dst_path under the pair
+    cap. Raises ValueError on refusal; a partially
+    written file is removed first."""
+    declared = zf.getinfo(entry).file_size
+    if declared > MAX_PAIR_ENTRY_BYTES:
+        raise ValueError(
+            f"entry {entry} declares {declared} bytes, "
+            f"over the {MAX_PAIR_ENTRY_BYTES}-byte "
+            "extraction cap")
+    written = 0
+    try:
+        with zf.open(entry) as src, open(dst_path, "wb") as dst:
+            while True:
+                chunk = src.read(1 << 20)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_PAIR_ENTRY_BYTES:
+                    raise ValueError(
+                        f"entry {entry} exceeded the "
+                        f"{MAX_PAIR_ENTRY_BYTES}-byte "
+                        "extraction cap while streaming "
+                        "(declared size understated)")
+                dst.write(chunk)
+    except ValueError:
+        try:
+            os.unlink(dst_path)
+        except OSError:
+            pass
+        raise
+    return dst_path
+
 TYPEDEF_RE = re.compile(r"// TypeDefIndex: \d+")
 RVA_RE = re.compile(r"// RVA: 0x[0-9A-Fa-f]+")
 NAMESPACE_RE = re.compile(r"^// Namespace: (.*)$", re.MULTILINE)
@@ -284,10 +327,13 @@ def analyze(target, out_dir, backend=None):
                 os.makedirs(inputs_dir, exist_ok=True)
                 meta_src = os.path.join(inputs_dir, "global-metadata.dat")
                 so_src = os.path.join(inputs_dir, "libil2cpp.so")
-                with zf.open(meta_entry) as src, open(meta_src, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
-                with zf.open(so_entry) as src, open(so_src, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
+                try:
+                    _extract_capped(zf, meta_entry, meta_src)
+                    _extract_capped(zf, so_entry, so_src)
+                except ValueError as e:
+                    report["error"] = (
+                        f"IL2CPP pair extraction refused: {e}")
+                    return report
     else:
         report["error"] = "target is neither an APK/ZIP nor a directory"
         return report

@@ -1,0 +1,303 @@
+{
+  "machine": "Linux x86_64",
+  "python": "3.12.3",
+  "runs": [
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-triage.py",
+      "seconds": 0.46,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-fingerprint.py",
+      "seconds": 0.56,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-engines.py",
+      "seconds": 0.46,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-dex.py",
+      "seconds": 0.12,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-native.py",
+      "seconds": 0.09,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-network.py",
+      "seconds": 0.55,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-assets.py",
+      "seconds": 0.06,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-triage.py",
+      "seconds": 0.91,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-fingerprint.py",
+      "seconds": 0.87,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-engines.py",
+      "seconds": 0.83,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-dex.py",
+      "seconds": 2.41,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-native.py",
+      "seconds": 0.08,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-network.py",
+      "seconds": 2.92,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-assets.py",
+      "seconds": 0.07,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-triage.py",
+      "seconds": 3.15,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-fingerprint.py",
+      "seconds": 3.15,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-engines.py",
+      "seconds": 2.98,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-dex.py",
+      "seconds": 2.4,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-native.py",
+      "seconds": 2.08,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-network.py",
+      "seconds": 20.04,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-assets.py",
+      "seconds": 0.1,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-triage.py",
+      "seconds": 3.47,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-fingerprint.py",
+      "seconds": 3.46,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-engines.py",
+      "seconds": 3.46,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-dex.py",
+      "seconds": 0.3,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-native.py",
+      "seconds": 1.48,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-network.py",
+      "seconds": 11.48,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-assets.py",
+      "seconds": 0.73,
+      "exit_code": 0
+    }
+  ],
+  "memory": {
+    "status": "measured",
+    "fixture_role": "FIX_UNITY_BUNDLES",
+    "size_bytes": 273366540,
+    "peak_rss_bytes": 1536069632,
+    "wall_seconds": 462.1,
+    "exit_code": 0,
+    "scope": "peak RSS of the nar-analyze process itself (RUSAGE_CHILDREN, measured before any other child ran); stage subprocess peaks are excluded"
+  },
+  "metrics": {
+    "corpora_note": "role labels only; synthetic and real corpora are always reported separately",
+    "protection_attribution": {
+      "status": "measured",
+      "corpus": "real",
+      "definition": "an attributed commercial_packer finding in nar-triage --json output",
+      "protected_fixtures": 1,
+      "protected_detected": 1,
+      "clean_fixtures": 9,
+      "clean_false_positives": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "engine_detection": {
+      "real": {
+        "labeled": 6,
+        "detected": 6,
+        "per_role": {
+          "FIX_UNITY": "detected",
+          "FIX_UNITY_BUNDLES": "detected",
+          "FIX_FLUTTER": "detected",
+          "FIX_RN": "detected",
+          "FIX_GAME_UNREAL": "detected",
+          "FIX_GODOT_LOOSE": "detected"
+        },
+        "status": "measured",
+        "recall_on_labeled_positives": 1.0
+      },
+      "synthetic": {
+        "labeled": 8,
+        "matched": 8,
+        "per_label": {
+          "Xamarin / .NET": "detected",
+          "Cordova (hybrid)": "detected",
+          "Capacitor (hybrid)": "detected",
+          "Qt for Android": "detected",
+          "Defold": "detected",
+          "Ren'Py": "detected",
+          "RPG Maker (web export)": "detected",
+          "Embedded Python": "detected"
+        },
+        "status": "measured",
+        "accuracy": 1.0
+      },
+      "real_precision": "NOT RUN \u2014 no labeled engine-negative real corpus exists locally, so real-corpus precision cannot be computed"
+    },
+    "format_identification": {
+      "status": "measured",
+      "corpus": "real",
+      "labeled": 10,
+      "correct": 10,
+      "accuracy": 1.0,
+      "per_role": {
+        "FIX_APP": "correct",
+        "FIX_GAME": "correct",
+        "FIX_UNITY": "correct",
+        "FIX_UNITY_BUNDLES": "correct",
+        "FIX_FLUTTER": "correct",
+        "FIX_RN": "correct",
+        "FIX_GAME_UNREAL": "correct",
+        "FIX_GODOT_LOOSE": "correct",
+        "FIX_XAPK": "correct",
+        "FIX_GODOT_PCK": "correct"
+      }
+    },
+    "format_identification_synthetic": {
+      "status": "measured",
+      "corpus": "synthetic",
+      "labeled": 5,
+      "correct": 5,
+      "accuracy": 1.0,
+      "per_file": {
+        "synthetic.dex": "correct",
+        "libsynthetic.so": "correct",
+        "synthetic.pck": "correct",
+        "synthetic.pak": "correct",
+        "synthetic.utoc": "correct"
+      }
+    },
+    "endpoint_classification": {
+      "status": "not_run",
+      "reason": "no labeled endpoint corpus exists locally: ground truth would require hand-labeled URL classifications for real apps, and none is recorded. The network stage's classification is rule-based; its per-case counts are reported, but they are not measured against ground truth and no accuracy figure is claimed."
+    }
+  },
+  "w4_r006_record": {
+    "note": "W4 (R-006) before/after on the identical 273 MB fixture, harness discipline (fresh wrapper, RUSAGE_CHILDREN peak of the nar-analyze process). The 'memory' block above is this run's own post-W4 measurement.",
+    "peak_before_bytes": 1887891456,
+    "peak_after_bytes": 1532669952,
+    "peak_after_sampled_vmhwm_under_pressure_bytes": 919683072,
+    "reduction_percent": 18.8,
+    "byte_identity_gate": "PASS \u2014 every case file byte-identical to the pre-change run except the three network-derived files (endpoints.json, cache/network.json, report.json), which differ only in per-run work-dir path values and a list ordering proven nondeterministic between two runs of the identical pre-change code (control comparison); demo/Unity/carrier cases identical modulo the same work-dir paths"
+  }
+}
