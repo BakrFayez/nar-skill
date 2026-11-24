@@ -1,0 +1,173 @@
+{
+ "battery_at_measurement": {
+  "doctor": "Core toolchain: READY",
+  "e2e": "see closing battery in the worker's final report",
+  "pytest": "394 passed, 0 failed (final tree, under the coverage run)"
+ },
+ "coverage": {
+  "command": "coverage run --source=scripts -m pytest tests/ -q (test venv python), totals from the coverage JSON report",
+  "covered_lines": 6666,
+  "missing_lines": 5901,
+  "note": "First coverage measurement in the project (R-016). Final figure measured in Phase 15 on the fully merged 2.6.0 tree (425-test suite, all passing under coverage). Worker E's Phase 11 measurement on its own branch tree (394 tests) read 52.41% (6,434/12,277); an earlier same-day measurement over the 388-test phase-start tree read 52.15% (6,403/12,277).",
+  "num_statements": 12567,
+  "percent_covered": 53.04,
+  "scope": "line coverage of scripts/ (module scripts + narlib) as executed in-process by the unit suite",
+  "status": "measured",
+  "tool": "coverage.py 7.17.5 (installed into the test venv for this measurement; test-side only, shipped code remains stdlib-only)"
+ },
+ "date": "2026-11-24",
+ "machine": "Linux x86_64 (shared VM, 1.5 vCPU)",
+ "method": "Identical harness discipline to baseline-2.5.2.json: each measurement ran the command once in a fresh wrapper process; peak RSS is the wrapper's RUSAGE_CHILDREN ru_maxrss (the direct child's own peak; grandchildren excluded), wall is subprocess wall time. Inputs are byte-identical to the 2.5.2 W0 inputs, verified by size: both IoStore sets (885,376 B .utoc / 219,935,664 B .ucas and 327,627 B .utoc / 97,140,736 B .ucas), the largest ELF extracted from the 273 MB fixture (81,159,656 B, arm64 shared library), and the 273 MB fixture itself (273,366,540 B, bound via the NAR_FIXTURES manifest role FIX_UNITY_BUNDLES). Local path bindings live outside the repo (role labels only here). Load note: the three short runs were measured on a quiet box section; the analyze run shared the box with this phase's coverage and unit-suite runs and with parallel program workers, so its wall is load-inflated and its peak RSS is the comparable figure.",
+ "program": "NAR 2.6.0 upgrade — Phase 11 benchmark extension (Worker E)",
+ "runs": [
+  {
+   "baseline_2_5_2_after_w4": {
+    "peak_rss_bytes": 40079360,
+    "stdout_bytes": 194422,
+    "wall_seconds": 0.48
+   },
+   "command": "python3 scripts/nar-unreal.py <utoc> --json",
+   "delta_vs_after_w4": {
+    "peak_rss_bytes": 53248,
+    "peak_rss_percent": 0.13,
+    "wall_seconds": 0.48
+   },
+   "exit_code": 0,
+   "input_role": "local UE 5.3 IoStore set: bare .utoc (885,376 B) with sibling .ucas (219,935,664 B); 7,171 chunks, TOC v5",
+   "label": "unreal-utoc-ue53",
+   "note": "stdout byte-identical in size to the 2.5.2 after-W4 output on this input.",
+   "peak_rss_bytes": 40132608,
+   "stdout_bytes": 194422,
+   "wall_seconds": 0.96
+  },
+  {
+   "baseline_2_5_2_after_w4": {
+    "peak_rss_bytes": 28352512,
+    "stdout_bytes": 193823,
+    "wall_seconds": 0.34
+   },
+   "command": "python3 scripts/nar-unreal.py <utoc> --json",
+   "delta_vs_after_w4": {
+    "peak_rss_bytes": 561152,
+    "peak_rss_percent": 1.98,
+    "wall_seconds": 0.16
+   },
+   "exit_code": 0,
+   "input_role": "local TOC v8 IoStore set: bare .utoc (327,627 B) with sibling .ucas (97,140,736 B); 2,912 chunks",
+   "label": "unreal-utoc-tocv8",
+   "note": "stdout grew by 1,151 B vs 2.5.2: the Phase 5 relationship records (R-013) added to the report.",
+   "peak_rss_bytes": 28913664,
+   "stdout_bytes": 194974,
+   "wall_seconds": 0.5
+  },
+  {
+   "baseline_2_5_2_after_w4": {
+    "peak_rss_bytes": 46964736,
+    "stdout_bytes": 143813,
+    "wall_seconds": 1.2
+   },
+   "command": "python3 scripts/nar-native.py <elf> --json",
+   "delta_vs_after_w4": {
+    "peak_rss_bytes": 344064,
+    "peak_rss_percent": 0.73,
+    "wall_seconds": 0.77
+   },
+   "exit_code": 0,
+   "input_role": "largest ELF in the 273 MB fixture (arm64 shared library, 81,159,656 B), extracted to a scratch file",
+   "label": "native-largest-elf",
+   "note": "stdout grew by 1,933 B vs 2.5.2: the Phase 4 library_dependency_graph and behavior_indicators additions.",
+   "peak_rss_bytes": 47308800,
+   "stdout_bytes": 145746,
+   "wall_seconds": 1.97
+  },
+  {
+   "baseline_2_5_2_after_w4": {
+    "peak_rss_bytes": 1885212672,
+    "stdout_bytes": 10103,
+    "wall_seconds": 429.75
+   },
+   "command": "python3 scripts/nar-analyze.py <apk> --out <case>",
+   "delta_vs_after_w4": {
+    "peak_rss_bytes": 2465792,
+    "peak_rss_percent": 0.13,
+    "wall_seconds": 533.16
+   },
+   "exit_code": 0,
+   "input_role": "the 273 MB fixture (273,366,540 B game APK, FIX_UNITY_BUNDLES role)",
+   "label": "analyze-273mb",
+   "note": "Peak RSS essentially unchanged (+0.13%, within noise) — the R-006 orchestrator stage-JSON diagnosis stands. Wall is NOT comparable this run: the box was shared with the phase's coverage run, unit suite and parallel workers (the 2.5.2 W0 record makes the same shared-load caveat in reverse). The run produced the full 2.6.0 case: graph.json (69,241 nodes / 88,666 edges) and investigation.json (235 verified facts / 606 paths / 166 hypotheses / 3 unknowns) companions included, and its report.html carries the new Unified graph and Investigation sections with zero external resource references.",
+   "peak_rss_bytes": 1887678464,
+   "stdout_bytes": 10051,
+   "wall_seconds": 962.91
+  }
+ ],
+ "synthetic_accuracy": {
+  "format_identification": {
+   "libsynthetic.so": "elf",
+   "note": "Bare .uasset/.ucas files are content formats reached through nar-unreal / nar-pak, not intake formats, and identify as unknown by design. The v11 pak result is after the Phase 11/13 tail-window fix (footer magic 204 B from EOF; the 64 B window in 2.5.2 reported this file unknown).",
+   "synthetic.dex": "dex",
+   "synthetic.pak": "unreal-pak",
+   "synthetic.pck": "godot-pck",
+   "synthetic.ucas": "unknown",
+   "synthetic.utoc": "unreal-iostore",
+   "synthetic_ue4.uasset": "unknown",
+   "synthetic_ue5_1010.uasset": "unknown",
+   "synthetic_ue5_1011.uasset": "unknown",
+   "synthetic_ue5_1012.uasset": "unknown",
+   "synthetic_unversioned.uasset": "unknown",
+   "synthetic_zen.uasset": "unknown"
+  },
+  "method": "Public synthetic corpus only (tests/synthetic_fixtures.py + tests/expected_outputs.json): fixtures generated fresh, parsed with the shipped parsers, and every field asserted by tests/unit/test_synthetic_fixtures.py counted as checked/matched (parser output vs builder intent). Format identification ran narlib.formats.identify over each generated file. Measured 2026-11-24 on this tree.",
+  "parser_field_completeness": {
+   "fields_checked": 85,
+   "fields_matched": 85,
+   "per_fixture": {
+    "dex": {
+     "checked": 10,
+     "matched": 10
+    },
+    "elf": {
+     "checked": 8,
+     "matched": 8
+    },
+    "godot_pck": {
+     "checked": 6,
+     "matched": 6
+    },
+    "iostore": {
+     "checked": 12,
+     "matched": 12
+    },
+    "pak": {
+     "checked": 7,
+     "matched": 7
+    },
+    "uasset_ue4": {
+     "checked": 6,
+     "matched": 6
+    },
+    "uasset_ue5_1010": {
+     "checked": 8,
+     "matched": 8
+    },
+    "uasset_ue5_1011": {
+     "checked": 8,
+     "matched": 8
+    },
+    "uasset_ue5_1012": {
+     "checked": 8,
+     "matched": 8
+    },
+    "uasset_unversioned": {
+     "checked": 6,
+     "matched": 6
+    },
+    "zen": {
+     "checked": 6,
+     "matched": 6
+    }
+   }
+  }
+ },
+ "tree": "branch upgrade-2.6.0-e2 at 080d035 + Phases 11-14 changes"
+}

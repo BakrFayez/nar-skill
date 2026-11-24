@@ -12,6 +12,12 @@ GodotPckTool is used as a fallback when installed; if neither
 works, the header facts are reported and the listing is honestly
 marked unavailable.
 
+Text scenes/resources (.tscn/.tres) — inside a pack, or a bare
+file given as the target — get a relationship record from their
+section headers: ext_resource paths + ids, sub_resource ids, node
+count, and node instance= references resolved to the external
+scene they instance. Encrypted entries are named, never decoded.
+
 For an APK: embedded *.pck files are listed; an APK with the Godot
 engine library but no .pck ships its project files loose under
 assets/ instead, and that is what gets reported.
@@ -19,6 +25,7 @@ assets/ instead, and that is what gets reported.
 Usage:
     python3 nar-godot.py game.pck [--json] [--limit N]
     python3 nar-godot.py game.apk [--json] [--limit N]
+    python3 nar-godot.py scene.tscn [--json]
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
 MIT License. See LICENSE in the repo root.
@@ -26,6 +33,7 @@ MIT License. See LICENSE in the repo root.
 import argparse
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -36,6 +44,15 @@ import zipfile
 PCK_MAGIC = b"GDPC"
 FLAG_ENCRYPTED = 0x1
 FLAG_RELATIVE_BASE = 0x2
+
+# Phase 10 parser resource caps: whole-blob reads of
+# attacker-controlled inputs are bounded. A .pck is parsed
+# from memory by design, so its read is capped (real packs
+# in the project corpora are far below this); a bare text
+# scene is capped tighter. Above a cap the report carries
+# a named error instead of an unbounded allocation.
+MAX_PCK_BYTES = 512 * 1024 * 1024
+MAX_SCENE_BYTES = 64 * 1024 * 1024
 
 
 class PckError(Exception):
@@ -139,6 +156,19 @@ def parse_pck(data):
     report["files"] = files
     report["file_count"] = len(files)
     report["total_content_bytes"] = sum(f["size_bytes"] for f in files)
+    rels, rel_counts = scene_relationships(files, data)
+    report["scene_relationships"] = rels
+    report["scene_relationship_counts"] = rel_counts
+    if not rels:
+        binary_scenes = sum(
+            1 for f in files
+            if f["path"].lower().endswith((".scn", ".res")))
+        if binary_scenes:
+            report["scene_relationships_note"] = (
+                f"{binary_scenes} binary scene/resource "
+                "entries (.scn/.res) carry no text section "
+                "headers; relationships are extracted only "
+                "from text .tscn/.tres files")
     return report
 
 
@@ -275,6 +305,120 @@ def tool_listing(pck_path):
     return files, None
 
 
+# ---------------------------------------------------------------
+# Text scene / resource relationships
+#
+# Godot's text formats (.tscn scenes, .tres resources) declare
+# their references in section headers: [ext_resource ...] lines
+# carry the external file path + the id other sections refer
+# to, [sub_resource ...] lines mint internal ids, and [node ...]
+# headers carry instance=ExtResource(<id>) when a node instances
+# another scene. Parsing those headers yields the scene ->
+# external-resource graph without interpreting property bodies.
+
+_SCENE_PARSE_CAP = 25          # text scenes/resources per pack
+_SCENE_TEXT_CAP = 4 * 1024 * 1024   # bytes per text file
+_EXT_LIST_CAP = 100            # external resources listed per file
+
+_SECTION_RE = re.compile(r"^\[(ext_resource|sub_resource|node)"
+                         r"\s+(.*?)\]\s*$", re.M)
+_ATTR_RE = re.compile(r'(\w+)\s*=\s*("[^"]*"|[^\s\]]+)')
+_INSTANCE_RE = re.compile(
+    r'instance\s*=\s*ExtResource\(\s*(?:"([^"]+)"|(\d+))\s*\)')
+
+
+def _section_attrs(raw):
+    attrs = {}
+    for key, val in _ATTR_RE.findall(raw):
+        if val.startswith('"') and val.endswith('"'):
+            val = val[1:-1]
+        attrs[key] = val
+    return attrs
+
+
+def parse_text_scene(text, path):
+    """Relationship record for one text scene/resource.
+
+    ext_resource ids are strings in Godot 4 ("1_abcd") and
+    integers in Godot 3 (1); both are kept as written so an
+    instance= reference joins exactly.
+    """
+    kind = "scene" if text.startswith("[gd_scene") else \
+        "resource"
+    external = []
+    sub_ids = []
+    node_count = 0
+    instanced = []
+    for m in _SECTION_RE.finditer(text):
+        section, raw = m.group(1), m.group(2)
+        attrs = _section_attrs(raw)
+        if section == "ext_resource":
+            external.append({
+                "id": attrs.get("id"),
+                "path": attrs.get("path"),
+                "type": attrs.get("type"),
+                "uid": attrs.get("uid"),
+            })
+        elif section == "sub_resource":
+            if attrs.get("id") is not None:
+                sub_ids.append(attrs["id"])
+        else:  # node
+            node_count += 1
+            inst = _INSTANCE_RE.search(raw)
+            if inst:
+                ref = inst.group(1) or inst.group(2)
+                target = next(
+                    (e["path"] for e in external
+                     if e["id"] == ref), None)
+                instanced.append({
+                    "node": attrs.get("name"),
+                    "ext_resource_id": ref,
+                    "path": target,
+                })
+    return {
+        "path": path,
+        "kind": kind,
+        "external_resources": external[:_EXT_LIST_CAP],
+        "external_resource_count": len(external),
+        "external_resources_truncated":
+            len(external) > _EXT_LIST_CAP,
+        "sub_resource_ids": sub_ids[:_EXT_LIST_CAP],
+        "sub_resource_count": len(sub_ids),
+        "node_count": node_count,
+        "instanced_scenes": instanced,
+        "evidence": "text section headers ([ext_resource] / "
+                    "[sub_resource] / [node] instance=)",
+    }
+
+
+def scene_relationships(files, data):
+    """Relationships for every text scene/resource in a
+    parsed pack listing. Encrypted entries are counted as
+    candidates but never decoded (their content is not
+    readable); oversized files are skipped by size. Returns
+    (records, accounting)."""
+    candidates = [f for f in files
+                  if f["path"].lower().endswith(
+                      (".tscn", ".tres"))]
+    records = []
+    skipped = 0
+    for f in candidates:
+        if f.get("encrypted") or \
+                f["size_bytes"] > _SCENE_TEXT_CAP or \
+                len(records) >= _SCENE_PARSE_CAP:
+            skipped += 1
+            continue
+        blob = data[f["offset"]:f["offset"] + f["size_bytes"]]
+        if not blob.startswith((b"[gd_scene", b"[gd_resource")):
+            skipped += 1
+            continue
+        records.append(parse_text_scene(
+            blob.decode("utf-8", "replace"), f["path"]))
+    return records, {"total": len(candidates),
+                     "processed": len(records),
+                     "skipped": skipped, "failed": 0}
+
+
 def inspect_pck_bytes(data, label):
     report = {"source": label, "listing_via": "stdlib"}
     try:
@@ -313,7 +457,36 @@ def inspect(target):
               "is_godot": False}
     if not os.path.isfile(target):
         raise FileNotFoundError(f"not a file: {target}")
+    if target.lower().endswith((".tscn", ".tres")):
+        if os.path.getsize(target) > MAX_SCENE_BYTES:
+            report["error"] = (
+                f"scene file exceeds the parser read cap "
+                f"({MAX_SCENE_BYTES} bytes); not read")
+            return report
+        with open(target, "rb") as fh:
+            blob = fh.read()
+        if blob.startswith((b"[gd_scene", b"[gd_resource")):
+            report["is_godot"] = True
+            report["scene_relationships"] = [parse_text_scene(
+                blob.decode("utf-8", "replace"),
+                os.path.basename(target))]
+            report["scene_relationship_counts"] = {
+                "total": 1, "processed": 1,
+                "skipped": 0, "failed": 0}
+        else:
+            report["error"] = ("file does not start with a "
+                               "[gd_scene / [gd_resource text "
+                               "header; binary scenes/resources "
+                               "are not parsed for relationships")
+        return report
     if target.lower().endswith(".pck"):
+        if os.path.getsize(target) > MAX_PCK_BYTES:
+            report["error"] = (
+                f"pack file exceeds the parser read cap "
+                f"({MAX_PCK_BYTES} bytes); not read")
+            report["pck"] = {"source": os.path.basename(target),
+                             "parse_error": report["error"]}
+            return report
         with open(target, "rb") as fh:
             data = fh.read()
         sub = inspect_pck_bytes(data, os.path.basename(target))
@@ -344,15 +517,34 @@ def inspect(target):
         report["is_godot"] = bool(report["has_godot_engine_lib"]
                                   or pcks or loose)
         if pcks:
+            # Bounded decompression: the entry's declared
+            # uncompressed size is checked BEFORE zf.read
+            # materializes it (Phase 10 parser cap).
+            declared = zf.getinfo(pcks[0]).file_size
+            if declared > MAX_PCK_BYTES:
+                sub = {"source": pcks[0],
+                       "parse_error": (
+                           f"embedded pack declares {declared} "
+                           f"bytes, over the parser read cap "
+                           f"{MAX_PCK_BYTES}; not decompressed")}
+                report["pck"] = sub
+                return report
             data = zf.read(pcks[0])
             sub = inspect_pck_bytes(data, pcks[0])
             report["pck"] = sub
             if "parse_error" in sub:
-                tmp = os.path.join(tempfile.mkdtemp(prefix="nar-godot-"),
-                                   os.path.basename(pcks[0]))
-                with open(tmp, "wb") as fh:
-                    fh.write(data)
-                files, err = tool_listing(tmp)
+                # Temp dir is removed on BOTH the success and
+                # failure paths (Phase 10 temp audit: this
+                # mkdtemp previously leaked on every run).
+                tmp_dir = tempfile.mkdtemp(prefix="nar-godot-")
+                try:
+                    tmp = os.path.join(
+                        tmp_dir, os.path.basename(pcks[0]))
+                    with open(tmp, "wb") as fh:
+                        fh.write(data)
+                    files, err = tool_listing(tmp)
+                finally:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
                 if files is not None:
                     sub["files"] = files
                     sub["file_count"] = len(files)
@@ -403,6 +595,17 @@ def human(report, limit):
             lines.append(f"Listing unavailable: "
                          f"{pck.get('listing_error') or pck.get('parse_error')}"
                          f"{'; fallback: ' + pck['fallback_error'] if pck.get('fallback_error') else ''}")
+    for rel in report.get("scene_relationships") or []:
+        inst = ", ".join(
+            f"{i['node']} -> {i['path'] or i['ext_resource_id']}"
+            for i in rel["instanced_scenes"])
+        lines.append(
+            f"Scene relationships: {rel['path']} "
+            f"({rel['kind']}): {rel['node_count']} nodes, "
+            f"{rel['external_resource_count']} external "
+            f"resources, {rel['sub_resource_count']} "
+            f"sub-resources"
+            + (f"; instanced: {inst}" if inst else ""))
     if report.get("note"):
         lines.append(report["note"])
     return "\n".join(lines)

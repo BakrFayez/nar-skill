@@ -34,6 +34,8 @@ MIT License. See LICENSE in the repo root.
 import re
 import struct
 
+from . import cdex as _cdex
+
 OAT_MAGIC = b"oat\n"
 VDEX_MAGIC = b"vdex"
 ODEX_MAGIC = b"dey\n"
@@ -194,8 +196,9 @@ def scan_embedded_dex(data):
     """Find every DEX/CDEX embedded in a blob by magic.
 
     Each hit: {offset, kind ('dex'|'cdex'), version,
-    file_size (from the DEX header, None for cdex whose
-    header layout differs)}. Overlapping or duplicate
+    file_size (from the file's own header; for cdex only
+    when its compact header parses, with the parsed header
+    carried as cdex_header)}. Overlapping or duplicate
     offsets are reported once, in file order.
     """
     hits = []
@@ -221,10 +224,21 @@ def scan_embedded_dex(data):
                     # nonsense size; a real embedded dex always
                     # fits the file that carries it.
                     continue
+            hit = {"offset": idx, "kind": kind,
+                   "version": version,
+                   "file_size": file_size}
+            if kind == "cdex":
+                # Header facts where parseable (narlib.cdex):
+                # the compact header declares a trustworthy
+                # file_size, which also bounds the carve.
+                try:
+                    header = _cdex.parse_cdex(data[idx:])
+                    hit["file_size"] = header["file_size"]
+                    hit["cdex_header"] = header
+                except _cdex.CdexError as e:
+                    hit["cdex_header_error"] = str(e)
             seen.add(idx)
-            hits.append({"offset": idx, "kind": kind,
-                         "version": version,
-                         "file_size": file_size})
+            hits.append(hit)
     hits.sort(key=lambda h: h["offset"])
     return hits
 
@@ -245,9 +259,16 @@ def extract_dex_from_vdex(data, name="app.vdex"):
             blob = data[hit["offset"]:
                         hit["offset"] + hit["file_size"]]
             out.append((f"{label}.dex", blob, "dex"))
+        elif hit.get("file_size"):
+            # The compact header parsed: its declared
+            # file_size bounds the slice exactly.
+            out.append((f"{label}.cdex",
+                        data[hit["offset"]:
+                             hit["offset"] + hit["file_size"]],
+                        "cdex"))
         else:
-            # Compact DEX has no trustworthy total size in the
-            # fields this module reads; bound the slice by the
+            # Compact DEX whose header did not parse: no
+            # trustworthy total size; bound the slice by the
             # next embedded file or EOF, labeled cdex.
             end = (hits[i + 1]["offset"] if i + 1 < len(hits)
                    else len(data))

@@ -12,6 +12,15 @@ engine that compiled it:
 - JSC / plain JS: no Hermes magic; the bundle ships as JavaScript
   text and that is what gets reported.
 
+The bundle-side native-module inventory is then joined with
+DEX-side bridge evidence (narlib.dex class/string tables):
+the framework's bridge/registrar classes, the classes that
+implement the framework's ReactPackage registrar interface,
+codegen (Fabric/TurboModule) marker classes, and — for text
+bundles, whose module names are attributable — which bundle
+module names also appear in the DEX string tables (matched)
+versus bundle-only.
+
 A *.bundle extension alone is NOT React Native evidence: Unity
 Addressables asset bundles share the extension. Candidates found
 by extension are therefore content-validated (Hermes magic or
@@ -34,6 +43,9 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib.dex import Dex, DexError  # noqa: E402
 
 HERMES_MAGIC = struct.pack("<Q", 0x1F1903C103BC1FC6)
 UNITYFS_MAGIC = b"UnityFS"
@@ -193,6 +205,174 @@ def bundle_module_inventory(data, is_text):
     return out
 
 
+# ---------------------------------------------------------------
+# DEX <-> bundle bridge mapping
+#
+# Framework facts (React Native's own namespaces, not app
+# facts): native modules are registered by classes
+# implementing com.facebook.react.ReactPackage (or extending
+# TurboReactPackage); modules implement
+# com.facebook.react.bridge.NativeModule (usually via
+# BaseJavaModule); codegen emits view-manager classes under
+# com/facebook/react/viewmanagers/ and *ManagerDelegate /
+# *ManagerInterface classes for Fabric components, and
+# Native<Module>Spec classes for TurboModules (the
+# framework's own core specs live under
+# com/facebook/fbreact/specs/). TurboModuleManagerDelegate
+# classes are bridge registrars, NOT view-manager
+# delegates, and are excluded from the delegate group.
+
+_RN_FRAMEWORK_CLASSES = (
+    "Lcom/facebook/react/ReactPackage;",
+    "Lcom/facebook/react/TurboReactPackage;",
+    "Lcom/facebook/react/bridge/NativeModule;",
+    "Lcom/facebook/react/bridge/BaseJavaModule;",
+)
+_RN_REGISTRAR_INTERFACE = "Lcom/facebook/react/ReactPackage;"
+_RN_REGISTRAR_SUPER = "Lcom/facebook/react/TurboReactPackage;"
+_RN_VIEWMANAGER_PREFIX = "Lcom/facebook/react/viewmanagers/"
+_RN_SPEC_RE = re.compile(r"Native[A-Za-z0-9_$]*Spec;$")
+_BRIDGE_LIST_CAP = 100
+
+
+def bridge_mapping(zf, names, native_modules):
+    """Join the bundle-side module inventory with DEX-side
+    bridge evidence from the APK's DEX class/string tables.
+
+    The module-name join runs only when the bundle yielded
+    attributable names (text bundles); for Hermes bundles
+    the join is recorded unavailable with the reason, and
+    the DEX-side evidence stands alone.
+    """
+    dex_names = sorted(
+        n for n in names
+        if re.fullmatch(r"classes\d*\.dex", n))
+    framework = {c: {"class": c, "present": False, "dex": None}
+                 for c in _RN_FRAMEWORK_CLASSES}
+    packages = []
+    viewmanagers = []
+    delegates = []
+    spec_classes = []
+    dex_strings = set()
+    dex_errors = []
+    for dex_name in dex_names:
+        try:
+            dex = Dex(zf.read(dex_name), dex_name)
+            defs = dex.class_defs()
+        except (DexError, struct.error, IndexError) as e:
+            dex_errors.append({"dex": dex_name,
+                               "error": str(e)})
+            continue
+        dex_strings.update(dex.strings())
+        for d in defs:
+            cls = d["class"]
+            if cls in framework and \
+                    not framework[cls]["present"]:
+                framework[cls] = {"class": cls, "present": True,
+                                  "dex": dex_name}
+            if _RN_REGISTRAR_INTERFACE in \
+                    (d.get("interfaces") or []) or \
+                    d.get("superclass") == _RN_REGISTRAR_SUPER:
+                packages.append({"class": cls, "dex": dex_name})
+            if cls.startswith(_RN_VIEWMANAGER_PREFIX):
+                viewmanagers.append({"class": cls,
+                                     "dex": dex_name})
+            elif cls.endswith(("ManagerDelegate;",
+                               "ManagerInterface;")) and \
+                    "TurboModule" not in cls:
+                delegates.append({"class": cls, "dex": dex_name})
+            if _RN_SPEC_RE.search(cls):
+                spec_classes.append({"class": cls,
+                                     "dex": dex_name})
+    out = {
+        "dex_files": dex_names,
+        "dex_errors": dex_errors,
+        "framework_bridge_classes": [
+            framework[c] for c in _RN_FRAMEWORK_CLASSES],
+        "evidence": "DEX class table (narlib.dex)",
+        "react_packages": {
+            "classes": packages[:_BRIDGE_LIST_CAP],
+            "counts": {"total": len(packages),
+                       "processed": len(packages),
+                       "skipped": 0, "failed": 0},
+            "evidence": "DEX class table: classes "
+                        "implementing the framework "
+                        "ReactPackage registrar interface "
+                        "or extending TurboReactPackage",
+        },
+        "codegen_markers": {
+            "viewmanager_classes": {
+                "classes": viewmanagers[:_BRIDGE_LIST_CAP],
+                "counts": {"total": len(viewmanagers),
+                           "processed": len(viewmanagers),
+                           "skipped": 0, "failed": 0},
+                "evidence": "DEX class table: classes "
+                            "under the framework codegen "
+                            "viewmanagers namespace",
+            },
+            "manager_delegate_classes": {
+                "classes": delegates[:_BRIDGE_LIST_CAP],
+                "counts": {"total": len(delegates),
+                           "processed": len(delegates),
+                           "skipped": 0, "failed": 0},
+                "evidence": "DEX class table: "
+                            "*ManagerDelegate / "
+                            "*ManagerInterface classes "
+                            "(codegen naming convention; "
+                            "TurboModuleManagerDelegate "
+                            "bridge classes excluded)",
+            },
+            "turbomodule_spec_classes": {
+                "classes": spec_classes[:_BRIDGE_LIST_CAP],
+                "counts": {"total": len(spec_classes),
+                           "processed": len(spec_classes),
+                           "skipped": 0, "failed": 0},
+                "evidence": "DEX class table: "
+                            "Native<Module>Spec classes "
+                            "(codegen naming convention "
+                            "for TurboModule specs; the "
+                            "framework's core specs live "
+                            "under com/facebook/fbreact/"
+                            "specs/)",
+            },
+        },
+    }
+    if native_modules.get("module_names_extracted"):
+        bundle_names = sorted(set(
+            (native_modules.get("turbomodules") or [])
+            + (native_modules.get("fabric_components") or [])
+            + (native_modules.get(
+                "native_modules_referenced") or [])))
+        matched = [n for n in bundle_names if n in dex_strings]
+        bundle_only = [n for n in bundle_names
+                       if n not in dex_strings]
+        out["module_name_join"] = {
+            "status": "joined",
+            "matched": matched,
+            "bundle_only": bundle_only,
+            "counts": {"total": len(bundle_names),
+                       "processed": len(bundle_names),
+                       "skipped": 0, "failed": 0},
+            "evidence": "module name present in both the "
+                        "bundle inventory and a DEX string "
+                        "table (matched) vs in the bundle "
+                        "inventory only (bundle_only); a "
+                        "match is string evidence that the "
+                        "native side names the module, not "
+                        "proof of registration",
+        }
+    else:
+        out["module_name_join"] = {
+            "status": "unavailable",
+            "reason": "bundle module names are not "
+                      "attributable for this bundle kind "
+                      "(Hermes bytecode string table); the "
+                      "DEX-side bridge evidence above "
+                      "stands alone",
+        }
+    return out
+
+
 def inspect(apk_path, work_dir):
     report = {"tool": "nar-rn", "file": os.path.basename(apk_path),
               "path": os.path.abspath(apk_path), "is_react_native": False}
@@ -254,6 +434,9 @@ def inspect(apk_path, work_dir):
     kind = classify_bundle_head(data[:8192])
     report["native_modules"] = bundle_module_inventory(
         data, is_text=(kind == "js"))
+    with zipfile.ZipFile(apk_path) as zf:
+        report["bridge_mapping"] = bridge_mapping(
+            zf, zf.namelist(), report["native_modules"])
     if kind == "hermes":
         report["engine"] = "Hermes"
         report["is_hermes"] = True
@@ -326,6 +509,29 @@ def human(report):
         lines.append(f"Architecture markers in bundle: "
                      f"{present or 'none'} (module names not "
                      f"attributable from bytecode string table)")
+    bm = report.get("bridge_mapping") or {}
+    if bm:
+        present = [c["class"] for c in
+                   bm.get("framework_bridge_classes") or []
+                   if c.get("present")]
+        lines.append(f"DEX bridge classes present: "
+                     f"{len(present)} of "
+                     f"{len(bm.get('framework_bridge_classes') or [])}")
+        lines.append(
+            f"ReactPackage registrars in DEX: "
+            f"{(bm.get('react_packages') or {}).get('counts', {}).get('total', 0)}")
+        join = bm.get("module_name_join") or {}
+        if join.get("status") == "joined":
+            lines.append(
+                f"Module-name join: "
+                f"{len(join.get('matched') or [])} matched in "
+                f"DEX strings, "
+                f"{len(join.get('bundle_only') or [])} "
+                f"bundle-only")
+        elif join:
+            lines.append("Module-name join: unavailable "
+                         "(Hermes bundle names not "
+                         "attributable)")
     if report.get("source_maps"):
         lines.append(f"Source maps: {report['source_maps']}")
     return "\n".join(lines)
@@ -342,8 +548,12 @@ def main(argv=None):
                         " (default: temp dir)")
     args = p.parse_args(argv)
     stem = os.path.splitext(os.path.basename(args.apk))[0] or "app"
-    work_dir = args.work or os.path.join(
-        tempfile.gettempdir(), f"nar-rn-{stem}")
+    # mkdtemp, not a predictable gettempdir()/<stem> path
+    # (Phase 10 temp audit): unpredictable + 0700, so a
+    # pre-planted directory or symlink cannot redirect the
+    # extracted bundle.
+    work_dir = args.work or tempfile.mkdtemp(
+        prefix=f"nar-rn-{stem}-")
     try:
         report = inspect(args.apk, work_dir)
     except FileNotFoundError as e:

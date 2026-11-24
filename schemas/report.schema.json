@@ -68,6 +68,9 @@
   "fingerprint_summary": {
    "type": "object"
   },
+  "graph_summary": {
+   "type": "object"
+  },
   "identity": {
    "properties": {
     "app_label": {
@@ -133,6 +136,9 @@
     "signature_schemes",
     "kind"
    ],
+   "type": "object"
+  },
+  "investigation_summary": {
    "type": "object"
   },
   "limitations": {

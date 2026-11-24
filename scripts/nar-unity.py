@@ -9,6 +9,12 @@ For a Unity APK:
   in globalgamemanagers / the UnityFS container header,
 - asset inventory: UnityFS bundles (magic-verified), the
   bin/Data layout, Addressables catalog presence,
+- first-party UnityFS header inspection (stdlib only):
+  the bundle header, the block/directory info and — where
+  the compression is one the stdlib can decode (none /
+  LZMA) — the first serialized file's header facts. LZ4 /
+  LZ4HC blocks are named as the boundary they are, never
+  decoded by a dependency this repo does not ship,
 - optional UnityPy pass: when the optional UnityPy module is
   importable in the running interpreter, one bundle is loaded
   and its object-type census reported; when it is not, that
@@ -22,8 +28,8 @@ MIT License. See LICENSE in the repo root.
 """
 import argparse
 import base64
-import io
 import json
+import lzma
 import os
 import re
 import struct
@@ -164,8 +170,402 @@ def unitypy_census(data):
         return None
 
 
+class BundleError(Exception):
+    """A bundle / serialized file is malformed or hits a
+    named format boundary (message says which)."""
+
+
+# UnityFS block compression types (low 6 bits of the
+# archive flags / per-block flags), per the public
+# ArchiveFlags layout.
+_BUNDLE_COMPRESSION = {0: "none", 1: "lzma", 2: "lz4",
+                       3: "lz4hc", 4: "lzham"}
+_BUNDLE_FLAG_COMBINED = 0x40        # blocks+directory info combined
+_BUNDLE_FLAG_AT_END = 0x80          # blocks info at the end
+_NODE_FLAG_SERIALIZED_FILE = 0x04
+BUNDLE_INSPECT_CAP = 5
+_BUNDLE_DETAIL_CAP = 50
+
+
+def _read_cstring(data, pos, what):
+    end = data.find(b"\x00", pos)
+    if end < 0:
+        raise BundleError(f"unterminated {what} string")
+    try:
+        text = data[pos:end].decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise BundleError(f"{what} string does not decode: {e}")
+    return text, end + 1
+
+
+def _bundle_decompress(raw, comp_type, expected_size, what):
+    """Decompress one UnityFS block with the stdlib only.
+
+    Compression 0 is stored data; 1 is Unity's LZMA1
+    stream (5-byte properties header + raw LZMA1, decoded
+    with lzma.FORMAT_RAW). LZ4 / LZ4HC / LZHAM have no
+    stdlib decoder: they raise a BundleError naming the
+    boundary instead of guessing.
+    """
+    kind = _BUNDLE_COMPRESSION.get(comp_type)
+    if kind is None:
+        raise BundleError(
+            f"{what}: unknown compression type {comp_type}")
+    if kind == "none":
+        out = bytes(raw)
+    elif kind == "lzma":
+        if len(raw) < 5:
+            raise BundleError(f"{what}: LZMA block too small "
+                              "for its properties header")
+        props = raw[0]
+        dict_size = struct.unpack_from("<I", raw, 1)[0]
+        filters = [{"id": lzma.FILTER_LZMA1,
+                    "dict_size": dict_size or (1 << 23),
+                    "lc": props % 9,
+                    "lp": (props // 9) % 5,
+                    "pb": (props // 9) // 5}]
+        try:
+            dec = lzma.LZMADecompressor(
+                format=lzma.FORMAT_RAW, filters=filters)
+            out = dec.decompress(bytes(raw[5:]),
+                                 expected_size + 1)
+        except lzma.LZMAError as e:
+            raise BundleError(
+                f"{what}: LZMA decompression failed: {e}")
+    else:
+        raise BundleError(
+            f"{what}: compression is {kind}, which has no "
+            "decoder in the Python standard library; the "
+            "block is inventoried, not decoded")
+    if len(out) != expected_size:
+        raise BundleError(
+            f"{what}: decompressed to {len(out)} bytes, "
+            f"the header promises {expected_size}")
+    return out
+
+
+def parse_serialized_file_header(data, name=""):
+    """Header facts of one Unity serialized file.
+
+    The header is big-endian up to and including the
+    endianness byte: metadata size, file size, format
+    version, data offset (all u32), then — format 9+ —
+    one endianness byte (0 = little, 1 = big) and three
+    reserved bytes. Format 22+ zeroes the classic size
+    fields and repeats them after the reserved bytes as
+    u32 metadata size + i64 file size + i64 data offset
+    + one further i64 whose role the public readers do
+    not document (reported as stored). Raises
+    BundleError with a named reason on malformed data.
+    Object tables and the type tree are NOT parsed:
+    that is the boundary of this header-level reader.
+    """
+    if len(data) < 16:
+        raise BundleError(
+            f"serialized file too small for a header "
+            f"({len(data)} bytes)")
+    metadata_size, file_size, version, data_offset = \
+        struct.unpack_from(">IIII", data, 0)
+    if version == 0:
+        raise BundleError(
+            "serialized-file format version is 0: not a "
+            "serialized file")
+    if version > 999:
+        raise BundleError(
+            f"implausible serialized-file format version "
+            f"{version}")
+    out = {"format": "serialized-file", "name": name,
+           "format_version": version,
+           "metadata_size": metadata_size,
+           "file_size": file_size,
+           "data_offset": data_offset,
+           "endianness": None, "reserved": None,
+           "header_size": 16}
+    notes = []
+    if version >= 9:
+        if len(data) < 20:
+            raise BundleError(
+                "serialized file truncated before the "
+                "endianness byte")
+        endian_byte = data[16]
+        if endian_byte not in (0, 1):
+            raise BundleError(
+                f"invalid serialized-file endianness byte "
+                f"{endian_byte} (expected 0 or 1)")
+        out["endianness"] = "little" if endian_byte == 0 \
+            else "big"
+        out["reserved"] = list(data[17:20])
+        out["header_size"] = 20
+    else:
+        notes.append(
+            "format < 9 stores the endianness byte at the "
+            "tail of the metadata, not in the header; it "
+            "is not read at header level")
+    if version >= 22:
+        if len(data) < 48:
+            raise BundleError(
+                "serialized file truncated before the "
+                "format-22 extended header completes")
+        metadata_size, file_size, data_offset, trailing = \
+            struct.unpack_from(">Iqqq", data, 20)
+        if metadata_size < 0 or file_size < 0 \
+                or data_offset < 0:
+            raise BundleError(
+                "format-22 extended header carries a "
+                "negative size/offset field")
+        out.update({
+            "metadata_size": metadata_size,
+            "file_size": file_size,
+            "data_offset": data_offset,
+            "header_size": 48,
+            "extended_trailing_i64": trailing,
+        })
+    if version > 22:
+        notes.append(
+            f"format version {version} is newer than 22, "
+            "the newest layout this reader documents; "
+            "fields above follow the format-22 layout")
+    out["file_size_matches_data_length"] = \
+        out["file_size"] == len(data)
+    if notes:
+        out["notes"] = notes
+    return out
+
+
+def _parse_blocks_info(raw, record):
+    """Parse decompressed blocks info into the record:
+    block table + directory (node) table. Raises
+    BundleError on structural nonsense."""
+    if len(raw) < 20:
+        raise BundleError("blocks info too small for its "
+                          "hash + block count")
+    pos = 16  # uncompressed-data hash: located, not verified
+    block_count = struct.unpack_from(">i", raw, pos)[0]
+    pos += 4
+    if block_count < 0 or block_count > 1_000_000:
+        raise BundleError(
+            f"implausible block count {block_count}")
+    blocks = []
+    for _ in range(block_count):
+        if pos + 10 > len(raw):
+            raise BundleError("blocks info truncated in "
+                              "the block table")
+        usize, csize, bflags = struct.unpack_from(
+            ">IIH", raw, pos)
+        pos += 10
+        blocks.append({
+            "uncompressed_size": usize,
+            "compressed_size": csize,
+            "flags": bflags,
+            "compression": _BUNDLE_COMPRESSION.get(
+                bflags & 0x3F,
+                f"unknown ({bflags & 0x3F})"),
+        })
+    if pos + 4 > len(raw):
+        raise BundleError("blocks info truncated before "
+                          "the node count")
+    node_count = struct.unpack_from(">i", raw, pos)[0]
+    pos += 4
+    if node_count < 0 or node_count > 1_000_000:
+        raise BundleError(
+            f"implausible node count {node_count}")
+    nodes = []
+    for _ in range(node_count):
+        if pos + 20 > len(raw):
+            raise BundleError("blocks info truncated in "
+                              "the node table")
+        offset, size, nflags = struct.unpack_from(
+            ">QQI", raw, pos)
+        pos += 20
+        path, pos = _read_cstring(raw, pos, "node path")
+        nodes.append({
+            "path": path, "offset": offset, "size": size,
+            "flags": nflags,
+            "is_serialized_file": bool(
+                nflags & _NODE_FLAG_SERIALIZED_FILE),
+        })
+    record["blocks"] = blocks[:_BUNDLE_DETAIL_CAP]
+    record["blocks_counts"] = {
+        "total": len(blocks), "processed": len(blocks),
+        "skipped": 0, "failed": 0}
+    record["blocks_detail_truncated"] = \
+        len(blocks) > _BUNDLE_DETAIL_CAP
+    record["nodes"] = nodes[:_BUNDLE_DETAIL_CAP]
+    record["nodes_counts"] = {
+        "total": len(nodes), "processed": len(nodes),
+        "skipped": 0, "failed": 0}
+    record["nodes_detail_truncated"] = \
+        len(nodes) > _BUNDLE_DETAIL_CAP
+    return blocks, nodes
+
+
+def _first_serialized_file(data, record, blocks, nodes,
+                           stream_start):
+    """Locate the first serialized-file node in the
+    decompressed block stream and parse its header.
+    Fills record["serialized_file"]; boundaries (LZ4
+    blocks, out-of-range nodes) are recorded, not raised.
+    """
+    node = next((n for n in nodes
+                 if n["is_serialized_file"]), None)
+    if node is None:
+        record["serialized_file"] = None
+        record.setdefault("limitations", []).append(
+            "no directory node is flagged as a serialized "
+            "file; no serialized-file header is reported")
+        return
+    want_end = node["offset"] + node["size"]
+    stream = bytearray()
+    cursor = stream_start  # compressed offset in the bundle
+    covered = 0
+    try:
+        for block in blocks:
+            if covered >= want_end:
+                break
+            raw = data[cursor:cursor + block["compressed_size"]]
+            if len(raw) < block["compressed_size"]:
+                raise BundleError(
+                    "bundle truncated inside a data block")
+            cursor += block["compressed_size"]
+            stream += _bundle_decompress(
+                raw, block["flags"] & 0x3F,
+                block["uncompressed_size"], "data block")
+            covered += block["uncompressed_size"]
+    except BundleError as e:
+        record["serialized_file"] = {
+            "node_path": node["path"],
+            "status": "unavailable", "reason": str(e)}
+        record.setdefault("limitations", []).append(
+            f"serialized file {node['path']!r}: {e}")
+        return
+    if want_end > len(stream):
+        record["serialized_file"] = {
+            "node_path": node["path"],
+            "status": "unavailable",
+            "reason": "node range runs past the "
+                      "decompressed block stream"}
+        return
+    blob = bytes(stream[node["offset"]:want_end])
+    try:
+        header = parse_serialized_file_header(
+            blob, node["path"])
+    except BundleError as e:
+        record["serialized_file"] = {
+            "node_path": node["path"],
+            "status": "unavailable", "reason": str(e)}
+        return
+    header["node_path"] = node["path"]
+    header["status"] = "parsed"
+    record["serialized_file"] = header
+
+
+def parse_unityfs_bundle(data, name=""):
+    """First-party UnityFS bundle header inspection.
+
+    Parses the bundle header (signature, format version,
+    player/engine version strings, size fields, archive
+    flags), then the block/directory info when its
+    compression is stdlib-decodable, then the first
+    serialized file's header from the block stream.
+    Raises BundleError with a named reason on malformed
+    data; format boundaries (LZ4 blocks, UnityWeb /
+    UnityRaw layouts) are recorded in the record's
+    limitations instead. Full object parsing is out of
+    scope for this header-level reader.
+    """
+    record = {"entry": name, "format": "unityfs-bundle",
+              "parsed": False}
+    signature, pos = _read_cstring(data, 0, "bundle signature")
+    record["signature"] = signature
+    if signature == "UnityArchive":
+        raise BundleError("UnityArchive bundles use a "
+                          "different container layout; only "
+                          "the signature is reported")
+    if signature not in ("UnityFS", "UnityWeb", "UnityRaw"):
+        raise BundleError(
+            f"not a Unity bundle (signature {signature!r})")
+    if pos + 4 > len(data):
+        raise BundleError("bundle truncated before the "
+                          "format version")
+    version = struct.unpack_from(">I", data, pos)[0]
+    pos += 4
+    player, pos = _read_cstring(data, pos,
+                                "player version string")
+    engine, pos = _read_cstring(data, pos,
+                                "engine version string")
+    record.update({
+        "bundle_format_version": version,
+        "unity_version_player": player,
+        "unity_version_engine": engine,
+    })
+    if signature != "UnityFS":
+        record["parsed"] = True
+        record["limitations"] = [
+            f"{signature} bundles predate the UnityFS "
+            "layout; only the header strings above are "
+            "parsed by this reader"]
+        return record
+    if pos + 20 > len(data):
+        raise BundleError("bundle truncated before the "
+                          "UnityFS size fields")
+    size, csize, usize, flags = struct.unpack_from(
+        ">QIII", data, pos)
+    pos += 20
+    comp_type = flags & 0x3F
+    record.update({
+        "parsed": True,
+        "bundle_size_field": size,
+        "bundle_size_matches_data_length": size == len(data),
+        "blocks_info": {
+            "compressed_size": csize,
+            "uncompressed_size": usize,
+            "flags": flags,
+            "compression_type": comp_type,
+            "compression": _BUNDLE_COMPRESSION.get(
+                comp_type, f"unknown ({comp_type})"),
+            "location": ("end of bundle"
+                         if flags & _BUNDLE_FLAG_AT_END
+                         else "after the bundle header"),
+        },
+    })
+    if version >= 7:
+        pos = (pos + 15) & ~15  # header aligns to 16 bytes
+    if flags & _BUNDLE_FLAG_AT_END:
+        info_start = len(data) - csize
+        if info_start < pos:
+            raise BundleError("blocks info at the end of "
+                              "the bundle overlaps the header")
+    else:
+        info_start = pos
+    raw_info = data[info_start:info_start + csize]
+    if len(raw_info) < csize:
+        raise BundleError("bundle truncated inside the "
+                          "blocks info")
+    try:
+        info = _bundle_decompress(raw_info, comp_type, usize,
+                                  "blocks info")
+    except BundleError as e:
+        record["limitations"] = [str(e)]
+        return record
+    blocks, nodes = _parse_blocks_info(info, record)
+    # The data-block stream starts right after the header
+    # when the blocks info sits at the end of the bundle,
+    # and right after the blocks info when it is combined
+    # with the header.
+    stream_start = pos if flags & _BUNDLE_FLAG_AT_END \
+        else info_start + csize
+    if flags & 0x200:
+        # BlockInfoNeedPaddingAtStart (current flag
+        # generation): the data stream starts on the next
+        # 16-byte boundary after the blocks info.
+        stream_start = (stream_start + 15) & ~15
+    _first_serialized_file(data, record, blocks, nodes,
+                           stream_start)
+    return record
+
+
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unity", "version": "2.5.2",
+    report = {"tool": "nar-unity", "version": "2.6.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     triage = run_json_tool("nar-triage.py", [target]) or {}
@@ -229,6 +629,31 @@ def analyze(target, work_dir=None):
     })
     if catalog is not None:
         report["addressables_catalog"] = catalog
+    # First-party header inspection of the first bundles
+    # (independent of the optional UnityPy census below).
+    inspections = []
+    inspect_names = bundles[:BUNDLE_INSPECT_CAP]
+    if inspect_names:
+        with zipfile.ZipFile(target) as zf:
+            for bname in inspect_names:
+                with zf.open(bname) as fh:
+                    blob = fh.read()
+                try:
+                    inspections.append(
+                        parse_unityfs_bundle(blob, bname))
+                except BundleError as e:
+                    inspections.append({
+                        "entry": bname,
+                        "format": "unityfs-bundle",
+                        "parsed": False, "error": str(e)})
+    report["bundle_inspections"] = inspections
+    report["bundle_inspection_counts"] = {
+        "total": len(bundles),
+        "processed": len(inspections),
+        "skipped": len(bundles) - len(inspections),
+        "failed": sum(1 for r in inspections
+                      if not r.get("parsed")),
+    }
     if backend == "IL2CPP":
         il2cpp_args = [target]
         if work_dir:
@@ -281,6 +706,27 @@ def human(report):
     elif cat:
         print(f"Addressables catalog: not parsed "
               f"({cat.get('error')})")
+    for insp in report.get("bundle_inspections", []):
+        if not insp.get("parsed"):
+            print(f"Bundle {insp['entry']}: header parse "
+                  f"failed: {insp.get('error')}")
+            continue
+        bi = insp.get("blocks_info") or {}
+        line = (f"Bundle {insp['entry']}: UnityFS format "
+                f"{insp.get('bundle_format_version')}, "
+                f"engine {insp.get('unity_version_engine')}, "
+                f"blocks info {bi.get('compression')}")
+        sf = insp.get("serialized_file")
+        if sf and sf.get("status") == "parsed":
+            line += (f"; first serialized file "
+                     f"{sf.get('node_path')}: format "
+                     f"{sf.get('format_version')}, "
+                     f"{sf.get('endianness')} endian, "
+                     f"metadata {sf.get('metadata_size')} "
+                     f"bytes")
+        print(line)
+        for lim in insp.get("limitations", []):
+            print(f"    limitation: {lim}")
     if report.get("unitypy_census_first_bundle"):
         print(f"UnityPy census (first bundle): "
               f"{report['unitypy_census_first_bundle']}")

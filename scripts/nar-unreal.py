@@ -23,7 +23,11 @@ For an APK (or a bare .pak / IoStore container):
   references resolved to readable names, soft package
   references and searchable names, cooked .uexp/.ubulk
   awareness, and a best-effort FPropertyTag stream parse
-  whose every result carries a confidence note. Packages
+  whose every result carries a confidence note. Each
+  package summary also carries a bounded `relationships`
+  record: UObject class/super/outer/template and depends
+  edges assembled from the parsed import/export/depends
+  maps alone (table-derived; no extra decoding). Packages
   are parsed loose in an APK, inside IoStore containers
   (directory-indexed ExportBundleData chunks), and inside
   .pak files when --work extraction is enabled; a bare
@@ -237,6 +241,139 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
     return parsed
 
 
+# Relationship edges kept per package (class/super/outer/
+# template/depends edges assembled from the parsed maps);
+# the counts alongside always cover every edge derived.
+RELATIONSHIP_CAP = 250
+
+
+def _package_index_target(index, imports, exports):
+    """Resolve one classic package index per the format:
+    0 = none, positive = export (1-based), negative =
+    import (1-based counting from -1). Returns a target
+    record, or None for the none index."""
+    if not index:
+        return None
+    if index > 0:
+        i = index - 1
+        target = {"kind": "export", "index": i}
+        if i < len(exports):
+            target["object_name"] = \
+                exports[i].get("object_name")
+            target["class_name"] = \
+                exports[i].get("class_resolved")
+        else:
+            target["note"] = ("export index outside the "
+                              "export map")
+        return target
+    i = -index - 1
+    target = {"kind": "import", "index": i}
+    if i < len(imports):
+        imp = imports[i]
+        target["object_name"] = imp.get("object_name")
+        target["class_name"] = imp.get("class_name")
+        target["class_package"] = imp.get("class_package")
+    else:
+        target["note"] = ("import index outside the "
+                          "import map")
+    return target
+
+
+def classic_relationships(parsed):
+    """UObject relationship edges for a classic package,
+    assembled only from the tables the parser already
+    decoded: each export's class / super / outer /
+    template package-index references, plus the depends
+    map's per-export dependency edges. Every edge is
+    table-derived; no property stream is consulted."""
+    imports = parsed.get("imports") or []
+    exports = parsed.get("exports") or []
+    edges = []
+    for exp in exports:
+        src = {"kind": "export", "index": exp.get("index"),
+               "object_name": exp.get("object_name")}
+        for field, kind in (("class_index", "class"),
+                            ("super_index", "super"),
+                            ("outer_index", "outer"),
+                            ("template_index", "template")):
+            if field not in exp:
+                continue
+            target = _package_index_target(
+                exp[field], imports, exports)
+            if target is None:
+                continue
+            edges.append({
+                "from": src, "to": target, "kind": kind,
+                "evidence": f"export map {field} "
+                            "(package-index resolution)"})
+    for i, dep in enumerate(parsed.get("depends") or []):
+        if i >= len(exports):
+            break
+        src = {"kind": "export",
+               "index": exports[i].get("index", i),
+               "object_name": exports[i].get("object_name")}
+        for idx in dep.get("indices") or []:
+            target = _package_index_target(
+                idx, imports, exports)
+            if target is None:
+                continue
+            edges.append({
+                "from": src, "to": target, "kind": "depends",
+                "evidence": "depends map entry "
+                            "(package-index resolution)"})
+    shown, counts = _capped(edges, RELATIONSHIP_CAP)
+    return {
+        "edges": shown, "counts": counts,
+        "evidence": "table-derived: assembled from the "
+                    "parsed import/export/depends maps "
+                    "only; no property-stream decoding",
+    }
+
+
+# FPackageObjectIndex kinds (top two bits of the u64),
+# mirroring narlib.zen's OBJECT_INDEX_TYPES.
+_ZEN_INDEX_KINDS = {0: "export", 1: "script-import",
+                    2: "package-import", 3: "null"}
+
+
+def zen_relationships(parsed):
+    """UObject relationship edges for a Zen package,
+    assembled only from the export map the parser already
+    decoded: each export's outer / class / super /
+    template FPackageObjectIndex references, typed by
+    the index kind (export / script-import /
+    package-import) and carrying the parser's own
+    resolution text. Null references carry no edge."""
+    exports = parsed.get("exports") or []
+    edges = []
+    for exp in exports:
+        src = {"kind": "export", "index": exp.get("index"),
+               "object_name": exp.get("object_name")}
+        for field in ("class", "super", "outer", "template"):
+            raw = exp.get(field + "_index")
+            if raw is None:
+                continue
+            kind_name = _ZEN_INDEX_KINDS.get(
+                (raw >> 62) & 0x3, "null")
+            if kind_name == "null":
+                continue
+            target = {"kind": kind_name,
+                      "resolved": exp.get(field + "_resolved")}
+            if kind_name == "export":
+                target["index"] = raw & 0xFFFFFFFF
+            edges.append({
+                "from": src, "to": target, "kind": field,
+                "evidence": f"export map {field} object "
+                            "index (FPackageObjectIndex)"})
+    shown, counts = _capped(edges, RELATIONSHIP_CAP)
+    return {
+        "edges": shown, "counts": counts,
+        "evidence": "table-derived: assembled from the "
+                    "parsed Zen export map only; no "
+                    "property-stream decoding",
+    }
+
+
 def zen_package_summary(data, name, limits=None):
     """Parse one Zen package into a presentation-ready
     record (detail capped the same way as classic
@@ -256,6 +393,7 @@ def zen_package_summary(data, name, limits=None):
             f" A full Zen parse was attempted and "
             f"stopped: {e}")
         return record
+    parsed["relationships"] = zen_relationships(parsed)
     total_names = len(parsed["names"])
     shown, counts = _capped(parsed["names"], limits.max_names)
     parsed["names"] = shown
@@ -294,6 +432,7 @@ def package_summary(data, name, uexp_data=None, limits=None):
         parsed = parse_package(data, name, uexp_data)
     except UAssetError as e:
         return {"entry": name, "error": f"package parse failed: {e}"}
+    parsed["relationships"] = classic_relationships(parsed)
     total_names = len(parsed["names"])
     shown, counts = _capped(parsed["names"], limits.max_names)
     parsed["names"] = shown
@@ -566,7 +705,7 @@ def pak_packages(pak_path, out_dir, limits=None):
 def analyze(target, work_dir=None, limits=None):
     if limits is None:
         limits = UnrealLimits()
-    report = {"tool": "nar-unreal", "version": "2.5.2",
+    report = {"tool": "nar-unreal", "version": "2.6.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target),
               "limits": limits.describe()}

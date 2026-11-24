@@ -450,8 +450,12 @@ def main(argv=None):
     args = p.parse_args(argv)
     stem = os.path.splitext(os.path.basename(
         os.path.abspath(args.target).rstrip("/")))[0] or "target"
-    out_dir = args.out or os.path.join(
-        tempfile.gettempdir(), f"nar-il2cpp-{stem}")
+    # mkdtemp, not a predictable gettempdir()/<stem> path
+    # (Phase 10 temp audit): unpredictable + 0700, so a
+    # pre-planted directory or symlink cannot redirect the
+    # dump output. The chosen path is reported as out_dir.
+    out_dir = args.out or tempfile.mkdtemp(
+        prefix=f"nar-il2cpp-{stem}-")
     try:
         report = analyze(args.target, out_dir, backend=args.backend)
     except FileNotFoundError as e:

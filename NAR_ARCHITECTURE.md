@@ -7,6 +7,13 @@
 > (plus the 2.5.2 workstreams W1–W5) and corrected in
 > place: the `narlib` list now names all 18 modules, the
 > schema count is 24, the registry count is 35 tools /
+> (2.6.0 Phases 3–8 addendum: narlib grows to 21 modules —
+> `cdex.py`, `graph.py`, `investigation.py` — and schemas
+> to 26 with `graph.schema.json` and
+> `investigation.schema.json`; the benchmark/coverage
+> record is `tests/benchmarks/baseline-2.6.0.json` and the
+> dashboard gained graph/investigation sections in
+> Phase 12.)
 > 9 unavailable, and the runtime subsystem also persists
 > structured session records (`runtime-session.json`,
 > Evolution Phase 6). The per-capability status record
@@ -81,9 +88,41 @@ by nothing.
 - `narlib/dex.py` — DEX parser primitives (header, string/type/
   proto/field/method tables, class defs, code-item scan for
   invoke/reflection/native evidence) with streaming bounds.
+  Since 2.6.0 Phase 3 it also assembles the resolved
+  call graph (`assemble_call_graph()`: defined-method nodes,
+  invoke edges resolved within one DEX or across an APK's
+  DEX set, external targets counted with a capped sample;
+  per-method cross-reference via `nar-dex --xref`), Kotlin
+  `@Metadata` d2 cross-checks against the DEX type table, and
+  identifier-shape obfuscation indicators (confidence-labeled,
+  never a binary verdict).
 - `narlib/dexdis.py` — DEX bytecode disassembler (instruction
   listings with operands resolved through the DEX's own tables,
-  plus a control-flow block summary).
+  plus a control-flow block summary; since 2.6.0 Phase 3 also
+  `control_flow_graph()` / `cfg_batch()`: per-method CFG edges
+  typed fallthrough / branch / switch / goto / return-exit /
+  try-handler, exposed as `nar-dex --cfg`).
+- `narlib/cdex.py` — compact-DEX (CDEX) header + section-table
+  parser (2.6.0 Phase 3, R-002): parses the 136-byte header and
+  six-entry section table per the public AOSP layout and
+  reports `payload_decoded: False` — string contents and the
+  compact payload are not decoded. Wired into
+  `narlib/formats.py` identification and `narlib/oat.py`
+  carving.
+- `narlib/graph.py` — unified application intelligence graph
+  (2.6.0 Phase 7, R-008): builds the `graph.json` case
+  companion (12 node kinds, edge kinds with provenance,
+  evidence references and source-derived confidence) from the
+  stage documents + correlations; queried via
+  `nar case graph`.
+- `narlib/investigation.py` — deterministic offline
+  investigation layer (2.6.0 Phase 8, R-009): builds the
+  `investigation.json` companion (verified facts / ranked
+  rule paths / hypotheses / unknowns, kept separate) with no
+  external calls; viewed via `nar case investigation`;
+  disableable via `--no-investigation` / `--no-graph` and the
+  `NAR_NO_*` / `NAR_DISABLE_*` env switches, as is the graph
+  layer.
 - `narlib/elf.py` — ELF parser primitives (headers, sections,
   segments, dynamic table, symbol tables, relocations) for
   ELF32/64 on all four Android architectures.
@@ -142,7 +181,19 @@ by nothing.
    brief-named projections from `narlib/companions.py` and
    `correlations.json` from `narlib/correlations.py`),
    `report.md`, and (via `nar-report.py`) the offline HTML
-   dashboard.
+   dashboard. Since 2.6.0 the case also gains `graph.json`
+   (`narlib/graph.py`, from the stage documents +
+   correlations) and `investigation.json`
+   (`narlib/investigation.py`); engine adapters feed
+   relationship records into their own reports (Unreal
+   classic/Zen UObject relationships, Godot text-scene
+   references — the Unreal records live in nar-unreal's
+   standalone reports, not in graph.json, as recorded under
+   R-013/R-008), and the dashboard renders Unified graph and
+   Investigation sections when those companions exist
+   (Phase 12), staying fully offline. `nar-report.py` is the
+   authoritative dashboard generator; nar-analyze invokes it
+   for `report.html`.
 8. **Case workspace** — every run lives in a case directory:
    `case.json` (id, input hash, config, stage states, tool
    versions, history). Completed stages are cached by
@@ -167,7 +218,8 @@ checks, not by construction.
 ## Schemas
 
 `schemas/` holds JSON Schema documents for the structured
-outputs — 24 schemas at 2.5.1: report, fingerprint, engine,
+outputs — 26 schemas at 2.6.0 (24 at 2.5.1, plus graph and
+investigation): report, fingerprint, engine,
 endpoints, security findings, assets, comparison,
 compare-feature-map, execution log, case, input, timeline,
 runtime-session, correlations, and the case companions and

@@ -19,11 +19,34 @@ import re
 import struct
 import zipfile
 
+from . import cdex as _cdex
 from . import oat as _oat
 from .hashing import sha256_of
 
 _HEAD_BYTES = 4096
 _TAIL_BYTES = 64
+# Phase 10 parser resource cap: the whole-file structural
+# readers below (vdex/odex/cdex/art in validate_structure,
+# cdex in identify) refuse to materialize a file larger
+# than this in memory. The oat reader already self-caps
+# (_OAT_SCAN_BYTES); the formats named here have no
+# internal scan cap, so the guard lives at the read site.
+# 512 MiB is far above every real specimen of these
+# formats in the project corpora; above it the parse is
+# skipped with a named note instead of an unbounded read.
+STRUCT_READ_CAP_BYTES = 512 * 1024 * 1024
+
+
+def _read_whole_capped(path):
+    """Read a whole file under STRUCT_READ_CAP_BYTES.
+    Returns (bytes, None) or (None, skip-note)."""
+    size = os.path.getsize(path)
+    if size > STRUCT_READ_CAP_BYTES:
+        return None, (f"file size {size} exceeds the parser "
+                      f"read cap {STRUCT_READ_CAP_BYTES} bytes; "
+                      "whole-file structural parse skipped")
+    with open(path, "rb") as fh:
+        return fh.read(), None
 PAK_MAGIC = 0x5A6F12E1
 OBB_NAME_RE = re.compile(r"^(main|patch)\.\d+\..+\.obb$", re.IGNORECASE)
 DEX_RE = re.compile(r"^classes\d*\.dex$")
@@ -168,9 +191,22 @@ def identify(path):
                    "details": {"dex_version": version}}
     elif head.startswith(b"cdex"):
         version = head[4:7].decode("ascii", "replace")
+        details = {"cdex_version": version}
+        evidence = [f"CDEX magic, format version {version}"]
+        blob, skip = _read_whole_capped(path)
+        if skip:
+            details["cdex_error"] = skip
+        else:
+            try:
+                details["cdex_header"] = _cdex.parse_cdex(
+                    blob, os.path.basename(path))
+                evidence.append("CDEX header + section table "
+                                "parsed (payload not decoded)")
+            except _cdex.CdexError as e:
+                details["cdex_error"] = str(e)
         verdict = {"format": "cdex", "confidence": "high",
-                   "evidence": [f"CDEX magic, format version {version}"],
-                   "details": {"cdex_version": version}}
+                   "evidence": evidence,
+                   "details": details}
     elif head.startswith(b"dey\n"):
         version = head[4:7].decode("ascii", "replace")
         verdict = {"format": "odex", "confidence": "high",
@@ -217,7 +253,12 @@ def identify(path):
                    "details": {}}
     else:
         # Unreal pak: the magic lives in the footer, not the head.
-        tail = _read_tail(path) if size >= 4 else b""
+        # The footer is version-sized: v10/v11 footers carry a
+        # compression-method table after the magic and run to
+        # ~204+ bytes, so a 64-byte tail window misses them
+        # (measured on the synthetic v11 fixture in Phase 11:
+        # magic 204 bytes from EOF). Scan a bounded 4 KiB tail.
+        tail = _read_tail(path, 4096) if size >= 4 else b""
         found = False
         for off in range(0, max(0, len(tail) - 4)):
             if struct.unpack_from("<I", tail, off)[0] == PAK_MAGIC:
@@ -311,57 +352,72 @@ def validate_structure(path, verdict=None):
         except _oat.OatError as e:
             notes.append(f"OAT header unreadable: {e}")
     elif fmt == "vdex":
-        with open(path, "rb") as fh:
-            blob = fh.read()
-        try:
-            info = _oat.parse_vdex(blob)
-            if info["dex_size"] is not None \
-                    and info["dex_size"] > len(blob):
-                notes.append(
-                    f"VDEX dex_size {info['dex_size']} exceeds "
-                    f"file size {len(blob)}")
-            if info["number_of_dex_files"] is not None \
-                    and len(info["embedded"]) \
-                    != info["number_of_dex_files"]:
-                notes.append(
-                    f"VDEX header declares "
-                    f"{info['number_of_dex_files']} dex file(s) "
-                    f"but {len(info['embedded'])} embedded "
-                    "DEX/CDEX header(s) were found")
-            if not info["embedded"]:
-                notes.append("VDEX carries no embedded DEX/CDEX")
-        except _oat.OatError as e:
-            notes.append(f"VDEX header unreadable: {e}")
+        blob, skip = _read_whole_capped(path)
+        if skip:
+            notes.append(f"VDEX: {skip}")
+        else:
+            try:
+                info = _oat.parse_vdex(blob)
+                if info["dex_size"] is not None \
+                        and info["dex_size"] > len(blob):
+                    notes.append(
+                        f"VDEX dex_size {info['dex_size']} exceeds "
+                        f"file size {len(blob)}")
+                if info["number_of_dex_files"] is not None \
+                        and len(info["embedded"]) \
+                        != info["number_of_dex_files"]:
+                    notes.append(
+                        f"VDEX header declares "
+                        f"{info['number_of_dex_files']} dex file(s) "
+                        f"but {len(info['embedded'])} embedded "
+                        "DEX/CDEX header(s) were found")
+                if not info["embedded"]:
+                    notes.append("VDEX carries no embedded DEX/CDEX")
+            except _oat.OatError as e:
+                notes.append(f"VDEX header unreadable: {e}")
     elif fmt == "odex":
-        with open(path, "rb") as fh:
-            blob = fh.read()
-        try:
-            info = _oat.parse_odex_dalvik(blob)
-            if not info["dex"].startswith(b"dex\n"):
-                notes.append("ODEX embedded payload does not "
-                             "start with DEX magic")
-        except _oat.OatError as e:
-            notes.append(f"ODEX header unreadable: {e}")
+        blob, skip = _read_whole_capped(path)
+        if skip:
+            notes.append(f"ODEX: {skip}")
+        else:
+            try:
+                info = _oat.parse_odex_dalvik(blob)
+                if not info["dex"].startswith(b"dex\n"):
+                    notes.append("ODEX embedded payload does not "
+                                 "start with DEX magic")
+            except _oat.OatError as e:
+                notes.append(f"ODEX header unreadable: {e}")
     elif fmt == "cdex":
         if os.path.getsize(path) < 112:
             notes.append("CDEX file truncated (<112 bytes)")
+        else:
+            blob, skip = _read_whole_capped(path)
+            if skip:
+                notes.append(f"CDEX: {skip}")
+            else:
+                try:
+                    _cdex.parse_cdex(blob, os.path.basename(path))
+                except _cdex.CdexError as e:
+                    notes.append(f"CDEX header unreadable: {e}")
     elif fmt == "art":
-        with open(path, "rb") as fh:
-            blob = fh.read()
-        try:
-            info = _oat.parse_art_image(blob)
-            # image_size is the size of the image data, not
-            # of the file: a real boot image's file is larger
-            # (verified on a pulled API 26 boot image, where
-            # image_size < file size). Only an image_size
-            # beyond the file is impossible.
-            if info["image_size"] \
-                    and info["image_size"] > len(blob):
-                notes.append(
-                    f"ART image_size {info['image_size']} "
-                    f"exceeds file size {len(blob)}")
-        except _oat.OatError as e:
-            notes.append(f"ART image header unreadable: {e}")
+        blob, skip = _read_whole_capped(path)
+        if skip:
+            notes.append(f"ART: {skip}")
+        else:
+            try:
+                info = _oat.parse_art_image(blob)
+                # image_size is the size of the image data, not
+                # of the file: a real boot image's file is larger
+                # (verified on a pulled API 26 boot image, where
+                # image_size < file size). Only an image_size
+                # beyond the file is impossible.
+                if info["image_size"] \
+                        and info["image_size"] > len(blob):
+                    notes.append(
+                        f"ART image_size {info['image_size']} "
+                        f"exceeds file size {len(blob)}")
+            except _oat.OatError as e:
+                notes.append(f"ART image header unreadable: {e}")
     if verdict.get("extension_mismatch"):
         notes.append(
             f"extension {verdict['extension']} does not match the "

@@ -55,7 +55,7 @@ sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as VERSION
 except Exception:
-    VERSION = "2.5.2"
+    VERSION = "2.6.0"
 
 # verb -> (kind, script, fixed prefix args). The prefix is how
 # the alias verbs (identify / validate) reach the nar-input
@@ -91,16 +91,23 @@ COMMANDS = {
     "runtime": ("py", "nar-runtime.py", []),
 }
 
-CASE_USAGE = """usage: nar case <export|import|verify> ...
+CASE_USAGE = """usage: nar case <export|import|verify|graph|investigation> ...
 
   nar case export CASE_DIR --bundle FILE [--json]
   nar case import FILE [--out DIR] [--json]
   nar case verify CASE_DIR [--json]
+  nar case graph CASE_DIR [--kind KIND] [--edge-kind KIND]
+                          [--min-confidence LEVEL] [--text TEXT]
+  nar case investigation CASE_DIR
 
 Case bundles are the portable form of a nar-analyze case
 directory (per-file hash manifest inside). These verbs route
 to nar-analyze's case operations; the standalone flags
---export / --import / --verify keep working unchanged."""
+--export / --import / --verify keep working unchanged. The
+graph verb queries a case's graph.json (JSON output, filtered
+by node kind, edge kind, minimum confidence and free text);
+the investigation verb prints a case's investigation.json
+summary as JSON."""
 
 IDENTITY = f"""NAR {VERSION} — NIROUS ANDROID INTELLIGENCE
 Understand Every Layer. Follow Every Evidence.
@@ -133,9 +140,11 @@ def cmd_case(rest):
         return 0 if rest else 2
     sub, args = rest[0], rest[1:]
     flag = {"export": "--export", "import": "--import",
-            "verify": "--verify"}.get(sub)
+            "verify": "--verify", "graph": "--graph",
+            "investigation": "--investigation"}.get(sub)
     if flag is None or not args:
-        print(f"nar case: expected export|import|verify with "
+        print(f"nar case: expected export|import|verify|"
+              f"graph|investigation with "
               f"arguments\n{CASE_USAGE}", file=sys.stderr)
         return 2
     return run_entry(("py", "nar-analyze.py", [flag]), args)

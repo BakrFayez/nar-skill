@@ -35,6 +35,80 @@ from narlib.mmapio import mapped_file  # noqa: E402
 
 SO_RE = re.compile(r"^(base/)?lib/([^/]+)/(.+\.so)$")
 
+# Capability clusters for the behavior indicators: sets of
+# imported dynamic symbols whose co-presence is a pattern
+# signal. Indicators only — the same imports appear in
+# plenty of benign libraries, so no verdict is ever derived
+# from them; each record carries its evidence (the matched
+# symbols) and a confidence.
+BEHAVIOR_CLUSTERS = {
+    "process_manipulation": {
+        "symbols": ("ptrace", "process_vm_readv",
+                    "process_vm_writev", "kill", "fork",
+                    "vfork", "execve", "posix_spawn"),
+        "min_alone_high": ("ptrace", "process_vm_writev"),
+    },
+    "dynamic_code_loading": {
+        "symbols": ("dlopen", "dlsym", "android_dlopen_ext",
+                    "mprotect"),
+        "min_alone_high": (),
+    },
+    "network_access": {
+        "symbols": ("socket", "connect", "send", "sendto",
+                    "recv", "recvfrom", "getaddrinfo"),
+        "min_alone_high": (),
+    },
+}
+
+
+def behavior_indicators(facts):
+    """Suspicious-behavior pattern indicators for one library,
+    from its imported dynamic symbols (observed data).
+
+    Records: single-cluster hits (process manipulation,
+    dynamic code loading, network access) plus the combined
+    network+process cluster, which is the combination that
+    warrants a second look. Confidence: high when a
+    cluster's strongest symbol is present or >= 3 of its
+    symbols match, medium for >= 2, low for 1 (only the
+    combined record suppresses single-symbol noise)."""
+    imports = set(facts.get("imports") or [])
+    if not imports:
+        return []
+    matched = {}
+    records = []
+    for cluster, spec in BEHAVIOR_CLUSTERS.items():
+        hits = sorted(imports & set(spec["symbols"]))
+        matched[cluster] = hits
+        if not hits:
+            continue
+        strong = [s for s in hits
+                  if s in spec["min_alone_high"]]
+        if strong or len(hits) >= 3:
+            confidence = "high"
+        elif len(hits) == 2:
+            confidence = "medium"
+        else:
+            continue  # one weak symbol alone is not a signal
+        records.append({
+            "indicator": cluster, "confidence": confidence,
+            "evidence": hits,
+            "note": "pattern indicator from imported symbols "
+                    "only; not a behavior verdict"})
+    if matched.get("network_access") and \
+            matched.get("process_manipulation"):
+        records.append({
+            "indicator": "network_and_process_combination",
+            "confidence": "high"
+            if len(matched["process_manipulation"]) >= 2
+            else "medium",
+            "evidence": sorted(
+                matched["network_access"]
+                + matched["process_manipulation"]),
+            "note": "pattern indicator from imported symbols "
+                    "only; not a behavior verdict"})
+    return records
+
 
 def readelf_needed(path):
     """DT_NEEDED list via readelf -d, or None if unavailable."""
@@ -59,6 +133,7 @@ def analyze_elf(name, data, cross_check_path=None):
     elf = Elf(data, name)
     facts = elf.facts()
     facts["size_bytes"] = len(data)
+    facts["behavior_indicators"] = behavior_indicators(facts)
     if cross_check_path:
         needed = readelf_needed(cross_check_path)
         if needed is not None:
@@ -69,7 +144,7 @@ def analyze_elf(name, data, cross_check_path=None):
 
 
 def analyze(target, only_lib=None, work_dir=None):
-    report = {"tool": "nar-native", "version": "2.5.2",
+    report = {"tool": "nar-native", "version": "2.6.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     # Libraries are processed ONE AT A TIME (parse, record,
@@ -137,6 +212,51 @@ def analyze(target, only_lib=None, work_dir=None):
         if edges:
             graph[name] = sorted(edges)
     report["dependency_graph"] = graph
+    # Detailed dependency graph (Phase 4): every DT_NEEDED
+    # relationship as an edge, with dependencies that are
+    # not bundled in the target labeled as external nodes
+    # (system libraries and other outside providers). The
+    # bundled-only dependency_graph above keeps its shape
+    # for existing consumers. Bounded: node/edge lists are
+    # capped with complete counts + truncation flags.
+    nodes = []
+    edges = []
+    external_names = set()
+    for lib in report["libraries"]:
+        name = lib_name(lib)
+        if not name or lib.get("error"):
+            continue
+        nodes.append({"name": name, "kind": "bundled",
+                      "soname": lib.get("soname")})
+        for needed in lib.get("needed", []):
+            target_name = by_soname.get(needed)
+            if target_name:
+                edges.append({"from": name, "to": target_name,
+                              "dependency": needed,
+                              "to_kind": "bundled"})
+            else:
+                external_names.add(needed)
+                edges.append({"from": name, "to": needed,
+                              "dependency": needed,
+                              "to_kind": "external"})
+    for ext in sorted(external_names):
+        nodes.append({"name": ext, "kind": "external"})
+    node_cap, edge_cap = 500, 5000
+    report["library_dependency_graph"] = {
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "bundled_node_count": sum(
+            1 for n in nodes if n["kind"] == "bundled"),
+        "external_node_count": len(external_names),
+        "external_dependencies": sorted(external_names),
+        "nodes": nodes[:node_cap],
+        "nodes_truncated": len(nodes) > node_cap,
+        "edges": edges[:edge_cap],
+        "edges_truncated": len(edges) > edge_cap,
+    }
+    report["behavior_indicator_count"] = sum(
+        len(lib.get("behavior_indicators") or [])
+        for lib in report["libraries"])
     report["jni_map"] = {
         lib_name(lib): lib["jni_exports"]
         for lib in report["libraries"] if lib.get("jni_exports")}
@@ -168,6 +288,22 @@ def human(report):
         print("Dependency graph (bundled -> bundled):")
         for src, dsts in report["dependency_graph"].items():
             print(f"  {src} -> {', '.join(dsts)}")
+    detail = report.get("library_dependency_graph") or {}
+    if detail:
+        print(f"Dependency graph detail: {detail['node_count']} "
+              f"nodes ({detail['bundled_node_count']} bundled, "
+              f"{detail['external_node_count']} external), "
+              f"{detail['edge_count']} edges")
+    if report.get("behavior_indicator_count"):
+        print(f"Behavior indicators: "
+              f"{report['behavior_indicator_count']} "
+              "(pattern indicators only, no verdicts)")
+        for lib in report["libraries"]:
+            for rec in lib.get("behavior_indicators") or []:
+                print(f"  {lib.get('display_name')}: "
+                      f"{rec['indicator']} "
+                      f"({rec['confidence']}) — "
+                      f"{', '.join(rec['evidence'])}")
 
 
 def main(argv=None):

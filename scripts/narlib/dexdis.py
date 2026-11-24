@@ -764,6 +764,174 @@ def block_summary(dex, code_off):
             "tries": tries}
 
 
+_COND_BRANCHES = frozenset((
+    "if-eq", "if-ne", "if-lt", "if-ge", "if-gt", "if-le",
+    "if-eqz", "if-nez", "if-ltz", "if-gez", "if-gtz",
+    "if-lez"))
+_SWITCHES = frozenset(("packed-switch", "sparse-switch"))
+
+
+def control_flow_graph(dex, code_off):
+    """Control-flow graph for one method (Phase 3, R-003).
+
+    Built from the same decoded instruction list and block
+    leaders as block_summary (which is unchanged): blocks
+    carry their code-unit start/end and their instruction
+    index range in the decoded real-instruction list, and
+    edges are typed:
+
+    - fallthrough: a block that flows into the next block
+      (plain last instruction, or the not-taken side of a
+      conditional branch / switch),
+    - branch: the taken side of a conditional branch,
+    - switch: one edge per switch case target,
+    - goto: an unconditional branch (no fallthrough),
+    - return-exit: a block ending in return/throw; its
+      `to` is None (control leaves the method),
+    - try-handler: from every block overlapping a try
+      range to each handler block of that range (typed
+      handlers and the catch-all), with the handler's
+      exception type recorded (None for catch-all).
+
+    A failed decode yields the decode's failure status,
+    exactly like block_summary.
+    """
+    summary = block_summary(dex, code_off)
+    if summary.get("status") != "ok":
+        return {"status": summary.get("status", "failed"),
+                "error": summary.get("error")}
+    result = disassemble_method(dex, code_off)
+    insns_size = result["insns_size"]
+    real = [i for i in result["instructions"]
+            if not i.get("is_payload")]
+    blocks = []
+    block_by_start = {}
+    for j, b in enumerate(summary["blocks"]):
+        idxs = [k for k, insn in enumerate(real)
+                if b["start"] <= insn["addr"] < b["end"]]
+        block = {"index": j, "start": b["start"],
+                 "end": b["end"],
+                 "instruction_index_start":
+                     idxs[0] if idxs else None,
+                 "instruction_index_end":
+                     idxs[-1] + 1 if idxs else None,
+                 "instructions": b["instructions"]}
+        blocks.append(block)
+        block_by_start[b["start"]] = j
+
+    def block_at(addr):
+        for b in blocks:
+            if b["start"] <= addr < b["end"]:
+                return b["index"]
+        return block_by_start.get(addr)
+
+    edges = []
+    seen = set()
+
+    def add(frm, to_addr, etype, **extra):
+        to_idx = block_at(to_addr) if to_addr is not None \
+            else None
+        key = (frm, to_idx, to_addr, etype,
+               extra.get("handler_type"))
+        if key in seen:
+            return
+        seen.add(key)
+        edge = {"from_block": frm,
+                "from": blocks[frm]["start"],
+                "to_block": to_idx, "to": to_addr,
+                "type": etype}
+        edge.update(extra)
+        edges.append(edge)
+
+    for b in blocks:
+        j = b["index"]
+        if not b["instructions"]:
+            if j + 1 < len(blocks):
+                add(j, blocks[j + 1]["start"], "fallthrough")
+            continue
+        last = real[b["instruction_index_end"] - 1]
+        mnemonic = last["mnemonic"]
+        nxt = blocks[j + 1]["start"] if j + 1 < len(blocks) \
+            else None
+        if mnemonic in _EXIT_MNEMONICS:
+            add(j, None, "return-exit")
+        elif mnemonic.startswith("goto"):
+            if last.get("target") is not None:
+                add(j, last["target"], "goto")
+        elif mnemonic in _COND_BRANCHES:
+            if last.get("target") is not None:
+                add(j, last["target"], "branch")
+            if nxt is not None:
+                add(j, nxt, "fallthrough")
+        elif mnemonic in _SWITCHES:
+            for tgt in last.get("targets", []):
+                add(j, tgt, "switch")
+            if nxt is not None:
+                add(j, nxt, "fallthrough")
+        elif nxt is not None:
+            add(j, nxt, "fallthrough")
+    for t in summary["tries"]:
+        covered = [b["index"] for b in blocks
+                   if b["start"] < t["end_addr"]
+                   and b["end"] > t["start_addr"]]
+        handler_targets = [(h["addr"], h["type"])
+                           for h in t["handlers"]]
+        if t["catch_all_addr"] is not None:
+            handler_targets.append((t["catch_all_addr"], None))
+        for j in covered:
+            for addr, htype in handler_targets:
+                add(j, addr, "try-handler", handler_type=htype)
+    edges.sort(key=lambda e: (e["from_block"], e["type"],
+                              -1 if e["to"] is None
+                              else e["to"]))
+    return {"status": "ok", "insns_size": insns_size,
+            "block_count": len(blocks), "blocks": blocks,
+            "edges": edges, "edge_count": len(edges),
+            "tries": summary["tries"]}
+
+
+def cfg_batch(dex, class_pattern=None, method_pattern=None,
+              want_all=False, limit=100):
+    """CFGs for the methods selected by the same targeting
+    rules as disassemble(): a class and/or method substring
+    pattern, or want_all. Unscoped requests select nothing.
+    Listings are capped at `limit` methods; counts stay
+    complete and truncation is flagged, never silent."""
+    selected = []
+    total_with_code = 0
+    for cls, midx, name, sig, flags, kind, code_off in \
+            methods_with_code(dex):
+        total_with_code += 1
+        if class_pattern and class_pattern not in cls:
+            continue
+        if method_pattern and method_pattern not in name:
+            continue
+        if not (class_pattern or method_pattern or want_all):
+            continue
+        selected.append((cls, midx, name, sig, kind, code_off))
+    graphs = []
+    failed = 0
+    for cls, midx, name, sig, kind, code_off in selected:
+        graph = control_flow_graph(dex, code_off)
+        if graph.get("status") != "ok":
+            failed += 1
+            continue
+        if len(graphs) < limit:
+            graphs.append({"class": cls, "method": name,
+                           "signature": sig, "kind": kind,
+                           "method_idx": midx,
+                           "code_off": code_off, **graph})
+    return {"mode": "all" if want_all else "targeted",
+            "class_pattern": class_pattern,
+            "method_pattern": method_pattern,
+            "methods_with_code": total_with_code,
+            "methods_selected": len(selected),
+            "methods_failed": failed,
+            "graphs_truncated": len(selected) - failed
+            > len(graphs),
+            "methods": graphs}
+
+
 def _ins(addr, op, mnemonic, operands, ref):
     entry = {"addr": addr, "opcode": op, "mnemonic": mnemonic,
              "operands": operands,

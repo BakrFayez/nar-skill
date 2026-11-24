@@ -122,16 +122,52 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
                     {"entry": name, "reason": "escapes destination"})
                 continue
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            with zf.open(info) as src, open(target, "wb") as dst:
-                while True:
-                    chunk = src.read(1 << 20)
-                    if not chunk:
-                        break
-                    dst.write(chunk)
-            totals["bytes"] += info.file_size
+            # Limits are enforced on ACTUAL bytes written,
+            # never on the header-declared sizes alone: a
+            # crafted entry whose decompressed stream runs
+            # past its declared file_size (or past the
+            # per-file / total limits) is cut off, the
+            # partial file is removed, and the entry is
+            # reported rejected (Phase 10 audit).
+            written = 0
+            overflow = None
+            try:
+                with zf.open(info) as src, open(target, "wb") as dst:
+                    while True:
+                        chunk = src.read(1 << 20)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        if written > limits["max_file_bytes"]:
+                            overflow = ("actual decompressed size "
+                                        "exceeds per-file size "
+                                        "limit")
+                            break
+                        if (totals["bytes"] + written
+                                > limits["max_total_bytes"]):
+                            overflow = ("actual decompressed size "
+                                        "exceeds total size limit")
+                            break
+                        dst.write(chunk)
+            except (zipfile.BadZipFile, RuntimeError, EOFError,
+                    OSError) as e:
+                # A corrupt or header-lying entry (bad CRC,
+                # truncated stream, encrypted without a key)
+                # rejects that entry alone; it must not abort
+                # the whole extraction (Phase 10 audit).
+                overflow = f"entry unreadable: {e}"
+            if overflow:
+                try:
+                    os.unlink(target)
+                except OSError:
+                    pass
+                report["rejected"].append(
+                    {"entry": name, "reason": overflow})
+                continue
+            totals["bytes"] += written
             report["extracted"].append(
                 {"entry": name, "path": target,
-                 "size_bytes": info.file_size})
+                 "size_bytes": written})
             if _is_archive_name(name):
                 report["nested_archives"].append(name)
         report["totals"]["bytes"] = totals["bytes"]

@@ -69,6 +69,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import registry as reg_mod  # noqa: E402
 from narlib import dexdis  # noqa: E402
 from narlib import oat as oat_mod  # noqa: E402
+from narlib import dex as dex_mod  # noqa: E402
 from narlib.dex import Dex, DexError  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 
@@ -190,8 +191,58 @@ def compiled_artifact_info(target):
         return {"kind": "unparseable", "error": str(e)}
 
 
-def analyze_dex(name, data, disasm=None):
-    dex = Dex(data, name)
+def obfuscation_indicators(dex):
+    """Evidence-based obfuscation pattern indicators for one
+    DEX: identifier-shape statistics with confidence-labeled
+    indicator records. Indicators only — a short-name ratio
+    is a pattern signal (minified/shrunk builds produce it,
+    but so do some hand-written codebases), never an
+    obfuscated/not verdict."""
+    stats = dex_mod.identifier_shape_stats(dex)
+    indicators = []
+    classes = stats["classes"]
+    methods = stats["methods"]
+    if classes["total"] >= 200 and classes["short_ratio"] >= 0.3:
+        indicators.append({
+            "indicator": "short_class_names",
+            "value": classes["short_ratio"],
+            "confidence": "high" if classes["short_ratio"] >= 0.5
+                          else "medium",
+            "evidence": f"{classes['short_le2']} of "
+                        f"{classes['total']} defined classes "
+                        "have simple names of <= 2 characters"})
+    if methods["total"] >= 200 and methods["short_ratio"] >= 0.3:
+        indicators.append({
+            "indicator": "short_method_names",
+            "value": methods["short_ratio"],
+            "confidence": "high" if methods["short_ratio"] >= 0.5
+                          else "medium",
+            "evidence": f"{methods['short_le2']} of "
+                        f"{methods['total']} defined methods "
+                        "have names of <= 2 characters"})
+    if not indicators:
+        indicators.append({
+            "indicator": "short_identifier_names",
+            "value": max(classes["short_ratio"],
+                         methods["short_ratio"]),
+            "confidence": "low",
+            "evidence": "class/method counts and short-name "
+                        "ratios do not meet the reporting "
+                        "thresholds (classes "
+                        f"{classes['total']} at "
+                        f"{classes['short_ratio']}, methods "
+                        f"{methods['total']} at "
+                        f"{methods['short_ratio']}) — no "
+                        "short-name pattern indicator"})
+    return {"identifier_shapes": stats,
+            "indicators": indicators,
+            "note": "Indicators with confidence only, from "
+                    "identifier shapes the parser observes; "
+                    "not an obfuscated / not-obfuscated verdict."}
+
+
+def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None):
+    dex = dex_obj if dex_obj is not None else Dex(data, name)
     strings = dex.strings()
     types = dex.types()
     type_set = set(types)
@@ -223,6 +274,10 @@ def analyze_dex(name, data, disasm=None):
     methods_with_debug = 0
     metadata_count = 0
     metadata_samples = []
+    d2_agg = {"annotations_with_d2": 0, "strings": 0,
+              "first_checked": 0, "first_matched": 0,
+              "descriptors": 0, "descriptors_in_table": 0,
+              "signature_types": 0, "signature_types_in_table": 0}
     # The @Metadata annotation type lives in the TYPE table
     # (descriptor Lkotlin/Metadata;); the bare string
     # "kotlin/Metadata" appears in the string table only when
@@ -290,6 +345,13 @@ def analyze_dex(name, data, disasm=None):
                 if annotation["type"] != "Lkotlin/Metadata;":
                     continue
                 metadata_count += 1
+                elements_all = annotation.get("elements") or {}
+                if isinstance(elements_all.get("d2"), list):
+                    d2_agg["annotations_with_d2"] += 1
+                    per = dex_mod.kotlin_d2_stats(
+                        elements_all["d2"], cls, type_set)
+                    for key in per:
+                        d2_agg[key] += per[key]
                 if len(metadata_samples) < 50:
                     elements = annotation.get("elements") or {}
                     mv = elements.get("mv")
@@ -353,6 +415,16 @@ def analyze_dex(name, data, disasm=None):
             method_pattern=disasm.get("method_pattern"),
             want_all=disasm.get("all", False),
             limit=disasm.get("limit", 500))
+    if cfg is not None:
+        report["cfg"] = dexdis.cfg_batch(
+            dex,
+            class_pattern=cfg.get("class_pattern"),
+            method_pattern=cfg.get("method_pattern"),
+            want_all=cfg.get("all", False),
+            limit=cfg.get("limit", 100))
+    report["call_graph"] = dex_mod.assemble_call_graph(
+        [(name, dex)])
+    report["obfuscation_indicators"] = obfuscation_indicators(dex)
     report["kotlin"] = {
         "metadata_annotation_present": has_metadata_type,
         "kotlin_type_count": len(kotlin_types),
@@ -367,6 +439,27 @@ def analyze_dex(name, data, disasm=None):
         "suspend_candidates": suspend_candidates,
         "metadata": {
             "classes_with_metadata": metadata_count,
+            "d2_cross_check": {
+                **d2_agg,
+                "first_entry_agreement": round(
+                    d2_agg["first_matched"]
+                    / d2_agg["first_checked"], 4)
+                if d2_agg["first_checked"] else None,
+                "descriptor_agreement": round(
+                    d2_agg["descriptors_in_table"]
+                    / d2_agg["descriptors"], 4)
+                if d2_agg["descriptors"] else None,
+                "signature_type_agreement": round(
+                    d2_agg["signature_types_in_table"]
+                    / d2_agg["signature_types"], 4)
+                if d2_agg["signature_types"] else None,
+                "note": "Verified subset only: descriptor-"
+                        "shaped d2 strings cross-checked "
+                        "against this DEX's type table. The "
+                        "d1 protobuf payload is not "
+                        "interpreted, and non-descriptor d2 "
+                        "strings are counted, not decoded.",
+            },
             "samples": metadata_samples,
             "note": "metadata version (mv) and declaration "
                     "kind (k) are parsed from the @Metadata "
@@ -455,8 +548,9 @@ def baksmali_index(dex_bytes_path, out_dir):
 
 
 def analyze(target, out_dir=None, use_jadx=False,
-            use_baksmali=False, disasm=None):
-    report = {"tool": "nar-dex", "version": "2.5.2",
+            use_baksmali=False, disasm=None, cfg=None,
+            xref=None):
+    report = {"tool": "nar-dex", "version": "2.6.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
     artifact = compiled_artifact_info(target)
@@ -465,13 +559,17 @@ def analyze(target, out_dir=None, use_jadx=False,
     totals = {"classes": 0, "methods": 0, "fields": 0,
               "call_edges": 0, "native_methods": 0}
     first_dex_path = None
+    dex_entries = []
     for name, data in load_dexes(target):
         try:
-            dex_report = analyze_dex(name, data, disasm)
+            dex_obj = Dex(data, name)
+            dex_report = analyze_dex(name, data, disasm, cfg,
+                                     dex_obj=dex_obj)
         except DexError as e:
             report["dex_files"].append({"name": name,
                                         "error": str(e)})
             continue
+        dex_entries.append((name, dex_obj))
         report["dex_files"].append(dex_report)
         totals["classes"] += dex_report["class_count"]
         totals["methods"] += dex_report["method_count"]
@@ -485,6 +583,12 @@ def analyze(target, out_dir=None, use_jadx=False,
             with open(first_dex_path, "wb") as fh:
                 fh.write(data)
     report["totals"] = totals
+    if dex_entries:
+        # Cross-DEX call graph over the whole set: resolution
+        # is attempted across every DEX of the target and
+        # labeled by scope (single-dex / multi-dex).
+        report["call_graph"] = dex_mod.assemble_call_graph(
+            dex_entries, xref_pattern=xref)
     if use_jadx:
         report["jadx"] = jadx_index(
             target, os.path.join(out_dir or "nar-dex-jadx", "jadx"))
@@ -562,6 +666,22 @@ def human(report):
     print(f"Totals: {t['classes']} classes, {t['methods']} "
           f"methods, {t['fields']} fields, {t['call_edges']:,} "
           f"call edges, {t['native_methods']} native methods")
+    cg = report.get("call_graph")
+    if cg:
+        ext_distinct = cg["external_targets"]["distinct_count"]
+        print(f"Call graph ({cg['scope']}): {cg['node_count']} "
+              f"defined methods, {cg['edge_count']:,} invoke "
+              f"edges, {cg['resolved_edge_count']:,} resolved, "
+              f"{cg['unresolved_edge_count']:,} unresolved/"
+              f"external ({ext_distinct} distinct external "
+              "targets)")
+    for d in report["dex_files"]:
+        cfg_rep = d.get("cfg")
+        if cfg_rep:
+            print(f"CFG ({d['name']}, {cfg_rep['mode']}): "
+                  f"{len(cfg_rep['methods'])} graph(s), "
+                  f"{cfg_rep['methods_selected']} selected, "
+                  f"{cfg_rep['methods_failed']} failed")
     for d in report["dex_files"]:
         dis = d.get("disassembly")
         if not dis:
@@ -619,6 +739,15 @@ def main(argv=None):
                    metavar="N",
                    help="cap on method listings emitted "
                         "(counts stay complete; default 500)")
+    p.add_argument("--cfg", action="store_true",
+                   help="also build control-flow graphs for "
+                        "the methods selected by the "
+                        "--disasm-class / --disasm-method / "
+                        "--disasm-all scope")
+    p.add_argument("--xref", metavar="TEXT",
+                   help="include caller/callee xrefs for "
+                        "defined methods whose label contains "
+                        "TEXT in the call-graph section")
     args = p.parse_args(argv)
     disasm = None
     if args.disassemble:
@@ -631,9 +760,19 @@ def main(argv=None):
                   "method_pattern": args.disasm_method,
                   "all": args.disasm_all,
                   "limit": args.disasm_limit}
+    cfg = None
+    if args.cfg:
+        if not (args.disasm_class or args.disasm_method
+                or args.disasm_all):
+            p.error("--cfg needs a scope: --disasm-class, "
+                    "--disasm-method, or --disasm-all")
+        cfg = {"class_pattern": args.disasm_class,
+               "method_pattern": args.disasm_method,
+               "all": args.disasm_all,
+               "limit": args.disasm_limit}
     try:
         report = analyze(args.target, args.out, args.jadx,
-                         args.baksmali, disasm)
+                         args.baksmali, disasm, cfg, args.xref)
     except (FileNotFoundError, zipfile.BadZipFile) as e:
         print(f"nar-dex: {e}", file=sys.stderr)
         return 2

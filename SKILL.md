@@ -2,7 +2,7 @@
 name: nar
 description: "Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis."
 metadata:
-  version: "2.5.2"
+  version: "2.6.0"
 ---
 
 # NAR: Nirous Android Reversing
@@ -73,7 +73,8 @@ investigation with triage unless the question already names a deeper target.
 | Question | First step | Guide |
 |---|---|---|
 | What is this APK? Package, version, size, DEX/.so inventory | `python3 scripts/nar-triage.py app.apk` | [triage and inventory](references/triage-and-inventory.md) |
-| Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (1.x workup + 2.0 stages → case dir with report.md / report.json / report.html + companions incl. correlations.json, case.json, execution-log.json; stage results are cached per input hash; `--stage-timeout` / `--total-budget` bound the run) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
+| Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (1.x workup + 2.0 stages → case dir with report.md / report.json / report.html + companions incl. correlations.json, graph.json, investigation.json, case.json, execution-log.json; stage results are cached per input hash; `--stage-timeout` / `--total-budget` bound the run; `--no-graph` / `--no-investigation` skip the optional layers) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
+| Query a case's entity graph / prioritized investigation paths | `python3 scripts/nar.py case graph CASE_DIR` and `python3 scripts/nar.py case investigation CASE_DIR` (JSON views over the case's graph.json / investigation.json; the graph view filters by node kind, edge kind, minimum confidence and free text) | [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
 | One command for everything? | `python3 scripts/nar.py <command> …` — unified CLI over every module (`nar analyze`, `nar dex`, `nar security`, …; also `nar tools`, `nar identify`, `nar validate`, `nar benchmark`, `nar case`); each module script also works standalone | [architecture](references/architecture.md) |
 | Which of NAR's tools are installed on this machine? | `python3 scripts/nar.py tools [--json]` (registry view with live probes; the doctor stays the readiness gate) | [tool registry](references/tool-registry.md) |
 | How fast / how accurate is NAR on the fixture corpus? | `python3 scripts/nar.py benchmark [--out metrics.json]` (measured timings, labeled-corpus accuracy metrics, peak memory; synthetic and real corpora reported separately) | [benchmarks](references/benchmarks.md) |
@@ -83,6 +84,7 @@ investigation with triage unless the question already names a deeper target.
 | Engine verdict with a confidence score | `python3 scripts/nar-engines.py game.apk [--deep]` (multi-indicator fusion; --deep confirms with the engine's own deep-dive tool) | [triage and inventory](references/triage-and-inventory.md) |
 | Deep DEX facts: classes, call edges, reflection, dynamic loading | `python3 scripts/nar-dex.py app.apk` (own DEX parser: try/catch tables, debug-info presence, Kotlin `@Metadata` inventory; `--jadx` / `--baksmali` adapters) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | Instruction-level bytecode listing for one class/method (jadx failed, obfuscated or protected method) | `python3 scripts/nar-dex.py app.apk --disassemble --disasm-class '<substr>'` (own disassembler; `--disasm-all` for an explicit full decode) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
+| Control-flow graph / who calls this method (call graph, cross-references) | `python3 scripts/nar-dex.py app.apk --cfg --disasm-class '<substr>'` (per-method CFG edges under the targeted-selection rules) and `python3 scripts/nar-dex.py app.apk --xref '<method-substr>'` (resolved call-graph callers/callees, cross-DEX resolutions labeled) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | Deep native facts: dependencies, JNI exports, hardening | `python3 scripts/nar-native.py app.apk` (own ELF parser: dependency graph, relocations, compiler fingerprints; readelf cross-check with `--work`) | [native libs and JNI](references/native-libs-and-jni.md) |
 | Which endpoints does it talk to (statically)? | `python3 scripts/nar-network.py app.apk` (classified endpoint inventory, services, network security config; credential/token values redacted at the source, counts reported) | [network traffic](references/network-traffic.md) |
 | Security review with severities and fixes | `python3 scripts/nar-security.py app.apk [--deep]` (findings in the NAR-SEC schema: evidence, impact, remediation, verification status) | [output schema](references/output-schema.md), [safety and authorization](references/safety-and-authorization.md) |

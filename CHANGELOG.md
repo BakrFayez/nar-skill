@@ -2,6 +2,94 @@
 
 ## Unreleased
 
+## 2.6.0 (2026-11-24)
+
+Repository-wide repair and intelligence upgrade driven
+by a full audit (issue inventory R-001–R-020). Full
+record: NAR_2.6.0_UPDATE_REPORT.md and
+NAR_REPAIR_MATRIX.md. Research by Bakr Fayez.
+
+- DEX intelligence: control-flow graph edges from the
+  disassembler's block model (`nar-dex --cfg`,
+  listings still byte-identical to the dexdump
+  oracle); a resolved call graph with per-method
+  cross-references (`nar-dex --xref`; on a real
+  multi-DEX fixture 431,390 of 736,471 invoke edges
+  resolved); a compact-DEX (CDEX) header/section
+  parser (payload not decoded, stated in the
+  output); a Kotlin metadata d2 cross-check against
+  the DEX type table (d1 documented as not
+  interpreted, with the reason); confidence-labeled
+  obfuscation identifier-shape indicators — never
+  verdicts.
+- Native intelligence: a library dependency graph
+  (bundled + external DT_NEEDED edges, caps with
+  truncation flags) and symbol-cluster behavior
+  indicators with matched-symbol evidence and an
+  explicit not-a-verdict wording. Native
+  control-flow analysis remains unsupported
+  (documented; Ghidra is the registered escalation).
+- Engines and frameworks: Unity gains first-party
+  UnityFS bundle and serialized-file header parsing
+  (stored/LZMA decompression; LZ4-family blocks
+  inventoried, never decoded); Unreal classic and
+  Zen packages gain table-derived relationship
+  records; Godot gains text scene/resource reference
+  extraction; Flutter gains a plugin and
+  platform-channel inventory from DEX/manifest/native
+  evidence (inference labeled); React Native gains
+  bridge/codegen mapping joined between bundle and
+  DEX where the format allows.
+- Unified graph and investigation: every analysis
+  case gains graph.json (typed nodes/edges with
+  provenance, evidence references and source-derived
+  confidence; one-sided joins preserved, never
+  upgraded) with a `nar case graph` query surface,
+  and investigation.json — a deterministic, offline,
+  rule-based investigation plan separating verified
+  facts, ranked paths, labeled hypotheses and
+  unknowns. Both layers are optional
+  (--no-graph / --no-investigation) and degrade to a
+  recorded limitation on failure instead of failing
+  the analysis.
+- Runtime (R-007): device capability detection,
+  emulator-vs-physical identification with evidence,
+  structured environment diagnostics with named
+  failure reasons and fixes (`nar-runtime diagnose`),
+  Frida host/server compatibility checks, and
+  bounded connection recovery. Verified live on a
+  local emulator with the project's own demo
+  fixture; physical-device verification remains the
+  owner's device test.
+- Security and reliability: case-bundle import
+  (nar-analyze import) now extracts only through the
+  guarded archive path (a crafted bundle could
+  previously plant symlinks / act as an archive
+  bomb); archive limits are enforced on actual
+  decompressed bytes and a corrupt entry no longer
+  aborts the whole extraction; predictable default
+  temp paths replaced with mkdtemp and a temp-dir
+  leak fixed; whole-file parser reads capped
+  (formats, Godot) with named skip notes; a standing
+  subprocess-inventory test pins list-form,
+  timeout-carrying calls. A v11 pak identification
+  gap (footer magic outside the scanned tail) and
+  the case-view exit-code inconsistency were found
+  by the new measurements and fixed.
+- Reporting and measurement: the offline dashboard
+  renders the graph and investigation companions
+  when present; tests/benchmarks/baseline-2.6.0.json
+  re-measures the 2.5.2 reference commands on
+  byte-identical inputs (peak memory within ~2% on
+  every run; the analyze peak is unchanged — the
+  R-006 stage-plumbing diagnosis stands, documented
+  in the repair matrix); synthetic-corpus parser
+  field completeness is 85/85 asserted fields; line
+  coverage of the shipped code was measured for the
+  first time (coverage.py over the unit suite;
+  figure and methodology in the baseline file).
+  SECURITY.md added at the repo root.
+
 ## 2.5.2 (2026-11-24)
 
 Reliability, performance and consistency update driven

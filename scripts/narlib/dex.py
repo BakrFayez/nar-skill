@@ -559,3 +559,254 @@ class Dex:
             i += OP_WIDTH[op]
         return {"invokes": invokes, "string_refs": string_refs,
                 "dynamic": dynamic}
+
+
+# ------------------------------------------------------------------
+# Call-graph assembly (Phase 3, R-004)
+# ------------------------------------------------------------------
+
+def _method_key(full):
+    """Identity of one method: (class, name, return, params)."""
+    if not full:
+        return None
+    return (full[0], full[1], full[2], tuple(full[3]))
+
+
+def _method_label(key):
+    cls, name, ret, params = key
+    return f"{cls}->{name}({''.join(params)}){ret}"
+
+
+def assemble_call_graph(dex_entries, xref_pattern=None,
+                        external_sample_cap=50, top_cap=20,
+                        xref_cap=50):
+    """Assemble a resolved call graph over one or more DEXes.
+
+    dex_entries: [(dex_name, Dex)]. Nodes are the methods
+    DEFINED in the given DEX set (class_data entries). Every
+    invoke found by Dex.scan_code is one edge: it resolves
+    when its target method identity is defined in the set
+    (in the same DEX for a single-DEX set; across the set,
+    labeled with the defining DEX, for a multi-DEX set) and
+    is otherwise an external/unresolved edge, counted and
+    sampled separately — never dropped silently.
+
+    Returns a bounded product: totals, resolved/unresolved
+    counts, top-degree nodes (capped), a capped sample of
+    distinct external targets with their counts, and, when
+    xref_pattern (a substring matched against the
+    `Class->name(params)return` label) is given, per-method
+    caller/callee xrefs for the matching defined methods
+    (capped, with complete counts).
+    """
+    defined = {}          # key -> {"dex": name, "label": str}
+    caller_code = []      # (key, dex_name, code_off, Dex)
+    for dex_name, dex in dex_entries:
+        for cdef in dex.class_defs():
+            for midx, _name, _flags, code_off, _kind in \
+                    dex.class_methods_indexed(
+                        cdef["class_data_off"]):
+                key = _method_key(dex.method_full(midx))
+                if key is None:
+                    continue
+                defined.setdefault(key, {"dex": dex_name,
+                                         "label": _method_label(key)})
+                if code_off:
+                    caller_code.append((key, dex_name, code_off,
+                                        dex))
+    out_degree = {}
+    in_degree = {}
+    callers_of = {}
+    callees_of = {}
+    external = {}
+    edge_count = resolved = 0
+    resolved_cross_dex = 0
+    for key, dex_name, code_off, dex in caller_code:
+        scan = dex.scan_code(code_off)
+        for midx, _ikind in scan["invokes"]:
+            edge_count += 1
+            target = _method_key(dex.method_full(midx))
+            if target is None:
+                external[("?", "?", None, ())] = \
+                    external.get(("?", "?", None, ()), 0) + 1
+                continue
+            if target in defined:
+                resolved += 1
+                if defined[target]["dex"] != dex_name:
+                    resolved_cross_dex += 1
+                out_degree[key] = out_degree.get(key, 0) + 1
+                in_degree[target] = in_degree.get(target, 0) + 1
+                callers_of.setdefault(target, []).append(key)
+                callees_of.setdefault(key, []).append(target)
+            else:
+                external[target] = external.get(target, 0) + 1
+    unresolved = edge_count - resolved
+
+    def node_record(key):
+        return {"method": defined[key]["label"],
+                "class": key[0], "name": key[1],
+                "defined_in": defined[key]["dex"],
+                "out_degree": out_degree.get(key, 0),
+                "in_degree": in_degree.get(key, 0)}
+
+    by_out = sorted(defined, key=lambda k: (
+        -out_degree.get(k, 0), defined[k]["label"]))
+    by_in = sorted(defined, key=lambda k: (
+        -in_degree.get(k, 0), defined[k]["label"]))
+    ext_sorted = sorted(external.items(), key=lambda kv: (
+        -kv[1], _method_label(kv[0]) if kv[0][2] is not None
+        else "?"))
+    graph = {
+        "scope": "multi-dex" if len(dex_entries) > 1
+                 else "single-dex",
+        "dex_files": [name for name, _ in dex_entries],
+        "node_count": len(defined),
+        "edge_count": edge_count,
+        "resolved_edge_count": resolved,
+        "unresolved_edge_count": unresolved,
+        "resolved_cross_dex_edge_count": resolved_cross_dex,
+        "external_targets": {
+            "distinct_count": len(external),
+            "sample": [
+                {"target": _method_label(k)
+                 if k[2] is not None else "?",
+                 "class": k[0], "method": k[1],
+                 "edge_count": count}
+                for k, count in ext_sorted[:external_sample_cap]],
+            "truncated": len(external) > external_sample_cap,
+        },
+        "top_callers": [node_record(k) for k in
+                        by_out[:top_cap]
+                        if out_degree.get(k, 0)],
+        "top_callees": [node_record(k) for k in
+                        by_in[:top_cap]
+                        if in_degree.get(k, 0)],
+    }
+    if xref_pattern is not None:
+        matches = [k for k in defined
+                   if xref_pattern in defined[k]["label"]]
+        matches.sort(key=lambda k: defined[k]["label"])
+        xref = []
+        for key in matches[:xref_cap]:
+            callers = sorted({defined[c]["label"]
+                              for c in callers_of.get(key, [])
+                              if c in defined})
+            callees = sorted({defined[c]["label"]
+                              for c in callees_of.get(key, [])
+                              if c in defined})
+            xref.append({
+                "method": defined[key]["label"],
+                "defined_in": defined[key]["dex"],
+                "caller_count": len(callers_of.get(key, [])),
+                "callers": callers[:xref_cap],
+                "callers_truncated":
+                    len(callers) > xref_cap,
+                "callee_count": len(callees_of.get(key, [])),
+                "callees": callees[:xref_cap],
+                "callees_truncated":
+                    len(callees) > xref_cap})
+        graph["xref_query"] = xref_pattern
+        graph["xref_match_count"] = len(matches)
+        graph["xref"] = xref
+        graph["xref_truncated"] = len(matches) > len(xref)
+    return graph
+
+
+# ------------------------------------------------------------------
+# Kotlin @Metadata d2 cross-check (Phase 3, R-005 subset)
+# ------------------------------------------------------------------
+
+def _is_descriptor(text):
+    return isinstance(text, str) and len(text) >= 3 and \
+        text.startswith("L") and text.endswith(";") and \
+        " " not in text and "(" not in text
+
+
+def kotlin_d2_stats(d2, annotated_class, type_set):
+    """Cross-check one @Metadata d2 string array against the
+    DEX's own tables. This is the verified subset of d1/d2
+    interpretation: d2 strings are plain strings, and the
+    descriptor-shaped ones can be checked exactly —
+
+    - whether d2[0], when descriptor-shaped, is the
+      annotated class's own descriptor,
+    - how many descriptor-shaped entries (incl. array
+      forms) name a type present in the type table,
+    - how many type descriptors embedded in signature-shaped
+      entries (`(params)return`) are present in the table.
+
+    Everything else in d2 (names, literals) is counted but
+    not interpreted, and the d1 protobuf payload is not
+    interpreted at all. Returns per-annotation counts for
+    the caller to aggregate.
+    """
+    import re as _re
+    out = {"strings": 0, "first_checked": 0, "first_matched": 0,
+           "descriptors": 0, "descriptors_in_table": 0,
+           "signature_types": 0, "signature_types_in_table": 0}
+    if not isinstance(d2, list):
+        return out
+    strings = [s for s in d2 if isinstance(s, str)]
+    out["strings"] = len(strings)
+    if strings and _is_descriptor(strings[0]):
+        out["first_checked"] = 1
+        out["first_matched"] = 1 if strings[0] == annotated_class \
+            else 0
+    for s in strings:
+        base = s.lstrip("[")
+        if _is_descriptor(base):
+            out["descriptors"] += 1
+            if base in type_set:
+                out["descriptors_in_table"] += 1
+        elif s.startswith("(") and ")" in s:
+            for t in _re.findall(r"L[^;\s]+;", s):
+                out["signature_types"] += 1
+                if t in type_set:
+                    out["signature_types_in_table"] += 1
+    return out
+
+
+# ------------------------------------------------------------------
+# Identifier-shape statistics (obfuscation indicators)
+# ------------------------------------------------------------------
+
+def _simple_name(descriptor):
+    body = descriptor
+    if body.startswith("L") and body.endswith(";"):
+        body = body[1:-1]
+    tail = body.rsplit("/", 1)[-1]
+    return tail.rsplit("$", 1)[-1] if "$" in tail else tail
+
+
+def identifier_shape_stats(dex):
+    """Identifier-shape statistics over one DEX's defined
+    classes, methods and fields: how many simple names are
+    short (<= 2 chars) or single-character. Raw observed
+    counts/ratios only — what they indicate is the caller's
+    labeled inference, never a verdict here."""
+    class_names = []
+    method_names = []
+    field_names = []
+    for cdef in dex.class_defs():
+        class_names.append(_simple_name(cdef["class"]))
+        for _midx, name, _f, _c, _k in \
+                dex.class_methods_indexed(cdef["class_data_off"]):
+            method_names.append(name)
+        for name, _t, _f, _k in dex.class_fields(
+                cdef["class_data_off"]):
+            field_names.append(name)
+
+    def shape(names):
+        total = len(names)
+        short = sum(1 for n in names if len(n) <= 2)
+        single = sum(1 for n in names if len(n) == 1)
+        return {"total": total, "short_le2": short,
+                "single_char": single,
+                "short_ratio": round(short / total, 4)
+                if total else 0.0,
+                "single_char_ratio": round(single / total, 4)
+                if total else 0.0}
+
+    return {"classes": shape(class_names),
+            "methods": shape(method_names),
+            "fields": shape(field_names)}

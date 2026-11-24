@@ -71,6 +71,34 @@ for the whole tree's peak, stated as such wherever it
 is reported. It is a measurement from one run on one
 machine, not a guarantee or a limit.
 
+## Synthetic-corpus parser completeness (2.6.0 Phase 11)
+
+The public synthetic corpus (`tests/synthetic_fixtures.py`
++ `tests/expected_outputs.json`) supports a second,
+fully reproducible accuracy measure that needs no private
+files: for each of the 11 fixtures, the fields the unit
+suite asserts (parser output vs builder intent) are
+counted as checked / matched. The 2.6.0 measurement
+(recorded in `tests/benchmarks/baseline-2.6.0.json`):
+**85 of 85 asserted fields matched across all 11
+fixtures** (dex 10, elf 8, pak 7, iostore 12, zen 6,
+uasset ×5 6–8 each, godot 6). Format identification over
+the 12 generated files: the identifier names a specific
+format for the DEX, ELF, Godot pack and IoStore .utoc
+files, and — after the Phase 11 tail-window fix — the
+v11 pak; bare .uasset/.ucas files are content formats
+reached through `nar-unreal` / `nar-pak`, not intake
+formats, and identify as `unknown` by design.
+
+## Line coverage (2.6.0 Phase 11, R-016)
+
+Coverage is test-side tooling only (never a shipped
+dependency). Measured with coverage.py in the test venv
+over the unit suite; the number, tool version, command
+and scope are recorded in
+`tests/benchmarks/baseline-2.6.0.json` — see that file
+for the current figure and its exact methodology.
+
 ## Reproducing
 
 ```bash

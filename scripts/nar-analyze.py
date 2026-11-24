@@ -47,11 +47,28 @@ try:
     from narlib import companions as _companions
     from narlib import correlations as _correlations
     from narlib import evidence as _evidence
+    from narlib import graph as _graph
+    from narlib import investigation as _investigation
+    from narlib import safearchive as _safearchive
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.5.2"
+    NAR_VERSION = "2.6.0"
     _companions = None
     _correlations = None
     _evidence = None
+    _graph = None
+    _investigation = None
+    _safearchive = None
+
+# Optional layers (2.6.0 Phases 7/8): graph + investigation
+# companions, on by default, disabled by --no-graph /
+# --no-investigation or the NAR_NO_GRAPH /
+# NAR_NO_INVESTIGATION environment variables.
+LAYER_OPTS = {"graph": True, "investigation": True}
+
+
+def set_layers(graph=True, investigation=True):
+    LAYER_OPTS["graph"] = bool(graph)
+    LAYER_OPTS["investigation"] = bool(investigation)
 
 # One entry per bundled-tool run, in execution order. main()
 # turns this into execution-log.json (2.0 orchestrator record).
@@ -430,10 +447,10 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                      [apk_path, "--work",
                       os.path.join(work_dir, "network")],
                      "endpoints.json", sum_network)
-    stage("security", "nar-security.py", [apk_path],
-          "security-findings.json", sum_security)
-    stage("assets", "nar-assets.py", [apk_path],
-          "assets.json", sum_assets)
+    sec_data = stage("security", "nar-security.py", [apk_path],
+                     "security-findings.json", sum_security)
+    assets_data = stage("assets", "nar-assets.py", [apk_path],
+                        "assets.json", sum_assets)
 
     # Brief-named companion projections (Evolution Phase 2):
     # application.json / manifest.json / native-inventory.json
@@ -494,6 +511,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     # correlations.json companion (schema-validated). The JNI
     # entries are also embedded into native.json and counted
     # in the report, per the phase spec.
+    corr = None
     if _correlations is not None and _evidence is not None:
         corr = _correlations.build_correlations(
             dex_data, nat_data, perms_data, net_data, NAR_VERSION)
@@ -538,6 +556,89 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                         corr["counts"]["jni_declaration_only"],
                     "export_only":
                         corr["counts"]["jni_export_only"]}
+
+    # Optional layers (2.6.0 Phases 7/8, R-008/R-009/R-020):
+    # graph.json + investigation.json companions, built from
+    # the same stage documents (rebuilt from the stage cache
+    # on every run). Each builder runs as an ordinary stage
+    # under the existing budget machinery: a failure is
+    # recorded in the execution log + limitations and the
+    # analysis continues — an optional layer never fails
+    # the whole run.
+    def emit_optional(stage_name, filename, schema_name, builder):
+        started = time.time()
+        try:
+            doc = builder()
+        except Exception as e:  # builder failure degrades
+            EXEC_LOG.append({
+                "stage": stage_name, "module": stage_name,
+                "tool": "nar-analyze",
+                "tool_version": NAR_VERSION, "status": "failed",
+                "duration_s": round(time.time() - started, 3),
+                "budget": _budget_snapshot()})
+            report["limitations"].append(
+                f"companion {filename} not emitted: "
+                f"{stage_name} builder failed ({e})")
+            return None
+        try:
+            with open(os.path.join(
+                    os.path.dirname(HERE), "schemas", schema_name),
+                    encoding="utf-8") as fh:
+                schema = json.load(fh)
+            errors = _evidence.validate(doc, schema)
+        except (OSError, ValueError) as e:
+            errors = [f"schema unavailable: {e}"]
+        if errors:
+            EXEC_LOG.append({
+                "stage": stage_name, "module": stage_name,
+                "tool": "nar-analyze",
+                "tool_version": NAR_VERSION, "status": "failed",
+                "duration_s": round(time.time() - started, 3),
+                "budget": _budget_snapshot()})
+            report["limitations"].append(
+                f"companion {filename} not emitted: "
+                f"failed validation ({errors[0]})")
+            return None
+        with open(os.path.join(out_dir, filename),
+                  "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=1)
+        companions[stage_name] = {"file": filename,
+                                  "projected": True}
+        EXEC_LOG.append({
+            "stage": stage_name, "module": stage_name,
+            "tool": "nar-analyze", "tool_version": NAR_VERSION,
+            "status": "ok",
+            "duration_s": round(time.time() - started, 3),
+            "budget": _budget_snapshot()})
+        return doc
+
+    if _evidence is not None and _graph is not None \
+            and LAYER_OPTS.get("graph", True) \
+            and not (_investigation is not None
+                     and _investigation.graph_disabled()):
+        graph_doc = emit_optional(
+            "graph", "graph.json", "graph.schema.json",
+            lambda: _graph.build_graph(
+                dex_data=dex_data, native_data=nat_data,
+                perms_data=perms_data, network_data=net_data,
+                fingerprint_data=fp_data, engines_data=eng_data,
+                security_data=sec_data, assets_data=assets_data,
+                correlations_data=corr, version=NAR_VERSION))
+        if graph_doc is not None:
+            report["graph_summary"] = graph_doc["counts"]
+    if _evidence is not None and _investigation is not None \
+            and LAYER_OPTS.get("investigation", True) \
+            and not _investigation.investigation_disabled():
+        inv_doc = emit_optional(
+            "investigation", "investigation.json",
+            "investigation.schema.json",
+            lambda: _investigation.build_investigation(
+                dex_data=dex_data, native_data=nat_data,
+                perms_data=perms_data, network_data=net_data,
+                security_data=sec_data, correlations_data=corr,
+                engines_data=eng_data, version=NAR_VERSION))
+        if inv_doc is not None:
+            report["investigation_summary"] = inv_doc["counts"]
 
 
 def analyze(target, work_dir, out_dir=None):
@@ -1102,24 +1203,33 @@ def export_case(case_dir, bundle_path):
 
 
 def import_case(bundle_path, out_dir):
-    """Import a case bundle into out_dir (guarded
-    extraction: absolute paths and '..' entries are
-    refused), then verify the imported case. Returns the
-    verify summary plus import facts."""
+    """Import a case bundle into out_dir, then verify the
+    imported case. Extraction goes through
+    narlib.safearchive (Phase 10): the previous raw
+    ZipFile.extractall path checked only absolute/'..'
+    names and applied NO entry-count, size, ratio,
+    symlink or non-regular-entry limits, so a crafted
+    bundle could act as an archive bomb or plant symlink
+    entries the guarded layer exists to refuse. Any
+    rejected entry aborts the import with the reasons.
+    Returns the verify summary plus import facts."""
     with zipfile.ZipFile(bundle_path) as zf:
         names = zf.namelist()
         if BUNDLE_MANIFEST not in names:
             raise ValueError("not a NAR case bundle: "
                              f"{BUNDLE_MANIFEST} missing")
-        for name in names:
-            if name.startswith("/") or ".." in (
-                    name.replace("\\", "/").split("/")):
-                raise ValueError(f"unsafe entry in bundle: {name}")
-        os.makedirs(out_dir, exist_ok=True)
-        zf.extractall(out_dir)
+    if _safearchive is None:
+        raise ValueError("narlib.safearchive is unavailable; "
+                         "refusing unguarded extraction")
+    report = _safearchive.safe_extract(bundle_path, out_dir)
+    if report["rejected"]:
+        reasons = "; ".join(
+            f"{r['entry']}: {r['reason']}"
+            for r in report["rejected"][:10])
+        raise ValueError(f"unsafe entries in bundle: {reasons}")
     result = verify_case(out_dir)
     result["imported_to"] = os.path.abspath(out_dir)
-    result["files_imported"] = len(names)
+    result["files_imported"] = len(report["extracted"])
     return result
 
 
@@ -1244,6 +1354,31 @@ def main(argv=None):
     p.add_argument("--verify", metavar="CASE_DIR",
                    help="verify a case directory's integrity "
                         "and exit")
+    p.add_argument("--graph", metavar="CASE_DIR",
+                   help="print a case's graph.json as JSON, "
+                        "filtered by --kind / --edge-kind / "
+                        "--min-confidence / --text, and exit")
+    p.add_argument("--investigation", metavar="CASE_DIR",
+                   help="print a case's investigation.json "
+                        "summary as JSON and exit")
+    p.add_argument("--kind", metavar="KIND",
+                   help="graph view: keep only nodes of this "
+                        "node kind")
+    p.add_argument("--edge-kind", metavar="KIND",
+                   help="graph view: keep only edges of this "
+                        "edge kind")
+    p.add_argument("--min-confidence", metavar="LEVEL",
+                   help="graph view: minimum edge confidence "
+                        "(low|medium|high or 0..1)")
+    p.add_argument("--text", metavar="TEXT",
+                   help="graph view: free-text filter on "
+                        "node labels / ids")
+    p.add_argument("--no-graph", action="store_true",
+                   help="skip the graph.json companion "
+                        "(or set NAR_NO_GRAPH=1)")
+    p.add_argument("--no-investigation", action="store_true",
+                   help="skip the investigation.json companion "
+                        "(or set NAR_NO_INVESTIGATION=1)")
     p.add_argument("--stage-timeout", type=float, metavar="S",
                    help="per-stage timeout cap in seconds "
                         "(orchestration budget)")
@@ -1263,6 +1398,49 @@ def main(argv=None):
                    help="ignore the case stage cache and re-run "
                         "every 2.0 stage")
     args = p.parse_args(argv)
+    # Case view modes (2.6.0 Phases 7/8): graph query and
+    # investigation summary over an existing case directory.
+    if args.graph or args.investigation:
+        case_dir = args.graph or args.investigation
+        fname = "graph.json" if args.graph else \
+            "investigation.json"
+        path = os.path.join(case_dir, fname)
+        if not os.path.isfile(path):
+            print(f"nar-analyze: {fname} not found in case "
+                  f"directory {case_dir}", file=sys.stderr)
+            return 2
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError) as e:
+            print(f"nar-analyze: cannot read {fname} in case "
+                  f"directory {case_dir}: {e}",
+                  file=sys.stderr)
+            return 2
+        if args.graph:
+            if _graph is None:
+                print("nar-analyze: graph module unavailable",
+                      file=sys.stderr)
+                return 1
+            min_conf = args.min_confidence
+            if min_conf is not None:
+                try:
+                    min_conf = float(min_conf)
+                except ValueError:
+                    pass  # a level name such as "high"
+            doc = _graph.query_graph(
+                doc, kind=args.kind, edge_kind=args.edge_kind,
+                min_confidence=min_conf, text=args.text)
+        else:
+            if _investigation is None:
+                print("nar-analyze: investigation module "
+                      "unavailable", file=sys.stderr)
+                return 1
+            doc = _investigation.summarize_investigation(doc)
+        print(json.dumps(doc, indent=2))
+        return 0
+    set_layers(graph=not args.no_graph,
+               investigation=not args.no_investigation)
     # Case bundle modes (Phase 8): export / import / verify
     # operate on case directories, not on targets.
     if args.export or args.import_bundle or args.verify:
@@ -1311,8 +1489,13 @@ def main(argv=None):
     set_budgets(args.stage_timeout, args.total_budget)
     stem = os.path.splitext(os.path.basename(args.target))[0] or "target"
     out_dir = args.out or os.path.join(os.getcwd(), f"nar-analyze-{stem}")
-    work_dir = args.work or os.path.join(
-        tempfile.gettempdir(), f"nar-analyze-work-{stem}")
+    # Default work dir via mkdtemp (Phase 10): the previous
+    # predictable gettempdir()/nar-analyze-work-<stem> path
+    # could be pre-created or symlinked by another local
+    # user before the run; mkdtemp creates it atomically
+    # with an unpredictable suffix and 0700 permissions.
+    work_dir = args.work or tempfile.mkdtemp(
+        prefix=f"nar-analyze-work-{stem}-")
     if args.no_cache and os.path.isdir(os.path.join(out_dir, "cache")):
         import shutil
         shutil.rmtree(os.path.join(out_dir, "cache"))

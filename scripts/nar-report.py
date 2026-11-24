@@ -10,7 +10,14 @@ navigation, and client-side search/filter for the endpoint,
 findings, and asset tables. When native.json carries a
 bundled-library dependency graph, the dashboard renders it
 as an inline SVG (stdlib-generated, deterministic layered
-layout, still zero external references).
+layout, still zero external references). When the case
+carries the Phase 7/8 companions, the dashboard also renders
+a Unified graph section (graph.json node/edge counts by
+kind, tabular) and an Investigation section
+(investigation.json: verified facts, ranked paths,
+hypotheses and unknowns in separate tables, each capped at
+50 rows with the full data left in the companion file).
+Sections are absent when their companion is missing.
 
 Usage:
     python3 nar-report.py CASE_DIR [--out FILE]
@@ -144,6 +151,10 @@ def render(case_dir):
     native = load_json(os.path.join(case_dir, "native.json")) or {}
     exec_log = load_json(os.path.join(case_dir,
                                       "execution-log.json")) or {}
+    graph_doc = load_json(os.path.join(case_dir,
+                                       "graph.json")) or {}
+    investigation = load_json(os.path.join(
+        case_dir, "investigation.json")) or {}
     identity = report.get("identity") or {}
     parts = []
     parts.append(f"<h2>Identity</h2><p>"
@@ -220,6 +231,98 @@ def render(case_dir):
             'placeholder="Filter assets…" '
             'oninput="filterTable(this)">'
             + table(["Category", "Type", "Bytes", "Path"], rows))
+    g_counts = graph_doc.get("counts") or {}
+    g_nodes = graph_doc.get("nodes") or []
+    g_edges = graph_doc.get("edges") or []
+    if g_nodes or g_edges:
+        by_kind = g_counts.get("nodes_by_kind") or {}
+        if not by_kind:
+            for n in g_nodes:
+                by_kind[n.get("kind")] = \
+                    by_kind.get(n.get("kind"), 0) + 1
+        e_by_kind = g_counts.get("edges_by_kind") or {}
+        if not e_by_kind:
+            for e in g_edges:
+                e_by_kind[e.get("kind")] = \
+                    e_by_kind.get(e.get("kind"), 0) + 1
+        n_nodes = g_counts.get("nodes", len(g_nodes))
+        n_edges = g_counts.get("edges", len(g_edges))
+        rows = [(k, by_kind.get(k, 0), e_by_kind.get(k, 0))
+                for k in sorted(set(by_kind) | set(e_by_kind))]
+        stages = ", ".join(
+            graph_doc.get("contributing_stages") or [])
+        parts.append(
+            "<h2>Unified graph</h2>"
+            f'<p class="sub">{esc(n_nodes)} nodes, '
+            f"{esc(n_edges)} edges (from graph.json"
+            f"{'; stages: ' + esc(stages) if stages else ''})"
+            "</p>" + table(
+                ["Kind", "Nodes", "Edges"], rows))
+    inv_counts = investigation.get("counts") or {}
+    facts = investigation.get("verified_facts") or []
+    inv_paths = investigation.get("paths") or []
+    hyps = investigation.get("hypotheses") or []
+    unknowns = investigation.get("unknowns") or []
+    if facts or inv_paths or hyps or unknowns:
+        parts.append(
+            "<h2>Investigation</h2>"
+            f'<p class="sub">{esc(inv_counts.get("verified_facts", len(facts)))} '
+            f"verified facts · "
+            f"{esc(inv_counts.get('paths', len(inv_paths)))} "
+            f"ranked paths · "
+            f"{esc(inv_counts.get('hypotheses', len(hyps)))} "
+            f"hypotheses · "
+            f"{esc(inv_counts.get('unknowns', len(unknowns)))} "
+            "unknowns (from investigation.json; facts, "
+            "recommendations, hypotheses and unknowns are "
+            "kept in separate tables)</p>")
+        if facts:
+            rows = [(f.get("fact"), f.get("kind"),
+                     f.get("subject"),
+                     f.get("verification_status"))
+                    for f in facts[:50]]
+            note = (" — first 50 shown; the full list is in "
+                    "investigation.json" if len(facts) > 50
+                    else "")
+            parts.append(
+                f"<h3>Verified facts{esc(note)}</h3>" + table(
+                    ["Fact", "Kind", "Subject", "Verification"],
+                    rows))
+        if inv_paths:
+            rows = [(p.get("rank"), p.get("rule_id"),
+                     p.get("priority"),
+                     p.get("recommendation"), p.get("subject"),
+                     p.get("confidence"))
+                    for p in inv_paths[:50]]
+            note = (" — first 50 shown; the full list is in "
+                    "investigation.json" if len(inv_paths) > 50
+                    else "")
+            parts.append(
+                f"<h3>Ranked paths{esc(note)}</h3>" + table(
+                    ["Rank", "Rule", "Priority",
+                     "Recommendation", "Subject", "Confidence"],
+                    rows))
+        if hyps:
+            rows = [(h.get("statement"), h.get("subject"),
+                     h.get("confirm"), h.get("refute"))
+                    for h in hyps[:50]]
+            note = (" — first 50 shown; the full list is in "
+                    "investigation.json" if len(hyps) > 50
+                    else "")
+            parts.append(
+                f"<h3>Hypotheses (unverified){esc(note)}</h3>"
+                + table(["Hypothesis", "Subject",
+                         "Would confirm", "Would refute"], rows))
+        if unknowns:
+            rows = [(u.get("question"), u.get("reason"))
+                    for u in unknowns[:50]]
+            note = (" — first 50 shown; the full list is in "
+                    "investigation.json" if len(unknowns) > 50
+                    else "")
+            parts.append(
+                f"<h3>Unknowns{esc(note)}</h3>" + table(
+                    ["Question", "Why static data cannot "
+                     "answer it"], rows))
     entries = exec_log.get("entries") or []
     if entries:
         rows = [(e["stage"], e["status"], e.get("duration_s"))

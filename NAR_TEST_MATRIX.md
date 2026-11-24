@@ -131,7 +131,15 @@ The one library-level gate is PyYAML:
 `tests/benchmarks/run_benchmarks.py` with the recorded
 baseline in `tests/benchmarks/baseline-2.5.2.json`
 (the 2.5.2 W0 baseline plus the W4 after-optimization
-record on identical inputs).
+record on identical inputs). The 2.6.0 record
+(`tests/benchmarks/baseline-2.6.0.json`, Phase 11)
+re-runs the four W0 commands on byte-identical inputs
+with the same wrapper harness, and adds: synthetic-corpus
+parser field completeness (85/85 asserted fields across
+the 11 public fixtures) and a line-coverage measurement
+of the shipped code over the unit suite (coverage.py,
+test venv; tool, command and scope recorded in the
+baseline file — R-016).
 
 - Run: `python3 tests/benchmarks/run_benchmarks.py
   [--out FILE] [--no-metrics] [--no-memory]`.

@@ -312,7 +312,7 @@ def review(target, deep=False, work_dir=None):
                     "The bridge may only serve first-party "
                     "bundled pages.",
                     verification_status="STRONGLY_INDICATED")
-    return {"tool": "nar-security", "version": "2.5.2",
+    return {"tool": "nar-security", "version": "2.6.0",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "findings": findings.items,

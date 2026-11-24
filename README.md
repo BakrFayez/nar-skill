@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.5.2
+Version 2.6.0
 Research by Bakr Fayez
 
 NAR is an AI agent skill for Android APK reverse engineering. It covers all Android apps and games, old and new: regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
@@ -53,6 +53,36 @@ python3 scripts/nar.py analyze app.apk --out case/
 Every module also runs through the unified CLI
 (`python3 scripts/nar.py dex|native|network|security|engines …`)
 or standalone, exactly as in 1.x.
+
+## What's new in 2.6.0
+
+A repository-wide repair and intelligence upgrade (see
+CHANGELOG.md, NAR_2.6.0_UPDATE_REPORT.md and
+NAR_REPAIR_MATRIX.md): DEX gains control-flow graphs
+(`nar-dex --cfg`), a resolved call graph with
+cross-references (`nar-dex --xref`), a compact-DEX
+(CDEX) header parser and confidence-labeled
+obfuscation indicators; native analysis gains a
+library dependency graph and symbol-cluster behavior
+indicators; Unity, Unreal and Godot analyzers extract
+relationships (bundle/serialized-file headers,
+package import/export relationships, text scene
+references); Flutter and React Native gain plugin /
+bridge inventories; every case now carries a unified
+application graph (graph.json, queryable via
+`nar case graph`) and a deterministic, offline
+investigation plan (investigation.json) that keeps
+verified facts, ranked paths, hypotheses and unknowns
+strictly separate; the runtime module gains device
+capability detection, emulator-vs-physical
+identification and Frida compatibility diagnostics
+(`nar-runtime diagnose`, verified live on a local
+emulator); case-bundle import and the archive/parser
+layer were hardened (symlink-safe extraction, parser
+read caps); the dashboard renders the graph and
+investigation companions; and the benchmark system
+gained a 2.6.0 baseline on identical inputs plus the
+first measured line coverage of the shipped code.
 
 ## What's new in 2.5.2
 
@@ -282,9 +312,11 @@ nar-skill/
   CHANGELOG.md              Release history
   LICENSE                   MIT
   CONTRIBUTING.md           How to contribute
+  SECURITY.md               Analysis boundary, untrusted-sample handling, responsible use
   pyproject.toml            Package metadata + tool configuration
   NAR_ARCHITECTURE.md       System architecture (2.0 program record)
   NAR_CAPABILITY_MATRIX.md  Capability matrix: one row per capability area, with status + evidence
+  NAR_REPAIR_MATRIX.md      Repository-wide repair matrix (2.6.0 program): issue inventory, fixes, verification
   NAR_AUDIT.md              Repository audit + reconciliation record
   NAR_GAP_ANALYSIS.md       Capability baseline with per-area statuses
   NAR_IMPLEMENTATION_PLAN.md  Phase plans and completion records
@@ -315,7 +347,7 @@ nar-skill/
     troubleshooting.md
     unity-il2cpp.md
     version-compare-and-feature-map.md
-  schemas/                  JSON schemas for the structured outputs (24 schemas)
+  schemas/                  JSON schemas for the structured outputs (26 schemas)
     api-architecture.schema.json
     application.schema.json
     assets.schema.json
@@ -331,7 +363,9 @@ nar-skill/
     execution-log.schema.json
     fingerprint.schema.json
     frameworks.schema.json
+    graph.schema.json
     input.schema.json
+    investigation.schema.json
     manifest.schema.json
     native.schema.json
     native-inventory.schema.json
@@ -370,6 +404,7 @@ nar-skill/
     protection-signatures.json  Versioned protection-signature database (nar-triage, via narlib)
     narlib/                 Shared core library used by the 2.0 modules
       __init__.py
+      cdex.py               Compact DEX header + section-table parser (payload not decoded)
       companions.py         Brief-named case companion projections
       correlations.py       Cross-module correlation records (DEX/ELF/manifest/network joins)
       dex.py                DEX parser (tables, hierarchies, call edges)
@@ -378,8 +413,10 @@ nar-skill/
       elf.py                ELF parser (headers, dynamic, symbols, hardening)
       evidence.py           Evidence envelope + fact classes
       formats.py            Magic + structure format identification
+      graph.py              Unified application intelligence graph (graph.json companion)
       hashing.py            Streaming hashes
       iostore.py            Unreal IoStore (UTOC/UCAS) parser
+      investigation.py      Deterministic offline investigation layer (investigation.json companion)
       mmapio.py             Read-only file mapping (mmap) for the parsers
       oat.py                OAT / VDEX / ODEX / ART parser
       registry.py           Capability-registry reader

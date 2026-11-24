@@ -214,5 +214,113 @@ class TestPerFileEncryption(unittest.TestCase):
         self.assertIn("[encrypted]", text)
 
 
+TSCN_V4 = (
+    b'[gd_scene load_steps=3 format=3 uid="uid://scene1"]\n'
+    b"\n"
+    b'[ext_resource type="PackedScene" uid="uid://enemy1" '
+    b'path="res://enemy.tscn" id="1_xyz"]\n'
+    b'[ext_resource type="Texture2D" '
+    b'path="res://icon.png" id="2_abc"]\n'
+    b"\n"
+    b'[sub_resource type="CircleShape2D" '
+    b'id="CircleShape2D_1"]\n'
+    b"radius = 4.0\n"
+    b"\n"
+    b'[node name="Main" type="Node2D"]\n'
+    b"\n"
+    b'[node name="Enemy" parent="." '
+    b'instance=ExtResource("1_xyz")]\n'
+    b"\n"
+    b'[node name="Sprite" parent="." type="Sprite2D"]\n'
+    b'texture = ExtResource("2_abc")\n'
+)
+
+TSCN_V3 = (
+    b"[gd_scene load_steps=2 format=2]\n"
+    b"\n"
+    b'[ext_resource path="res://other.tscn" type="PackedScene"'
+    b" id=1]\n"
+    b"\n"
+    b'[node name="Root" type="Node"]\n'
+    b"\n"
+    b'[node name="Other" parent="." instance=ExtResource( 1 )]\n'
+)
+
+
+class TestSceneRelationships(unittest.TestCase):
+    def test_pack_scene_relationships_exact(self):
+        files = [(b"res://main.tscn", TSCN_V4),
+                 (b"res://icon.png", b"\x89PNG\r\n\x1a\n....")]
+        report = nar_godot.parse_pck(
+            build_v2(files=files, relative=True))
+        self.assertEqual(report["scene_relationship_counts"],
+                         {"total": 1, "processed": 1,
+                          "skipped": 0, "failed": 0})
+        rel = report["scene_relationships"][0]
+        self.assertEqual(rel["path"], "res://main.tscn")
+        self.assertEqual(rel["kind"], "scene")
+        self.assertEqual(rel["node_count"], 3)
+        self.assertEqual(rel["external_resource_count"], 2)
+        ext = {e["id"]: e for e in rel["external_resources"]}
+        self.assertEqual(ext["1_xyz"]["path"],
+                         "res://enemy.tscn")
+        self.assertEqual(ext["1_xyz"]["type"], "PackedScene")
+        self.assertEqual(ext["2_abc"]["path"], "res://icon.png")
+        self.assertEqual(rel["sub_resource_ids"],
+                         ["CircleShape2D_1"])
+        self.assertEqual(rel["sub_resource_count"], 1)
+        self.assertEqual(rel["instanced_scenes"], [
+            {"node": "Enemy", "ext_resource_id": "1_xyz",
+             "path": "res://enemy.tscn"}])
+
+    def test_godot3_integer_ids_join(self):
+        files = [(b"res://main.tscn", TSCN_V3)]
+        report = nar_godot.parse_pck(
+            build_v2(files=files, relative=True))
+        rel = report["scene_relationships"][0]
+        self.assertEqual(rel["external_resources"][0]["id"],
+                         "1")
+        self.assertEqual(rel["instanced_scenes"], [
+            {"node": "Other", "ext_resource_id": "1",
+             "path": "res://other.tscn"}])
+        self.assertEqual(rel["node_count"], 2)
+
+    def test_encrypted_scene_named_not_decoded(self):
+        files = [(b"res://main.tscn", TSCN_V4),
+                 (b"res://secret.tscn", TSCN_V3)]
+        report = nar_godot.parse_pck(
+            build_v2(files=files, relative=True,
+                     entry_flags={1: 0x1}))
+        self.assertEqual(report["scene_relationship_counts"],
+                         {"total": 2, "processed": 1,
+                          "skipped": 1, "failed": 0})
+        paths = [r["path"]
+                 for r in report["scene_relationships"]]
+        self.assertEqual(paths, ["res://main.tscn"])
+
+    def test_bare_scene_file_target(self):
+        with tempfile.NamedTemporaryFile(
+                suffix=".tscn", delete=False) as fh:
+            fh.write(TSCN_V4)
+            path = fh.name
+        report = nar_godot.inspect(path)
+        self.assertTrue(report["is_godot"])
+        rel = report["scene_relationships"][0]
+        self.assertEqual(rel["node_count"], 3)
+        self.assertEqual(rel["external_resource_count"], 2)
+        text = nar_godot.human(report, 50)
+        self.assertIn("Scene relationships:", text)
+        self.assertIn("Enemy -> res://enemy.tscn", text)
+
+    def test_bare_binary_scene_rejected_honestly(self):
+        with tempfile.NamedTemporaryFile(
+                suffix=".tscn", delete=False) as fh:
+            fh.write(b"RSRC" + b"\x00" * 32)
+            path = fh.name
+        report = nar_godot.inspect(path)
+        self.assertFalse(report["is_godot"])
+        self.assertIn("binary", report["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
