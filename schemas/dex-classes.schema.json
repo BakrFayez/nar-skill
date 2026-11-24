@@ -1,0 +1,43 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "description": "The dex/classes.json sidecar written by nar-dex --out: one entry per defined class across all DEX files of the target. superclass is null for a class with no superclass (the root class).",
+ "properties": {
+  "classes": {
+   "items": {
+    "properties": {
+     "class": {
+      "type": "string"
+     },
+     "dex": {
+      "type": "string"
+     },
+     "interfaces": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "superclass": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "dex",
+     "class",
+     "superclass",
+     "interfaces"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  }
+ },
+ "required": [
+  "classes"
+ ],
+ "title": "NAR DEX class inventory",
+ "type": "object"
+}

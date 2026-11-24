@@ -55,7 +55,7 @@ sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as VERSION
 except Exception:
-    VERSION = "2.5.0"
+    VERSION = "2.5.1"
 
 # verb -> (kind, script, fixed prefix args). The prefix is how
 # the alias verbs (identify / validate) reach the nar-input

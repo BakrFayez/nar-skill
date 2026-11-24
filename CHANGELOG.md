@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+## 2.5.1 (2026-11-24)
+
+Schema-layer patch, found by an end-to-end validation run
+against a real case produced by 2.5.0 (a 28.4 MB Unreal
+game case, 26 JSON documents). No tool behavior changes.
+
+- report.schema.json rewritten to the report shape
+  nar-analyze actually writes (target / target_sha256 /
+  target_size_bytes / environment / triage / identity /
+  stage summaries); the 2.0-era schema required an
+  `input` object the shipped report no longer carries,
+  so every real report.json failed validation.
+- engine.schema.json and timeline.schema.json were not
+  parseable JSON (unbalanced braces) and could not
+  validate anything; both are repaired and aligned to
+  the real documents (nar-engines verdicts incl. score
+  and recommended_next; the runtime timeline template
+  shape).
+- New schemas for the case documents that had none:
+  dex.schema.json and native.schema.json (root case
+  documents and their cache copies), plus
+  dex-classes.schema.json and dex-methods.schema.json
+  for the nar-dex sidecar inventories. The schema set
+  is now 24; every one of the 26 documents of the
+  reference case validates or is a non-JSON artifact.
+- Regression guards (tests/unit/test_schemas.py): a
+  parse-all test loads every file in schemas/, and
+  generated-case tests validate a real demo-fixture
+  report / engines / dex / native document set and
+  the DEX sidecars against their schemas, so a stale
+  or unparseable schema fails the battery.
+- Documentation: `@Metadata` is written as a code span
+  in the markdown guides and records, so it no longer
+  renders as a user mention.
+
 ## 2.5.0 (2026-11-24)
 
 - Release preparation (evolution Phase 12): version
@@ -52,7 +87,7 @@
   export/import/verify, runtime session records, audio
   metadata, compare artifacts, Addressables catalogs,
   RN source maps, Flutter asset inventories, Godot
-  resource types, DEX try/catch + Kotlin @Metadata, ELF
+  resource types, DEX try/catch + Kotlin `@Metadata`, ELF
   relocations). The deferred full guide-vs-code audit
   ran over all 22 guides + SKILL.md: zero missing link
   targets, zero missing script files, zero
@@ -157,7 +192,7 @@
   ELF analysis parses relocation tables (cross-checked
   against readelf) and reports compiler fingerprints from
   the .comment section as observed evidence, and Kotlin
-  @Metadata payloads are parsed — metadata version and
+  `@Metadata` payloads are parsed — metadata version and
   declaration kind per class — on real-world Kotlin apps.
 - Case companions completed (evolution Phase 2): the
   orchestrated case now also emits application.json,

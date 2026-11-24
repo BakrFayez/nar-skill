@@ -1,0 +1,121 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "description": "The dex.json document written by nar-dex (root case document and per-case cache copy share this shape). A dex_files entry that failed to parse carries {name, error} instead of the analysis fields. Targets that are compiled artifacts (OAT/VDEX/ODEX/ART) add a compiled_artifact object.",
+ "properties": {
+  "compiled_artifact": {
+   "type": "object"
+  },
+  "dex_files": {
+   "items": {
+    "properties": {
+     "call_edge_count": {
+      "type": "integer"
+     },
+     "call_edges": {
+      "type": "array"
+     },
+     "call_edges_truncated": {
+      "type": "boolean"
+     },
+     "class_count": {
+      "type": "integer"
+     },
+     "classes": {
+      "type": "array"
+     },
+     "dex_version": {
+      "type": "string"
+     },
+     "entry_points": {
+      "type": "array"
+     },
+     "error": {
+      "type": "string"
+     },
+     "field_count": {
+      "type": "integer"
+     },
+     "header_counts": {
+      "type": "object"
+     },
+     "kotlin": {
+      "type": "object"
+     },
+     "method_count": {
+      "type": "integer"
+     },
+     "name": {
+      "type": "string"
+     },
+     "native_methods": {
+      "type": "array"
+     },
+     "reflection": {
+      "type": "object"
+     },
+     "string_references": {
+      "type": "array"
+     },
+     "try_catch": {
+      "type": "object"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "target": {
+   "type": "string"
+  },
+  "target_sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "tool": {
+   "type": "string"
+  },
+  "totals": {
+   "properties": {
+    "call_edges": {
+     "type": "integer"
+    },
+    "classes": {
+     "type": "integer"
+    },
+    "fields": {
+     "type": "integer"
+    },
+    "methods": {
+     "type": "integer"
+    },
+    "native_methods": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "classes",
+    "methods",
+    "fields",
+    "call_edges",
+    "native_methods"
+   ],
+   "type": "object"
+  },
+  "version": {
+   "type": "string"
+  }
+ },
+ "required": [
+  "tool",
+  "version",
+  "target",
+  "target_sha256",
+  "dex_files",
+  "totals"
+ ],
+ "title": "NAR DEX analysis",
+ "type": "object"
+}

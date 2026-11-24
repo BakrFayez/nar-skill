@@ -152,7 +152,7 @@ identity paths still record its absence explicitly.
   Acceptance: unit fixtures with planted .comment
   strings; no fingerprint claimed when the section is
   stripped.
-- Kotlin: parse @Metadata annotation payloads (metadata
+- Kotlin: parse `@Metadata` annotation payloads (metadata
   version, kind) when present. Acceptance: fixture with
   known metadata version; stripped-metadata fixtures
   keep the existing marker-level verdict.
@@ -170,17 +170,17 @@ names, PLT/GOT subset) and .comment compiler fingerprints
 (Clang/GCC banners as OBSERVED evidence, nothing claimed
 when stripped), both surfaced in nar-native facts;
 narlib/dex.py annotation decoding (encoded values +
-class-level annotation sets) with Kotlin @Metadata
+class-level annotation sets) with Kotlin `@Metadata`
 extraction in nar-dex (metadata version + declaration
 kind per class, capped samples). Two real defects found
 and fixed in-phase: (1) index-carrying encoded values are
 fixed-width little-endian (value_arg+1 bytes), not ULEB128
 — the ULEB reading desynchronized annotation streams on
 indices >= 256 (proven on a real corpus class whose
-@Metadata elements decode garbled before the fix and
+`@Metadata` elements decode garbled before the fix and
 exactly after it; a synthetic regression case with a
 string index of 300 placed before mv/k pins it);
-(2) nar-dex gated @Metadata extraction on the bare string
+(2) nar-dex gated `@Metadata` extraction on the bare string
 "kotlin/Metadata" in the string table, which release
 builds do not carry — the gate is now the type-table
 descriptor, and metadata_annotation_present uses the same
@@ -194,17 +194,17 @@ JUMP_SLOT number in the name map (1026, not 282); the
 dexdis oracle harness re-run on the corpus DEX — FULL
 AGREEMENT (230,836 instructions, 0 mismatches), so the
 block summary did not disturb listing equivalence.
-@Metadata on the Kotlin corpus fixture: 10,213 annotations,
+`@Metadata` on the Kotlin corpus fixture: 10,213 annotations,
 metadata versions 1.8.0 / 2.2.0 dominant, legacy bv
 element present on older annotations. Tests: pytest
 171/171 (+6 synthetic: known try ranges, block layout,
-planted .rela.plt + .comment ELF, @Metadata incl. the
+planted .rela.plt + .comment ELF, `@Metadata` incl. the
 desync regression); e2e and doctor in the phase battery.
 Known failures: none outstanding. Remaining limitations:
 debug-info is presence-only (no line/local decoding);
 block summary is boundaries + edges, not a rendered
 graph; relocation output is a summary in facts (full
-entries available via Elf.relocations()); @Metadata
+entries available via Elf.relocations()); `@Metadata`
 d1/d2 payloads are decoded as values but not interpreted
 as Kotlin declaration models.
 
@@ -660,7 +660,7 @@ runner with accuracy metrics and peak memory).
 the analyze row names correlations.json and the
 budgets; the unified-CLI row names the five Phase 9
 verbs; new rows route `nar tools` and `nar case`;
-module rows now state try/catch + Kotlin @Metadata
+module rows now state try/catch + Kotlin `@Metadata`
 (DEX), relocations + compiler fingerprints (native),
 source redaction (network), verification status
 (security), audio metadata (assets), session records

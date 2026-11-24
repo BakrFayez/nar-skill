@@ -1,1 +1,214 @@
-{"$schema":"http://json-schema.org/draft-07/schema#","properties":{"companions":{"type":"object"},"identity":{"type":"object"},"input":{"properties":{"format":{"type":"string"},"sha256":{"pattern":"^[0-9a-f]{64}$","type":"string"}},"required":["sha256"],"type":"object"},"limitations":{"items":{"type":"string"},"type":"array"},"nar_version":{"type":"string"},"stages":{"type":"object"},"tool":{"type":"string"}},"required":["tool","nar_version","input","identity","limitations"],"title":"NAR 2.0 analysis report","type":"object"}
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "description": "The report.json written by nar-analyze for every case. The base keys are set for every target; stage summaries (fingerprint_summary, engine_verdicts, dex_summary, native_summary, network_summary, security_summary, assets_summary, correlations_summary) and companions appear when the corresponding module stages ran. A report whose triage stage failed carries 'fatal' instead of the stage sections.",
+ "properties": {
+  "assets_summary": {
+   "type": "object"
+  },
+  "case_id": {
+   "type": "string"
+  },
+  "companions": {
+   "type": "object"
+  },
+  "contained_obbs": {
+   "type": "array"
+  },
+  "correlations_summary": {
+   "type": "object"
+  },
+  "dex_summary": {
+   "type": "object"
+  },
+  "engine_ambiguities": {
+   "type": "array"
+  },
+  "engine_verdicts": {
+   "items": {
+    "properties": {
+     "confidence": {
+      "type": "string"
+     },
+     "detected": {
+      "type": "boolean"
+     },
+     "engine": {
+      "type": "string"
+     },
+     "score": {
+      "type": "integer"
+     },
+     "version": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "engine",
+     "detected",
+     "confidence",
+     "score",
+     "version"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "engines": {
+   "type": "object"
+  },
+  "environment": {
+   "type": "object"
+  },
+  "fatal": {
+   "type": "string"
+  },
+  "fingerprint_summary": {
+   "type": "object"
+  },
+  "identity": {
+   "properties": {
+    "app_label": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "form_factors": {
+     "type": "array"
+    },
+    "kind": {
+     "type": "string"
+    },
+    "min_sdk": {
+     "type": [
+      "string",
+      "integer",
+      "null"
+     ]
+    },
+    "package": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "signature_schemes": {
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "target_sdk": {
+     "type": [
+      "string",
+      "integer",
+      "null"
+     ]
+    },
+    "version_code": {
+     "type": [
+      "string",
+      "integer",
+      "null"
+     ]
+    },
+    "version_name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "package",
+    "version_name",
+    "version_code",
+    "app_label",
+    "min_sdk",
+    "target_sdk",
+    "form_factors",
+    "signature_schemes",
+    "kind"
+   ],
+   "type": "object"
+  },
+  "limitations": {
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "nar_version": {
+   "type": "string"
+  },
+  "native_summary": {
+   "type": "object"
+  },
+  "network_summary": {
+   "type": "object"
+  },
+  "permissions": {
+   "type": "object"
+  },
+  "protections": {
+   "items": {
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "security_summary": {
+   "type": "object"
+  },
+  "step_notes": {
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "strings": {
+   "type": "object"
+  },
+  "target": {
+   "type": "string"
+  },
+  "target_name": {
+   "type": "string"
+  },
+  "target_sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "target_size_bytes": {
+   "type": "integer"
+  },
+  "tool": {
+   "type": "string"
+  },
+  "triage": {
+   "type": "object"
+  },
+  "version": {
+   "type": "string"
+  }
+ },
+ "required": [
+  "tool",
+  "version",
+  "nar_version",
+  "target",
+  "target_name",
+  "target_sha256",
+  "target_size_bytes",
+  "environment",
+  "limitations",
+  "triage",
+  "identity",
+  "protections",
+  "step_notes"
+ ],
+ "title": "NAR analysis report",
+ "type": "object"
+}

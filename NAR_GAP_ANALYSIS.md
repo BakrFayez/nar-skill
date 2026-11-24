@@ -510,7 +510,7 @@ IMPLEMENTED_AND_TESTED (IT), IMPLEMENTED_BUT_UNVERIFIED
 | Application fingerprinting | IT | nar-fingerprint.py: normalized properties each with provenance + confidence + fact class; fingerprint.json schema-validated in case runs. Named-file divergence: the brief's five files (application/manifest/native-inventory/frameworks + fingerprint) ship as one fingerprint.json + report sections — content present, names differ (plan Phase 2) |
 | Android internals (manifest, resources, permissions, signing) | IT | nar-perms.py own AXML parser with aapt2 cross-check; triage signature-scheme inventory (v1–v4), form factors, split/container handling; e2e cases green |
 | DEX / bytecode | PI | IT core: narlib/dex.py enumeration, hierarchies, call edges, reflection/dynamic-loading/native evidence; narlib/dexdis.py full disassembler (oracle: 40,837 methods, 0 mismatches). Missing: try/catch handler tables, debug info, control-flow graphs |
-| Java / Kotlin intelligence | PI | nar-dex Kotlin inventory (coroutines, Flow/StateFlow, serialization, data/sealed/companion labeled inferred); jadx + baksmali adapters version-checked. CFR/Procyon/dex2jar registered unavailable, never integrated; no Kotlin-metadata (@Metadata) parse; no rename suggestions |
+| Java / Kotlin intelligence | PI | nar-dex Kotlin inventory (coroutines, Flow/StateFlow, serialization, data/sealed/companion labeled inferred); jadx + baksmali adapters version-checked. CFR/Procyon/dex2jar registered unavailable, never integrated; no Kotlin-metadata (`@Metadata`) parse; no rename suggestions |
 | Native binary analysis | PI | IT core: narlib/elf.py headers/sections/segments/dynamic/symbols/DT_NEEDED/Build ID/hardening + dependency graph, readelf cross-check. Missing: relocation tables; compiler fingerprints beyond Rust markers |
 | JNI intelligence (static) | IT | nar-native JNI export map joined with nar-dex native-method declarations; unit + e2e coverage. The runtime RegisterNatives event path is counted under Runtime, not here |
 | Unity | PI | IT core: IL2CPP location + Il2CppDumper summary, Cpp2IL optional second backend, metadata versions. Partial: Mono is inventory-level; AssetBundle object census only via optional UnityPy; Addressables is a catalog-presence flag, no catalog parse; no scene/prefab/material semantic inventory |
@@ -608,12 +608,12 @@ disassembler oracle re-run at FULL AGREEMENT (230,836
 instructions, 0 mismatches), so listings are unchanged.
 Full control-flow graph rendering and debug line/local
 decoding remain unimplemented (presence and boundaries
-only). Java / Kotlin intelligence gains @Metadata payload
+only). Java / Kotlin intelligence gains `@Metadata` payload
 parsing (metadata version + declaration kind per class)
 on top of the existing inventory: verified on a real
 Kotlin corpus fixture (10,213 annotations; versions
 1.8.0 / 2.2.0 dominant). Two defects were found and fixed
-in-phase (encoded-value index encoding; the @Metadata
+in-phase (encoded-value index encoding; the `@Metadata`
 string-table gate) — see the Phase 3 record in
 NAR_IMPLEMENTATION_PLAN.md. Native binary analysis gains
 relocation parsing (cross-checked against readelf -r:
@@ -799,7 +799,7 @@ redaction, signature DB, the five new CLI verbs,
 budgets, case ops, session records, audio metadata,
 compare artifacts, Addressables, RN source maps,
 Flutter assets, Godot resource types, DEX try/catch +
-@Metadata, ELF relocations). The Phase 0-deferred full
+`@Metadata`, ELF relocations). The Phase 0-deferred full
 guide-vs-code audit is executed: 0 missing link
 targets, 0 missing script files, 0 misattributed nar
 flags (line- and block-level), 0 unknown nar verbs;

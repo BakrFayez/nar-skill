@@ -1383,7 +1383,7 @@ New executed evidence (local, this branch):
   catch-all + debug offset parses exactly; a no-try item
   reports none; dexdis block summary on a known-branch
   method yields the exact two blocks and edge set;
-  synthetic @Metadata parses (mv [1,9,0], kind 1) with
+  synthetic `@Metadata` parses (mv [1,9,0], kind 1) with
   the stream-desync regression case (string index 300
   inside an array element placed before mv/k); synthetic
   ELF64 with .rela.plt + .comment yields the planted
@@ -1401,7 +1401,7 @@ New executed evidence (local, this branch):
   instructions compared, 0 mismatches, 709 payloads,
   0 mismatches.
 - Real-target runs: nar-dex over a Kotlin corpus fixture
-  reports 10,213 classes with parsed @Metadata (metadata
+  reports 10,213 classes with parsed `@Metadata` (metadata
   versions 1.8.0 and 2.2.0 dominant; kind names class /
   file facade / synthetic class) and 14,762 try items /
   16,703 handler entries across its DEX files; nar-native

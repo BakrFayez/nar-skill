@@ -1,1 +1,104 @@
-{"$schema":"http://json-schema.org/draft-07/schema#","title":"NAR engine detection verdicts","type":"object","required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","required":["engine","detected","confidence","indicators"],"properties":{"engine":{"type":"string"},"detected":{"type":"boolean"},"confidence":{"type":"string","enum":["high","medium","low"]},"version":{"type":["string","null"]},"indicators":{"type":"array","items":{"type":"object","required":["kind","detail"],"properties":{"kind":{"type":"string"},"detail":{"type":"string"}}}} ,"ambiguities":{"type":"array","items":{"type":"string"}}}}}}
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "description": "The engines.json document written by nar-engines (and cached per case). Every verdict carries its indicators; version and recommended_next are null when the engine has no recorded version or no deep-dive tool.",
+ "properties": {
+  "ambiguities": {
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "target": {
+   "type": "string"
+  },
+  "target_sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "tool": {
+   "type": "string"
+  },
+  "verdicts": {
+   "items": {
+    "properties": {
+     "confidence": {
+      "enum": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "type": "string"
+     },
+     "deep_dive": {
+      "type": "object"
+     },
+     "detected": {
+      "type": "boolean"
+     },
+     "engine": {
+      "type": "string"
+     },
+     "indicators": {
+      "items": {
+       "properties": {
+        "detail": {
+         "type": "string"
+        },
+        "kind": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "kind",
+        "detail"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "recommended_next": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "score": {
+      "maximum": 100,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "version": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "engine",
+     "detected",
+     "confidence",
+     "score",
+     "version",
+     "indicators",
+     "recommended_next"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "version": {
+   "type": "string"
+  }
+ },
+ "required": [
+  "tool",
+  "version",
+  "target",
+  "target_sha256",
+  "verdicts",
+  "ambiguities"
+ ],
+ "title": "NAR engine detection verdicts",
+ "type": "object"
+}

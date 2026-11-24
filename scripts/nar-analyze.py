@@ -48,7 +48,7 @@ try:
     from narlib import correlations as _correlations
     from narlib import evidence as _evidence
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.5.0"
+    NAR_VERSION = "2.5.1"
     _companions = None
     _correlations = None
     _evidence = None

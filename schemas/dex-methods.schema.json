@@ -1,0 +1,49 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "description": "The dex/methods.json sidecar written by nar-dex --out: one entry per method across all DEX files of the target. kind is the DEX method category: direct (static, private, or constructor) or virtual.",
+ "properties": {
+  "methods": {
+   "items": {
+    "properties": {
+     "access_flags": {
+      "type": "integer"
+     },
+     "class": {
+      "type": "string"
+     },
+     "dex": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "direct",
+       "virtual"
+      ],
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "native": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "dex",
+     "class",
+     "name",
+     "kind",
+     "native",
+     "access_flags"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  }
+ },
+ "required": [
+  "methods"
+ ],
+ "title": "NAR DEX method inventory",
+ "type": "object"
+}

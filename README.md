@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.5.0
+Version 2.5.1
 
 Research by Bakr Fayez
 
@@ -286,7 +286,7 @@ nar-skill/
     troubleshooting.md
     unity-il2cpp.md
     version-compare-and-feature-map.md
-  schemas/                  JSON schemas for the structured outputs (20 schemas)
+  schemas/                  JSON schemas for the structured outputs (24 schemas)
     api-architecture.schema.json
     application.schema.json
     assets.schema.json
@@ -294,6 +294,9 @@ nar-skill/
     compare-feature-map.schema.json
     comparison.schema.json
     correlations.schema.json
+    dex.schema.json
+    dex-classes.schema.json
+    dex-methods.schema.json
     endpoints.schema.json
     engine.schema.json
     execution-log.schema.json
@@ -301,6 +304,7 @@ nar-skill/
     frameworks.schema.json
     input.schema.json
     manifest.schema.json
+    native.schema.json
     native-inventory.schema.json
     network-analysis.schema.json
     report.schema.json

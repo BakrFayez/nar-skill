@@ -2,7 +2,7 @@
 name: nar
 description: Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis.
 metadata:
-  version: "2.5.0"
+  version: "2.5.1"
 ---
 
 # NAR: Nirous Android Reversing
@@ -78,7 +78,7 @@ investigation with triage unless the question already names a deeper target.
 | What file is this really? Is extraction safe? | `python3 scripts/nar-input.py identify file` / `extract` / `duplicates` (magic-based identification, zip-slip/bomb-guarded extraction) | [architecture](references/architecture.md) |
 | A fingerprint I can diff/track, with provenance | `python3 scripts/nar-fingerprint.py app.apk` (every property carries source tool + confidence) | [output schema](references/output-schema.md) |
 | Engine verdict with a confidence score | `python3 scripts/nar-engines.py game.apk [--deep]` (multi-indicator fusion; --deep confirms with the engine's own deep-dive tool) | [triage and inventory](references/triage-and-inventory.md) |
-| Deep DEX facts: classes, call edges, reflection, dynamic loading | `python3 scripts/nar-dex.py app.apk` (own DEX parser: try/catch tables, debug-info presence, Kotlin @Metadata inventory; `--jadx` / `--baksmali` adapters) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
+| Deep DEX facts: classes, call edges, reflection, dynamic loading | `python3 scripts/nar-dex.py app.apk` (own DEX parser: try/catch tables, debug-info presence, Kotlin `@Metadata` inventory; `--jadx` / `--baksmali` adapters) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | Instruction-level bytecode listing for one class/method (jadx failed, obfuscated or protected method) | `python3 scripts/nar-dex.py app.apk --disassemble --disasm-class '<substr>'` (own disassembler; `--disasm-all` for an explicit full decode) | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
 | Deep native facts: dependencies, JNI exports, hardening | `python3 scripts/nar-native.py app.apk` (own ELF parser: dependency graph, relocations, compiler fingerprints; readelf cross-check with `--work`) | [native libs and JNI](references/native-libs-and-jni.md) |
 | Which endpoints does it talk to (statically)? | `python3 scripts/nar-network.py app.apk` (classified endpoint inventory, services, network security config; credential/token values redacted at the source, counts reported) | [network traffic](references/network-traffic.md) |

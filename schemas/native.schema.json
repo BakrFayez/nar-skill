@@ -1,0 +1,193 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "description": "The native.json document written by nar-native (root case document and per-case cache copy share this shape). A libraries entry that failed ELF parsing carries {name, error} instead of the facts fields. The root case document additionally carries jni_correlations, added by nar-analyze's correlation stage; cache copies do not have it.",
+ "properties": {
+  "dependency_graph": {
+   "additionalProperties": {
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "type": "object"
+  },
+  "jni_correlations": {
+   "items": {
+    "description": "class and method are null for export-only entries (a JNI export whose declaring class was not resolved).",
+    "properties": {
+     "binding": {
+      "type": "string"
+     },
+     "class": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "declared_in": {
+      "type": "array"
+     },
+     "libraries": {
+      "type": "array"
+     },
+     "method": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "status": {
+      "enum": [
+       "matched",
+       "declaration-only",
+       "export-only"
+      ],
+      "type": "string"
+     },
+     "symbol": {
+      "type": "string"
+     },
+     "verification_status": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "class",
+     "method",
+     "symbol",
+     "status"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "jni_map": {
+   "additionalProperties": {
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "type": "object"
+  },
+  "libraries": {
+   "items": {
+    "properties": {
+     "aligned_16k": {
+      "type": "boolean"
+     },
+     "arch": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "bind_now": {
+      "type": "boolean"
+     },
+     "build_id": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "comment_strings": {
+      "type": "array"
+     },
+     "compiler_fingerprints": {
+      "type": "array"
+     },
+     "display_name": {
+      "type": "string"
+     },
+     "elf_class": {
+      "type": "string"
+     },
+     "error": {
+      "type": "string"
+     },
+     "exports": {
+      "type": "array"
+     },
+     "has_gnu_relro": {
+      "type": "boolean"
+     },
+     "has_symtab": {
+      "type": "boolean"
+     },
+     "imports": {
+      "type": "array"
+     },
+     "jni_exports": {
+      "type": "array"
+     },
+     "load_align_max": {
+      "type": "integer"
+     },
+     "load_align_min": {
+      "type": "integer"
+     },
+     "name": {
+      "type": "string"
+     },
+     "needed": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "register_natives_hint": {
+      "type": "boolean"
+     },
+     "relocations": {
+      "type": "object"
+     },
+     "section_names": {
+      "type": "array"
+     },
+     "size_bytes": {
+      "type": "integer"
+     },
+     "soname": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "type": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "target": {
+   "type": "string"
+  },
+  "target_sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "tool": {
+   "type": "string"
+  },
+  "version": {
+   "type": "string"
+  }
+ },
+ "required": [
+  "tool",
+  "version",
+  "target",
+  "target_sha256",
+  "libraries",
+  "dependency_graph",
+  "jni_map"
+ ],
+ "title": "NAR native library analysis",
+ "type": "object"
+}
