@@ -1,14 +1,24 @@
 # NAR CI — runs on GitHub Actions.
 #
-# Status: EXECUTED AND PASSING on GitHub Actions. Runs #1–#3
-# (2026-11-23, for the workflow-add commit and the two commits
-# after it) all completed with conclusion "success" (11–15 s
-# each); the only annotation on any run is a Node.js 20
-# deprecation warning for the checkout/setup-python actions.
-# The same checks run locally: `python3 -m pytest tests/unit/`
-# and `bash tests/run_e2e.sh` (the e2e harness needs the local
-# fixture tree, so CI runs the unit suite + syntax + the
-# doctor's core check only).
+# Status: the unit-and-syntax job is EXECUTED AND PASSING
+# on GitHub Actions (runs #1–#12 through the 2.6.0 release,
+# all "success"). Two changes land with 2.6.1 (prepared in
+# the repo; applied through the web UI at publication
+# time, since the push channel cannot carry workflow
+# files):
+#   1. The install step adds pyyaml, so the YAML validity
+#      tests run in CI instead of skipping (they skip
+#      honestly when PyYAML is absent).
+#   2. A new e2e-public job: generates the public
+#      synthetic fixtures and runs the e2e harness in
+#      public mode (NAR_E2E_PUBLIC=1), which exercises
+#      every case that needs no private fixtures. Cases
+#      bound to the private fixture tree SKIP; the doctor
+#      case also SKIPs in public mode when the runner
+#      lacks the full core toolchain (apktool / jadx /
+#      Android build-tools are not preinstalled on the
+#      hosted runners) — the job goes red only on a real
+#      failure in the fixture-independent subset.
 name: nar-ci
 
 on:
@@ -25,7 +35,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test runner
-        run: pip install pytest
+        run: pip install pytest pyyaml
       - name: Unit tests
         run: python3 -m pytest tests/unit/ -q
       - name: Syntax-check every script
@@ -38,3 +48,15 @@ jobs:
         run: |
           python3 scripts/nar.py version
           python3 scripts/nar.py --help > /dev/null
+
+  e2e-public:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate the public synthetic fixtures
+        run: python3 tests/generate_fixtures.py --out "$RUNNER_TEMP/nar-public-fixtures"
+      - name: E2E harness (public subset, no private fixtures)
+        run: NAR_E2E_PUBLIC=1 bash tests/run_e2e.sh
