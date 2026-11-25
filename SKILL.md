@@ -2,7 +2,7 @@
 name: nar
 description: "Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis."
 metadata:
-  version: "2.6.2"
+  version: "3.0.0"
 ---
 
 # NAR: Nirous Android Reversing
@@ -76,6 +76,14 @@ investigation with triage unless the question already names a deeper target.
 | Give me the full workup in one shot (report file) | `python3 scripts/nar-analyze.py app.apk` (1.x workup + 2.0 stages → case dir with report.md / report.json / report.html + companions incl. correlations.json, graph.json, investigation.json, case.json, execution-log.json; stage results are cached per input hash; `--stage-timeout` / `--total-budget` bound the run; `--no-graph` / `--no-investigation` skip the optional layers) | [triage and inventory](references/triage-and-inventory.md), [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
 | Query a case's entity graph / prioritized investigation paths | `python3 scripts/nar.py case graph CASE_DIR` and `python3 scripts/nar.py case investigation CASE_DIR` (JSON views over the case's graph.json / investigation.json; the graph view filters by node kind, edge kind, minimum confidence and free text) | [evidence workflows](references/evidence-workflows.md), [output schema](references/output-schema.md) |
 | One command for everything? | `python3 scripts/nar.py <command> …` — unified CLI over every module (`nar analyze`, `nar dex`, `nar security`, …; also `nar tools`, `nar identify`, `nar validate`, `nar benchmark`, `nar case`); each module script also works standalone | [architecture](references/architecture.md) |
+| What does NAR support, and where are the coverage gaps? | `python3 scripts/nar.py coverage [--gap] [--json]` (matrix generated from `scripts/formats.json`, the single source of truth for engines/formats; `--gap` lists every non-supported entry with reason + cheapest probe) | [architecture](references/architecture.md) |
+| Decompilation when jadx is missing, broken, or only partial | `nar analyze` runs the java-decompile fallback chain (jadx → baksmali → dex2jar+cfr → dex2jar+procyon → the built-in disassembler); every attempt is classified (no free-form failures) and the Fallback Record — chain, attempts, served_by, fidelity, caveats — lands in the case's decompile.json (schema: fallback-chain.schema.json / decompile.schema.json); a lower-fidelity result is never presented as higher | [DEX, smali, and decompile](references/dex-smali-and-decompile.md) |
+| Ask a question about an app or game and get an evidence-cited answer | `python3 scripts/nar.py ask "<question>" app.apk [--json] [--case DIR]` (deterministic intent classification, no LLM; always the full Answer Contract — ANSWER / EVIDENCE / CONFIDENCE / WHY / CHAIN / BOUNDARY, plus REASON / PROBE / COST when unknown; case built or reused via nar-analyze) | [question library](references/question-library.md) |
+| Rebuild specification from verified evidence (features, architecture, data model, flows, assets, network, build order, unrecoverable) | `python3 scripts/nar.py blueprint app.apk --out spec/ [--case DIR]` (9 files from the case companions; every features.md claim evidence-cited or marked inferred; evidence-free sections render NOT RECOVERABLE; unknowns.json validates against blueprint.schema.json) | [question library](references/question-library.md) |
+| Sprite atlases: frames, part grouping, composition classification | `python3 scripts/nar.py atlas app.apk [--json]` (Cocos plist XML+binary, TexturePacker/Phaser/Starling, libGDX, Godot AtlasTexture, Unity SpriteAtlas at GUID-level fidelity; part groups classified vehicle/character/ui/environment, always inferred) | [output schema](references/output-schema.md) |
+| Animation systems: what animates, with what driver | `python3 scripts/nar.py anim app.apk [--json]` (Spine, DragonBones, Lottie, Aseprite, Godot AnimationPlayer/Tree, Spriter, Creature decoded; Rive and Spine .skel header-level; Unity clips/controllers textual for loose files; physics-rig detection from native symbols + part naming; composition report with attachment points and drivers) | [output schema](references/output-schema.md) |
+| App intelligence: screens, navigation, storage, SDKs, permissions actually used | `python3 scripts/nar.py app app.apk [--json]` (Compose @Composable census, res/layout roots, WebView JS-bridge surface, Activity/Fragment graph + deep-link route map, SharedPreferences candidates, Room/SQLite schemas of shipped databases read from sqlite_master bytes, encrypted-storage detection, OAuth + JWT structure only — values always redacted, WorkManager/JobScheduler/AlarmManager, declared-vs-referenced permissions over-request report, SDK inventory with META-INF .version versions, tracking/ad-ID/consent compliance surface; screen map + data-flow map; also runs as the app.json stage of `nar analyze`) | [output schema](references/output-schema.md) |
+| Script & bytecode content: Lua, GDScript, Dart, Hermes, JS bundles, Wasm, .NET CIL, .pyc, AngelScript, Squirrel, Pawn, custom VM | `python3 scripts/nar.py script app.apk [--json]` (structural parsers per format at honest fidelity: Wasm full section parse; Lua chunk walk; GDSC header counts; Hermes header via nar-rn; Dart facts via nar-flutter with class/string counts null; .pyc structural marshal census, never executed; encrypted/custom-VM content named, never decoded) | [output schema](references/output-schema.md) |
 | Which of NAR's tools are installed on this machine? | `python3 scripts/nar.py tools [--json]` (registry view with live probes; the doctor stays the readiness gate) | [tool registry](references/tool-registry.md) |
 | How fast / how accurate is NAR on the fixture corpus? | `python3 scripts/nar.py benchmark [--out metrics.json]` (measured timings, labeled-corpus accuracy metrics, peak memory; synthetic and real corpora reported separately) | [benchmarks](references/benchmarks.md) |
 | Move a case directory / verify its integrity | `python3 scripts/nar.py case export case/ --bundle case.zip`, then `case import case.zip --out dir/` / `case verify dir/` (per-file hash manifest; tampering fails verify; since 2.6.2 verify also enforces evidence integrity — every graph/investigation evidence reference resolves, endpoints exist, no duplicates/orphans, counts reconcile, hypotheses carry basis/confirm/refute — with structured failure reasons) | [output schema](references/output-schema.md) |
@@ -225,7 +233,19 @@ audit), `scripts/nar-pak.py` (Unreal .pak lister/extractor),
 `scripts/nar-il2cpp.py` (Unity IL2CPP locator + dumper summary),
 `scripts/nar-flutter.py` (Flutter/Dart fingerprint),
 `scripts/nar-godot.py` (Godot .pck inspector), `scripts/nar-rn.py`
-(React Native bundle inspector), `scripts/nar-tools.py`
+(React Native bundle inspector), the engine deep-dive modules
+(`scripts/nar-cocos.py`, `scripts/nar-libgdx.py`,
+`scripts/nar-defold.py`, `scripts/nar-gamemaker.py`,
+`scripts/nar-renpy.py`, `scripts/nar-solar2d.py`,
+`scripts/nar-heaps.py`, `scripts/nar-qt.py`,
+`scripts/nar-cordova.py`, `scripts/nar-capacitor.py`,
+`scripts/nar-air.py`, `scripts/nar-love.py`,
+`scripts/nar-rpgmaker.py`, `scripts/nar-webassets.py`,
+`scripts/nar-xamarin.py`, `scripts/nar-monogame.py`,
+`scripts/nar-mono.py`, `scripts/nar-python.py`,
+`scripts/nar-sdl.py`, `scripts/nar-ebiten.py`,
+`scripts/nar-bevy.py` — each run by `nar-engines.py`
+in its deep mode), `scripts/nar-tools.py`
 (registry view behind `nar tools`), the 2.0 modules
 `scripts/nar-input.py` (format identification + safe extraction),
 `scripts/nar-fingerprint.py`, `scripts/nar-engines.py`,

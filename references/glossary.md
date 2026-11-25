@@ -1,0 +1,54 @@
+# Glossary
+
+One line per term, in the sense NAR's reports use it.
+
+- **AAB** — Android App Bundle; the Play publishing container that splits are generated from.
+- **ABI** — Application Binary Interface; the CPU family a native library is built for (for example arm64-v8a).
+- **AOT** — Ahead-of-time compilation; code compiled to native form before shipping (Flutter/Dart, IL2CPP).
+- **APK / APKS / XAPK** — Android package file / split set / third-party bundle wrapping APKs plus OBBs.
+- **ARSC** — resources.arsc; the compiled resource table inside an APK.
+- **Asset bundle** — A container of game assets (UnityFS, .pck, .pak) inventoried by nar-assets.
+- **Atlas** — One texture image packing many sprites, plus a sidecar file giving each sprite's rectangle.
+- **AXML** — Android's binary XML encoding used for manifests and layouts inside an APK.
+- **Blueprint (NAR)** — The 9-file rebuild specification produced by `nar blueprint` from verified evidence.
+- **Case** — A nar-analyze workspace: the target plus one JSON companion per analysis stage.
+- **CDEX / ODEX / VDEX / OAT / ART** — Android runtime artifact formats around DEX; mostly header-parsed, payloads not decoded.
+- **Companion** — One stage's JSON document inside a case (for example app.json, engines.json).
+- **Deep dive** — The per-engine module (nar-godot, nar-rn, ...) that parses one family's payload in depth.
+- **DEX** — Dalvik Executable; the bytecode format of Android app code (classes.dex).
+- **Dynsym** — An ELF's dynamic symbol table; the source of JNI export evidence.
+- **ELF** — The native executable/shared-library format of `.so` files.
+- **Evidence citation** — A `(companion — item)` pointer that makes a report claim machine-checkable.
+- **Fidelity** — How deep a parse goes: identified-only < structural-summary < bytecode-listing.
+- **Fingerprint** — The set of markers identifying an engine, framework or protection in a target.
+- **GDPC / PCK** — Godot's pack container format.
+- **Hermes** — React Native's JavaScript engine and its `.hbc` bytecode format.
+- **Identified-only** — The format is recognised and named; its content is not decoded.
+- **IL2CPP** — Unity's AOT backend compiling C# to native code plus a separate metadata file.
+- **IoStore** — Unreal Engine 5's container pair (.utoc index + .ucas data).
+- **JNI** — Java Native Interface; the bridge whose exported symbol names betray native engines.
+- **Locres** — Unreal's localization string-table format.
+- **Metadata (IL2CPP)** — global-metadata.dat; the names/layouts file paired with libil2cpp.so.
+- **Mono** — Unity's managed backend shipping readable .NET assemblies.
+- **OBB** — Opaque Binary Blob; an expansion file shipped beside an APK, usually a ZIP in practice.
+- **Packer** — A protector that hides the real payload behind a stub and a runtime loader.
+- **Partial** — Registry status: real parsing exists, with a named boundary that is not covered.
+- **PCK** — See GDPC / PCK.
+- **Plist** — Property list (XML or binary); Cocos2d-x atlas/particle format and a general data format.
+- **Probe** — The cheapest next check that would resolve an unknown or raise a status.
+- **Protection kind** — One of the registry's protection categories (packer, obfuscation, RASP, ...).
+- **RASP** — Runtime Application Self-Protection; on-device integrity/hook/root checks.
+- **RELRO / BIND_NOW** — ELF hardening flags reported in the native-hardening posture.
+- **RON** — Rusty Object Notation; Bevy's scene/data text format.
+- **RPA / RPYC** — Ren'Py archive / compiled script formats.
+- **RVA** — Relative Virtual Address; an offset of a function inside a native library image.
+- **Server-side** — A verdict or decision made on a remote server; not obtainable from the shipped app.
+- **Signature (protection)** — A marker pattern in protection-signatures.json matched by nar-triage.
+- **Split** — One APK of a multi-APK set (base plus config/feature splits), merged by NAR before analysis.
+- **Structural-summary** — Fidelity level: headers, counts and tables are parsed; semantics are not reconstructed.
+- **Supported** — Registry status: the module parses the format and a guide section shows a real run.
+- **Triage** — The first-look static pass (`nar triage`): identity, DEX, natives, engines, protections.
+- **Verdict** — A module's present/absent (or detected/not) judgement, always with its evidence.
+- **Wwise / FMOD bank** — Audio middleware containers (.bnk/.wem, .bank) holding sound events and media.
+- **XALZ** — Xamarin AssemblyStore compression blocks (LZ4); counted by magic, never decoded by NAR.
+- **XNB** — MonoGame's compiled content format; compressed files are LZX and are counted, not decoded.

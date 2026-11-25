@@ -54,6 +54,7 @@ import urllib.parse
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import container as container_mod  # noqa: E402
 from narlib import registry as reg_mod  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 from narlib.safearchive import read_member_capped  # noqa: E402
@@ -318,8 +319,24 @@ def parse_nsc(apk_path, work_dir):
 
 
 def analyze(target, work_dir=None):
+    # Container inputs resolve through narlib.container:
+    # string evidence comes from nar-strings (which itself
+    # resolves and merges splits), config-file evidence is
+    # read from the resolved roots, and the apktool NSC pass
+    # runs on the base APK — never on the container file
+    # itself as if it were an APK.
+    resolved = None
+    if container_mod.detect_container(target) in \
+            container_mod.CONTAINER_KINDS:
+        resolved = container_mod.resolve_target(target)
+    effective = resolved.base if resolved is not None \
+        else target
+    roots = resolved.assets_roots if resolved is not None \
+        else [target]
     strings = run_json_tool("nar-strings.py", [target])
     if strings is None:
+        if resolved is not None:
+            resolved.cleanup()
         raise RuntimeError("nar-strings failed on this input")
     groups = strings.get("groups") or {}
     candidates = {}
@@ -372,7 +389,11 @@ def analyze(target, work_dir=None):
     libraries = sorted(libraries)
     # Backend services.
     services = []
-    gs = parse_google_services(target)
+    gs = None
+    for root in roots:
+        gs = parse_google_services(root)
+        if gs:
+            break
     if gs:
         services.append({"service": "Firebase", "evidence": gs})
     for host in sorted(hosts):
@@ -394,7 +415,7 @@ def analyze(target, work_dir=None):
     notes = []
     nsc = None
     if work_dir:
-        nsc, err = parse_nsc(target, work_dir)
+        nsc, err = parse_nsc(effective, work_dir)
         if err:
             notes.append(f"network security config: {err}")
     else:
@@ -404,7 +425,7 @@ def analyze(target, work_dir=None):
     for e in endpoints:
         by_class[e["classification"]] = \
             by_class.get(e["classification"], 0) + 1
-    return {"tool": "nar-network", "version": "2.6.2",
+    report = {"tool": "nar-network", "version": "3.0.0",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "endpoints": endpoints, "hosts": sorted(hosts),
@@ -420,6 +441,10 @@ def analyze(target, work_dir=None):
                           "before any output is written; only "
                           "the count is reported, never a value"},
             "notes": notes}
+    if resolved is not None:
+        report["container"] = resolved.container_block()
+        resolved.cleanup()
+    return report
 
 
 def human(report):

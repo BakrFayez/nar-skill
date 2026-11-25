@@ -36,6 +36,7 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import container as container_mod  # noqa: E402
 from narlib.safearchive import read_member_capped  # noqa: E402
 
 DEX_RE = re.compile(r"^(base/dex/)?classes\d*\.dex$")
@@ -246,28 +247,50 @@ def scan(apk_path, min_length):
     except zipfile.BadZipFile:
         result["error"] = "not a valid ZIP/APK container"
         return result
+    zf.close()
+
+    # Container inputs resolve through narlib.container: the
+    # scan runs on the base APK plus every merged split
+    # (split sources are named "<archive>:<member>"), never
+    # on the container file itself as if it were an APK.
+    scan_paths = [(apk_path, "")]
+    resolved = None
+    if container_mod.detect_container(apk_path) in \
+            container_mod.CONTAINER_KINDS:
+        resolved = container_mod.resolve_target(apk_path)
+        scan_paths = [(resolved.base, "")] + [
+            (s["path"], os.path.basename(s["path"]) + ":")
+            for s in resolved.splits]
+        result["container"] = resolved.container_block()
 
     sources = {}          # entry name -> raw string count
     found = {}            # string -> set of source entries
     total_raw = 0
-    with zf:
-        targets = [n for n in zf.namelist()
-                   if DEX_RE.match(n) or SO_RE.match(n) or ARSC_RE.match(n)]
-        for name in targets:
-            try:
-                data = read_member_capped(zf, name)
-            except (KeyError, zipfile.BadZipFile, OSError,
-                    ValueError):
-                continue
-            count = 0
-            for s in extract_runs(data, min_length):
-                count += 1
-                if s in found:
-                    found[s].add(name)
-                else:
-                    found[s] = {name}
-            sources[name] = count
-            total_raw += count
+    try:
+        for scan_path, prefix in scan_paths:
+            with zipfile.ZipFile(scan_path) as zf:
+                targets = [n for n in zf.namelist()
+                           if DEX_RE.match(n) or SO_RE.match(n)
+                           or ARSC_RE.match(n)]
+                for name in targets:
+                    try:
+                        data = read_member_capped(zf, name)
+                    except (KeyError, zipfile.BadZipFile,
+                            OSError, ValueError):
+                        continue
+                    count = 0
+                    label = prefix + name
+                    for s in extract_runs(data, min_length):
+                        count += 1
+                        if s in found:
+                            found[s].add(label)
+                        else:
+                            found[s] = {label}
+                    sources[label] = count
+                    total_raw += count
+    finally:
+        if resolved is not None:
+            resolved.cleanup()
 
     groups = {g: {} for g in GROUP_ORDER}   # group -> {hit: [sources]}
     for s, srcs in found.items():

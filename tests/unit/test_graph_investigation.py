@@ -309,7 +309,22 @@ class OrchestrationDegradationTest(unittest.TestCase):
     STAGE_DATA = {"fingerprint": FINGERPRINT, "engines": ENGINES,
                   "dex": DEX, "native": NATIVE,
                   "network": NETWORK, "security": SECURITY,
-                  "assets": ASSETS}
+                  "assets": ASSETS,
+                  "app": {"tool": "nar-app", "version": "2.6.2",
+                          "target": "target.apk",
+                          "verdict": "absent",
+                          "ui_frameworks": {}, "navigation": {},
+                          "storage": {}, "encrypted_storage": {},
+                          "auth": {}, "background_work": {},
+                          "permissions_in_use": {
+                              "declared": [],
+                              "code_referenced": [],
+                              "declared_but_unreferenced": [],
+                              "scan_method": "stub",
+                              "scan_limits": "stub"},
+                          "sdks": [], "compliance": {},
+                          "screen_map": [], "data_flow": [],
+                          "totals": {}, "limitations": []}}
 
     def _run(self, az, out, target):
         report = {"limitations": []}

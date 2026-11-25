@@ -53,111 +53,57 @@ import subprocess
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from narlib import container as _container_mod
+except Exception:  # pragma: no cover - narlib always ships it
+    _container_mod = None
+
 DEX_RE = re.compile(r"^(base/dex/)?classes\d*\.dex$")
 SO_RE = re.compile(r"^(base/)?lib/([^/]+)/(.+\.so)$")
 SPLIT_RE = re.compile(r"(^|[._-])config\.|split_config|^split\.", re.IGNORECASE)
 OBB_RE = re.compile(r"^(main|patch)\.(\d+)\.(.+)\.obb$", re.IGNORECASE)
 
-# Game-engine / framework signatures: simple path-substring matching on ZIP
-# entry names. A hit is a HINT, not proof. Confirm with the native guide.
-ENGINE_SIGNATURES = [
-    ("Unity (IL2CPP)", ["libil2cpp.so", "global-metadata.dat"]),
-    ("Unity (Mono)", ["assembly-csharp.dll", "libmono.so"]),
-    ("Unreal Engine", ["libue4.so", "libunreal.so", ".pak"]),
-    ("Godot", ["libgodot"]),
-    ("Cocos2d-x", ["libcocos2dcpp.so", "libcocos2djs.so"]),
-    ("Flutter", ["libflutter.so", "libapp.so"]),
-    ("React Native", ["libreactnativejni.so", "libhermes.so"]),
-    # New architecture (Fabric renderer + TurboModules). libfabricjni.so and
-    # libturbomodulejsijni.so ship with React Native 0.68+; newer releases
-    # consolidate into libreactnative.so. Presence of the libs means the
-    # new-arch code is in the APK; the deciding check is the
-    # IS_NEW_ARCHITECTURE_ENABLED flag in BuildConfig (see the DEX markers
-    # below and references/modern-analysis.md).
-    ("React Native (new architecture)", ["libfabricjni.so", "libturbomodulejsijni.so",
-                                         "libreact_nativemodule_core.so",
-                                         "libreact_render_core.so", "libreactnative.so"]),
-    ("libGDX", ["libgdx.so", "libgdx-freetype.so", "libgdx-bullet.so"]),
-    # Adobe AIR: the descriptor is the ONLY reliable entry marker.
-    # A bare .swf is not one: unrelated apps bundle Flash files as
-    # web-content fallbacks (media-player / JS-library assets) and
-    # were misattributed to AIR by the old ".swf" substring pattern.
-    # Real AIR apps always ship the descriptor; the com/adobe/air
-    # DEX marker below corroborates.
-    ("Adobe AIR", ["META-INF/AIR/application.xml"]),
-    # Xamarin / .NET for Android (incl. .NET MAUI): the Mono runtime
-    # library, the app-model library, and the managed assemblies
-    # directory at the zip root are the shipped fingerprints.
-    ("Xamarin / .NET", ["libmonodroid.so", "libxamarin-app.so",
-                        "libmonosgen", "assemblies/"]),
-    # Hybrid web frameworks. Cordova's shipped runtime script is the
-    # strong marker; Capacitor ships its config + plugin registry and
-    # serves the app from assets/public/. Ionic is a UI layer on top
-    # of one of these two, so it is attributed to its container.
-    # Legacy Cordova / PhoneGap (pre-3.0) shipped the runtime
-    # under a versioned name (cordova-2.5.0.js, phonegap-1.4.js);
-    # the exact-name marker alone misses those builds entirely
-    # even when the org/apache/cordova DEX marker is present.
-    ("Cordova (hybrid)", ["assets/www/cordova.js",
-                          "assets/www/cordova-1.",
-                          "assets/www/cordova-2.",
-                          "assets/www/phonegap.js",
-                          "assets/www/phonegap-"]),
-    ("Capacitor (hybrid)", ["capacitor.config.json",
-                            "capacitor.plugins.json", "assets/public/"]),
-    # Qt for Android: every Qt deployment ships the Core library for
-    # the Qt major it links (libQt5Core / libQt6Core) plus the Android
-    # platform plugin library.
-    ("Qt for Android", ["libqt5core.so", "libqt6core.so",
-                        "libqtforandroid.so"]),
-    # Defold: the engine ships as a single native library.
-    ("Defold", ["libdmengine.so"]),
-    # Ren'Py: compiled script files (.rpyc) are unique to the engine;
-    # its native Python runtime library is the second marker.
-    ("Ren'Py", [".rpyc", "librenpython.so"]),
-    # RPG Maker MV / MZ Android exports are web exports: their core
-    # runtime scripts have engine-specific names inside assets/www.
-    ("RPG Maker (web export)", ["rpg_core.js", "rmmz_core.js"]),
-    # Embedded CPython: python-for-android (Kivy, Ren'Py) and other
-    # embedders link libpython. The DEX markers below say whose
-    # runtime it is when that is knowable.
-    ("Embedded Python", ["libpython3", "libpython2.7.so"]),
-    # Any app bundling a web tree under assets/www: a hybrid
-    # framework, a WebView wrapper, or bundled web content. A content
-    # hint only; the framework markers above say more when they hit.
-    ("Web assets (assets/www)", ["assets/www/"]),
-]
-# DEX content markers: byte fingerprints searched inside each DEX file.
-# These are string occurrences in the DEX string/type tables, so a hit
-# means the framework's classes are referenced, not that they run.
-# Kotlin deliberately does NOT rely on `kotlin/Metadata` alone: R8
+# Game-engine / framework signatures: simple path-substring
+# matching on ZIP entry names. A hit is a HINT, not proof.
+# Confirm with the native guide. Since Part 16 the tables
+# live in scripts/formats.json (single source of truth) and
+# are derived here via narlib.formats_registry; per-signature
+# rationale notes travel with the JSON rows.
+try:
+    from narlib import formats_registry as _formats_registry
+    ENGINE_SIGNATURES = _formats_registry.triage_signatures()
+    _UNITY_METADATA_NAME = _formats_registry.metadata_file(
+        "unity-il2cpp")
+    _ENGINE_DEX = _formats_registry.engine_dex_markers()
+except Exception as _fmt_err:  # missing/corrupt registry: fail loudly
+    raise SystemExit(
+        "nar-triage: formats registry unusable: "
+        f"{_fmt_err} (run nar-doctor to diagnose the install)")
+
+# DEX content markers: byte fingerprints searched inside each
+# DEX file. These are string occurrences in the DEX string/type
+# tables, so a hit means the framework's classes are referenced,
+# not that they run. The engine/framework part derives from
+# formats.json (each row carries its historical list position
+# as "order"); the non-engine markers below stay here. Kotlin
+# deliberately does NOT rely on `kotlin/Metadata` alone: R8
 # strips that annotation in release builds, so type descriptors
-# (`Lkotlin/...`) and the coroutines package are the durable evidence.
-DEX_MARKERS = [
-    ("Kotlin", [b"kotlin/Metadata", b"Lkotlin/", b"kotlinx/coroutines"]),
-    ("Jetpack Compose", [b"androidx/compose"]),
-    ("Compose Multiplatform", [b"org/jetbrains/compose"]),
-    ("AndroidX", [b"androidx/"]),
-    ("Android support library (legacy)", [b"android/support/"]),
-    ("Play Integrity API", [b"com/google/android/play/core/integrity"]),
-    ("Apache HttpClient (legacy)", [b"org/apache/http"]),
-    ("Adobe AIR", [b"com/adobe/air"]),
-    ("libGDX", [b"com/badlogic/gdx"]),
-    ("Flutter", [b"io/flutter/embedding"]),
-    ("Unity player wrapper", [b"com/unity3d/player"]),
-    ("Godot wrapper", [b"org/godotengine/godot"]),
-    ("Cocos2d-x wrapper", [b"org/cocos2dx/lib"]),
-    ("Xamarin / .NET runtime", [b"mono/android/"]),
-    ("Cordova", [b"org/apache/cordova"]),
-    ("Capacitor", [b"com/getcapacitor/"]),
-    ("Qt for Android", [b"org/qtproject/qt"]),
-    ("Kivy", [b"org/kivy/android"]),
-    ("Ren'Py runtime", [b"org/renpy/android"]),
-    ("EasyRPG Player", [b"org/easyrpg/player"]),
-    # The flag string existing says nothing about its value. Read
-    # BuildConfig.smali (apktool) to see true/false.
-    ("React Native new-arch flag", [b"IS_NEW_ARCHITECTURE_ENABLED"]),
+# (`Lkotlin/...`) and the coroutines package are the durable
+# evidence. EasyRPG Player stays here: it has no engine family
+# in the registry (no path/JNI/deep evidence of its own).
+_DEX_NON_ENGINE = [
+    (0, "Kotlin", [b"kotlin/Metadata", b"Lkotlin/", b"kotlinx/coroutines"]),
+    (1, "Jetpack Compose", [b"androidx/compose"]),
+    (2, "Compose Multiplatform", [b"org/jetbrains/compose"]),
+    (3, "AndroidX", [b"androidx/"]),
+    (4, "Android support library (legacy)", [b"android/support/"]),
+    (5, "Play Integrity API", [b"com/google/android/play/core/integrity"]),
+    (6, "Apache HttpClient (legacy)", [b"org/apache/http"]),
+    (19, "EasyRPG Player", [b"org/easyrpg/player"]),
 ]
+DEX_MARKERS = [(label, pats) for _order, label, pats in sorted(
+    _DEX_NON_ENGINE + list(_ENGINE_DEX), key=lambda r: r[0])]
 # Rust markers: byte fingerprints searched inside each .so file. A hit
 # suggests Rust code is linked into the library. Absence proves nothing:
 # stripped release builds can hide every one of these strings.
@@ -358,7 +304,7 @@ def dex_version_of(zf, name):
 
 
 def unity_metadata_version_of(zf, name):
-    """IL2CPP metadata format version from global-metadata.dat.
+    """IL2CPP metadata format version from the Unity metadata file.
 
     Header is magic 0xFAB11BAF (little-endian) then a uint32 version.
     Returns None when the entry is missing, short, or has no IL2CPP magic
@@ -848,12 +794,18 @@ def bundletool_manifest(aab_path):
 def container_manifest_of(zf):
     """Identity from an XAPK/APKM container's manifest.json, if present.
 
-    XAPK (APKPure) and APKM (APKMirror) are ZIP containers of APKs with
-    a JSON manifest at the root: package_name, version_code/name,
-    min/target SDK, permissions, split_configs, and split_apks entries
-    ({file, id}). Returns a dict (possibly partial) or None when there
-    is no readable manifest.json.
+    The implementation lives in narlib.container (the shared
+    container home since 3.0 Part 2); this name is kept as
+    the historical import surface. XAPK (APKPure) and APKM
+    (APKMirror) are ZIP containers of APKs with a JSON
+    manifest at the root: package_name, version_code/name,
+    min/target SDK, permissions, split_configs, and
+    split_apks entries ({file, id}). Returns a dict
+    (possibly partial) or None when there is no readable
+    manifest.json.
     """
+    if _container_mod is not None:
+        return _container_mod.container_manifest_of(zf)
     if "manifest.json" not in zf.namelist():
         return None
     try:
@@ -1024,6 +976,23 @@ def _traversal_name(name):
     return ".." in parts
 
 
+def _add_container_block(result, apk_path):
+    """Record the shared container resolution (narlib.
+    container) on a triage report: the shared-rule base pick
+    and split set for any container input, including plain
+    ZIP wrappers the historical is_container flag (keyed to
+    the .xapk/.apkm/.apks extensions) does not cover."""
+    if _container_mod is None:
+        return
+    try:
+        block = _container_mod.resolution_block(apk_path)
+    except Exception:
+        block = None
+    if block is not None:
+        result["container"] = block
+        result["container_kind"] = block["input_kind"]
+
+
 def triage(apk_path):
     if not os.path.isfile(apk_path):
         raise FileNotFoundError(f"not a file: {apk_path}")
@@ -1181,7 +1150,7 @@ def triage(apk_path):
         # strings in libUE4.so (see references/modern-analysis.md).
         engine_versions = {}
         for n in names:
-            if n.lower().endswith("global-metadata.dat"):
+            if n.lower().endswith(_UNITY_METADATA_NAME):
                 v = unity_metadata_version_of(zf, n)
                 if v is not None:
                     engine_versions["unity_metadata_version"] = v
@@ -1279,6 +1248,7 @@ def triage(apk_path):
             "resource_file_count": len(res),
             "other_file_count": len(other),
         })
+        _add_container_block(result, apk_path)
         # Signing files are the META-INF cert/key entries (analysis only).
         result["signing_files"] = [n for n in result["meta_inf_entries"]
                                    if n.upper().endswith((".RSA", ".DSA", ".EC", ".SF", ".MF"))]
@@ -1550,13 +1520,13 @@ def triage(apk_path):
                      "or dynamic code delivery). Static DEX analysis "
                      "sees only the stub.")
         for n in names:
-            if n.lower().endswith("global-metadata.dat"):
+            if n.lower().endswith(_UNITY_METADATA_NAME):
                 if "unity_metadata_version" not in engine_versions:
                     add_protection(
                         "code_asset_encryption",
                         "IL2CPP metadata without a readable header", False,
                         [n],
-                        note="global-metadata.dat is present but its "
+                        note=f"{_UNITY_METADATA_NAME} is present but its "
                              "IL2CPP magic and version could not be read; "
                              "encrypted or obfuscated metadata is a "
                              "standard IL2CPP protection.")

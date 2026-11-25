@@ -33,6 +33,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,20 +46,31 @@ TOOL_TIMEOUT = 1800
 sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as NAR_VERSION
+    from narlib import chains as _chains
+    from narlib import container as _container_mod
     from narlib import companions as _companions
     from narlib import correlations as _correlations
     from narlib import evidence as _evidence
+    from narlib import formats_registry as _formats
     from narlib import graph as _graph
     from narlib import investigation as _investigation
     from narlib import safearchive as _safearchive
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.6.2"
+    NAR_VERSION = "3.0.0"
+    _chains = None
+    _formats = None
+    _container_mod = None
     _companions = None
     _correlations = None
     _evidence = None
     _graph = None
     _investigation = None
     _safearchive = None
+
+try:
+    import resource as _resource
+except Exception:  # non-Unix: memory budget checks no-op
+    _resource = None
 
 # Optional layers (2.6.0 Phases 7/8): graph + investigation
 # companions, on by default, disabled by --no-graph /
@@ -81,14 +93,100 @@ EXEC_LOG = []
 # hits a budget stops the affected stage with status
 # "budget-exceeded" in the execution log — recorded,
 # never a hang and never a silent truncation.
+#
+# Memory budget (3.0 Part 11): --budget-mb N caps the peak
+# RSS of this process and its stage subprocesses. Stage
+# boundaries check the peak; crossing it raises
+# _MemoryBudgetExceeded with the NAMED boundary
+# "memory-budget:<stage>", which analyze()/main() record
+# in the case + execution state (case.json resume_boundary,
+# a budget-exceeded execution-log entry, report
+# budget_abort) and turn into a clean abort — never an
+# OOM kill, never a traceback. Stages completed before the
+# boundary are already in the case stage cache, so
+# re-running the same --out directory without the budget
+# (or with a sufficient one) RESUMES from the boundary.
 BUDGET = {"stage_timeout_s": None, "total_budget_s": None,
-          "t0": None}
+          "budget_mb": None, "t0": None}
+
+# DEX document shape for the analyze pipeline (3.0
+# Part 11): compact by default (nar-dex's default);
+# --dex-full selects the full 2.6.2 shape. The choice is
+# recorded in case.json config and bound into the dex
+# stage's cache key, so the two shapes never serve each
+# other's cache entries in one case directory.
+DEX_FULL = {"enabled": False}
 
 
-def set_budgets(stage_timeout_s=None, total_budget_s=None):
+def set_dex_full(enabled=False):
+    DEX_FULL["enabled"] = bool(enabled)
+
+
+def set_budgets(stage_timeout_s=None, total_budget_s=None,
+                budget_mb=None):
     BUDGET["stage_timeout_s"] = stage_timeout_s
     BUDGET["total_budget_s"] = total_budget_s
+    BUDGET["budget_mb"] = budget_mb
     BUDGET["t0"] = time.time()
+
+
+class _MemoryBudgetExceeded(Exception):
+    """Raised at a stage boundary when the peak RSS crosses
+    --budget-mb. Carries the named boundary so the abort
+    can be recorded and resumed from."""
+
+    def __init__(self, stage, peak_rss_bytes, budget_mb):
+        self.stage = stage
+        self.boundary = f"memory-budget:{stage}"
+        self.peak_rss_bytes = peak_rss_bytes
+        self.budget_mb = budget_mb
+        super().__init__(
+            f"memory budget of {budget_mb} MB exceeded at "
+            f"{self.boundary} (peak RSS "
+            f"{peak_rss_bytes} bytes)")
+
+
+def _peak_rss_bytes():
+    """Peak RSS in bytes: the max of this process's peak
+    and the peak of its terminated children (the stage
+    subprocesses), or None when the platform cannot
+    report it (the memory budget then does not engage)."""
+    if _resource is None:
+        return None
+    try:
+        factor = 1 if sys.platform == "darwin" else 1024
+        self_peak = _resource.getrusage(
+            _resource.RUSAGE_SELF).ru_maxrss * factor
+        child_peak = _resource.getrusage(
+            _resource.RUSAGE_CHILDREN).ru_maxrss * factor
+        return max(self_peak, child_peak)
+    except (ValueError, OSError):
+        return None
+
+
+def _check_memory_budget(stage):
+    """Abort the run when the memory budget is crossed.
+
+    Called at stage boundaries (stage entry and exit).
+    Records the budget-exceeded execution-log entry with
+    the named boundary, then raises _MemoryBudgetExceeded;
+    analyze()/main() convert it into the recorded,
+    resumable abort."""
+    if not BUDGET.get("budget_mb"):
+        return
+    peak = _peak_rss_bytes()
+    if peak is None:
+        return
+    if peak > BUDGET["budget_mb"] * 1024 * 1024:
+        EXEC_LOG.append({
+            "stage": stage, "module": "nar-analyze",
+            "tool": "nar-analyze", "tool_version": NAR_VERSION,
+            "status": "budget-exceeded", "duration_s": 0.0,
+            "boundary": f"memory-budget:{stage}",
+            "peak_rss_bytes": peak,
+            "budget": _budget_snapshot()})
+        raise _MemoryBudgetExceeded(stage, peak,
+                                    BUDGET["budget_mb"])
 
 
 def _effective_timeout(requested):
@@ -110,7 +208,137 @@ def _effective_timeout(requested):
 
 def _budget_snapshot():
     return {"stage_timeout_s": BUDGET["stage_timeout_s"],
-            "total_budget_s": BUDGET["total_budget_s"]}
+            "total_budget_s": BUDGET["total_budget_s"],
+            "budget_mb": BUDGET["budget_mb"]}
+
+
+# ------------------------------------------------------------------
+# Streaming JSON writer (3.0 Part 11).
+#
+# Writes a document incrementally, token by token,
+# producing bytes IDENTICAL to json.dump(doc, fh,
+# indent=N) — the case-file format every NAR writer has
+# always used — without ever holding the serialized text
+# in memory next to the document itself. The classic
+# write path made the serialized form a second full-size
+# resident copy; on the large companions (dex, graph,
+# investigation) that copy is a measurable share of the
+# peak. The emitter walks the object graph with an
+# explicit stack (no recursion limit, no intermediate
+# string) and emits each scalar through the stdlib
+# encoder, so leaf formatting (floats, string escapes,
+# ensure_ascii) matches the classic path exactly; it is
+# pinned byte-identical by tests/unit/test_part11_perf.py
+# and tests/unit/test_streaming_dex_stage.py conventions.
+# Lives in nar-analyze (the write path it serves) rather
+# than a new module file.
+
+_STREAM_ENCODER = json.encoder.encode_basestring_ascii
+
+
+def _stream_key_token(key):
+    """The emitted token for a dict key, mirroring the
+    stdlib encoder's key coercion under ensure_ascii."""
+    if isinstance(key, str):
+        return _STREAM_ENCODER(key)
+    if key is True:
+        return '"true"'
+    if key is False:
+        return '"false"'
+    if key is None:
+        return '"null"'
+    if isinstance(key, (int, float)):
+        return '"' + json.dumps(key) + '"'
+    raise TypeError(
+        f"keys must be str, int, float, bool or None, "
+        f"not {type(key).__name__}")
+
+
+def _stream_scalar_token(value):
+    if isinstance(value, str):
+        return _STREAM_ENCODER(value)
+    return json.dumps(value)
+
+
+def dump_json_streaming(doc, fh, indent=1):
+    """Write doc to the BINARY file object fh, byte-
+    identical to json.dump(doc, indent=indent), without
+    materializing the serialized text."""
+    unit = " " * indent
+    buf = []
+    buf_len = 0
+
+    def push(token):
+        nonlocal buf_len
+        buf.append(token)
+        buf_len += len(token)
+        if buf_len >= 65536:
+            fh.write("".join(buf).encode("utf-8"))
+            buf.clear()
+            buf_len = 0
+
+    stack = [("value", doc, 0)]
+    while stack:
+        item = stack.pop()
+        if item[0] == "raw":
+            push(item[1])
+            continue
+        _tag, value, depth = item
+        if isinstance(value, dict):
+            if not value:
+                push("{}")
+                continue
+            items = list(value.items())
+            push("{")
+            stack.append(("raw", "\n" + unit * depth + "}"))
+            for i in range(len(items) - 1, -1, -1):
+                k, v = items[i]
+                prefix = (",\n" if i else "\n") \
+                    + unit * (depth + 1) \
+                    + _stream_key_token(k) + ": "
+                stack.append(("value", v, depth + 1))
+                stack.append(("raw", prefix))
+        elif isinstance(value, (list, tuple)):
+            if not value:
+                push("[]")
+                continue
+            push("[")
+            stack.append(("raw", "\n" + unit * depth + "]"))
+            for i in range(len(value) - 1, -1, -1):
+                prefix = (",\n" if i else "\n") \
+                    + unit * (depth + 1)
+                stack.append(("value", value[i], depth + 1))
+                stack.append(("raw", prefix))
+        elif isinstance(value, (str, int, float, bool)) \
+                or value is None:
+            push(_stream_scalar_token(value))
+        else:
+            raise TypeError(
+                f"Object of type {type(value).__name__} is "
+                "not JSON serializable")
+    if buf:
+        fh.write("".join(buf).encode("utf-8"))
+
+
+def write_json_streaming(path, doc, indent=1):
+    """Write doc to path (UTF-8, no trailing newline) via
+    dump_json_streaming."""
+    with open(path, "wb") as fh:
+        dump_json_streaming(doc, fh, indent=indent)
+    return path
+
+
+def _write_report_json(path, doc):
+    """Write report.json / case.json / execution-log.json
+    (indent=2) through the streaming writer."""
+    write_json_streaming(path, doc, indent=2)
+
+
+def _write_companion(path, doc):
+    """Write one case companion (indent=1) through the
+    streaming writer (3.0 Part 11): the serialized text is
+    never held whole in memory next to the document."""
+    write_json_streaming(path, doc)
 
 
 def run_json_tool(script, args, timeout=TOOL_TIMEOUT):
@@ -193,14 +421,22 @@ def sha256_of(path):
 
 
 def pick_base_apk(triage, names):
-    """Choose the base APK inside a container: the one named after
-    the package when known, else a canonical base name
-    (base-master.apk / base.apk, the bundletool .apks layout),
-    else the largest."""
+    """Choose the base APK inside a container.
+
+    The rule itself lives in narlib.container (the shared
+    container home since 3.0 Part 2): the entry named after
+    the manifest package, else a canonical base name
+    (base-master.apk / base.apk, the bundletool .apks
+    layout), else the largest non-config APK. This wrapper
+    keeps the historical (triage, names) call shape."""
     contained = triage.get("contained_apks") or []
     if not contained:
         return None
     package = (triage.get("container_manifest") or {}).get("package")
+    if _container_mod is not None:
+        filtered = [c for c in contained if c["name"] in names]
+        return _container_mod.pick_base_apk(
+            filtered or contained, package=package)
     for item in contained:
         if package and item["name"] == f"{package}.apk":
             return item["name"]
@@ -363,12 +599,29 @@ def extract_entry_record(zf, name, root, *rel_parts):
         return None, {"entry": name, "reason": str(e)}
 
 
+def _registry_lib_markers(engine_id):
+    """Native-library path markers for one engine, read from
+    formats.json (Part 16 single source of truth). Empty when
+    the registry is unavailable (degraded narlib)."""
+    if _formats is None:
+        return []
+    return [m for m in _formats.path_markers(engine_id)
+            if m.endswith(".so") or m.startswith("lib")]
+
+
 def zip_entry_flags(names):
+    # The engine library markers derive from formats.json;
+    # the .pck / bundle / container extensions below are
+    # payload-format facts, not engine markers.
+    il2cpp_libs = _registry_lib_markers("unity-il2cpp")
+    flutter_libs = _registry_lib_markers("flutter")
+    godot_libs = _registry_lib_markers("godot")
     return {
-        "il2cpp": any(n.endswith("/libil2cpp.so") or n == "libil2cpp.so"
-                      for n in names),
-        "flutter": any(n.endswith("/libflutter.so")
-                       or n.endswith("/libapp.so") for n in names),
+        "il2cpp": any(n.rsplit("/", 1)[-1] == m
+                      for n in names for m in il2cpp_libs
+                      if m.endswith(".so")),
+        "flutter": any(n.endswith("/" + m)
+                       for n in names for m in flutter_libs),
         # React Native routing: the contract asset name, any
         # *.jsbundle, or a top-level assets/*.bundle. Deep assets/**.bundle
         # files are Unity Addressables territory; nar-rn content-
@@ -381,8 +634,9 @@ def zip_entry_flags(names):
                              and n.endswith(".bundle"))
                          for n in names),
         "godot": any(n.lower().endswith(".pck")
-                     or "libgodot" in n
-                     or n.startswith("assets/.godot/") for n in names),
+                     or any(m in n for m in godot_libs)
+                     or n.startswith("assets/.godot/")
+                     for n in names),
         "paks": [n for n in names if n.lower().endswith(".pak")],
         "utocs": [n for n in names if n.lower().endswith(".utoc")],
         "uassets": [n for n in names
@@ -461,6 +715,15 @@ def run_cached_stage(stage, script, args, cache_key, out_dir):
     The cache key binds the input hash + stage + NAR version;
     a hit returns the stored document with status "cached"
     instead of re-running the tool (resume semantics)."""
+    _check_memory_budget(stage)
+    result = _run_cached_stage_inner(stage, script, args,
+                                     cache_key, out_dir)
+    _check_memory_budget(stage)
+    return result
+
+
+def _run_cached_stage_inner(stage, script, args, cache_key,
+                            out_dir):
     cache_path = _stage_cache_path(out_dir, stage)
     key_path = cache_path + ".key"
     if BUDGET["total_budget_s"] and BUDGET["t0"] and (
@@ -839,6 +1102,19 @@ def _dex_companion_from_cache(cache_path, companion_path):
 def _dex_stage_streamed(report, companions, apk_path,
                         out_dir, dex_dir, cache_key_base,
                         summarize):
+    """Wrapper: memory-budget boundary checks around the
+    streamed DEX stage (3.0 Part 11)."""
+    _check_memory_budget("dex")
+    result = _dex_stage_streamed_inner(
+        report, companions, apk_path, out_dir, dex_dir,
+        cache_key_base, summarize)
+    _check_memory_budget("dex")
+    return result
+
+
+def _dex_stage_streamed_inner(report, companions, apk_path,
+                              out_dir, dex_dir, cache_key_base,
+                              summarize):
     """The DEX stage over the streaming path. Mirrors the
     generic stage() bookkeeping (cache, companion,
     registry, summary, limitation on degradation) while
@@ -847,6 +1123,12 @@ def _dex_stage_streamed(report, companions, apk_path,
     Raises on streaming-machinery failures — the caller
     falls back to the classic stage path."""
     stage_name, script = "dex", "nar-dex.py"
+    if DEX_FULL["enabled"]:
+        # The full-shape document is a different stage
+        # product from the compact one: bind the shape
+        # into the cache key so one case directory never
+        # serves the other shape's cache entry.
+        cache_key_base = cache_key_base + "|dex-full"
     key = hashlib.sha256(
         f"{cache_key_base}|{stage_name}".encode()).hexdigest()
     cache_path = _stage_cache_path(out_dir, stage_name)
@@ -877,6 +1159,8 @@ def _dex_stage_streamed(report, companions, apk_path,
         path = os.path.join(HERE, script)
         cmd = [sys.executable, path, apk_path, "--out",
                dex_dir, "--json"]
+        if DEX_FULL["enabled"]:
+            cmd.append("--full")
         eff_timeout, budget_bound = _effective_timeout(
             TOOL_TIMEOUT)
         started = time.time()
@@ -1013,8 +1297,166 @@ def _unreal_graph_input(report):
     return items
 
 
+def _target_has_dex(path):
+    """True when the target is a bare DEX or a ZIP/APK
+    carrying a classes*.dex entry."""
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(4) == b"dex\n":
+                return True
+    except OSError:
+        return False
+    if zipfile.is_zipfile(path):
+        try:
+            with zipfile.ZipFile(path) as zf:
+                for name in zf.namelist():
+                    base = name.rsplit("/", 1)[-1]
+                    if re.fullmatch(r"classes\d*\.dex", base):
+                        return True
+        except zipfile.BadZipFile:
+            return False
+    return False
+
+
+def _decompile_stage(report, companions, apk_path, out_dir,
+                     cache_key_base):
+    """The Part 10.5 decompile stage: run the
+    java-decompile fallback chain (narlib.chains) against
+    the target's DEX, write decompile.json, and ride the
+    same per-stage cache as every other stage (key =
+    sha256(cache_key_base|stage)), so a resumed case does
+    not re-attempt any rung. A target with no DEX records
+    identified-only / not-applicable instead of failing.
+    Returns the Fallback Record, or None on degradation
+    (recorded as a limitation, never a fabricated record).
+    """
+    stage_name = "decompile"
+    key = hashlib.sha256(
+        f"{cache_key_base}|{stage_name}".encode()).hexdigest()
+    cache_path = _stage_cache_path(out_dir, stage_name)
+    key_path = cache_path + ".key"
+    if BUDGET["total_budget_s"] and BUDGET["t0"] and (
+            time.time() - BUDGET["t0"]
+            > BUDGET["total_budget_s"]):
+        EXEC_LOG.append({
+            "stage": stage_name, "module": "narlib.chains",
+            "tool": "nar-analyze",
+            "tool_version": NAR_VERSION,
+            "status": "budget-exceeded", "duration_s": 0.0,
+            "budget": _budget_snapshot()})
+        report["limitations"].append(
+            f"2.0 stage {stage_name} degraded: total budget "
+            f"of {BUDGET['total_budget_s']}s exhausted "
+            f"before stage {stage_name}")
+        return None
+    record = None
+    cached = False
+    if os.path.isfile(cache_path) and os.path.isfile(key_path):
+        try:
+            with open(key_path, encoding="utf-8") as fh:
+                key_matches = fh.read().strip() == key
+            cached_doc = None
+            if key_matches:
+                with open(cache_path, encoding="utf-8") as fh:
+                    cached_doc = json.load(fh)
+            if key_matches and isinstance(cached_doc, dict):
+                record = cached_doc
+                cached = True
+                EXEC_LOG.append({
+                    "stage": stage_name,
+                    "module": "narlib.chains",
+                    "tool": "nar-analyze",
+                    "tool_version": NAR_VERSION,
+                    "status": "cached", "duration_s": 0.0})
+            elif key_matches:
+                for stale in (cache_path, key_path):
+                    _quiet_unlink(stale)
+        except (OSError, ValueError):
+            for stale in (cache_path, key_path):
+                _quiet_unlink(stale)
+    if record is None:
+        started = time.time()
+        try:
+            if not _target_has_dex(apk_path):
+                record = _chains.identified_only_record(
+                    "java-decompile",
+                    _chains.CHAIN_REGISTRY[
+                        "java-decompile"]["chain"],
+                    "target contains no DEX; decompilation "
+                    "is not applicable to this target")
+            else:
+                record = _chains.run_decompile_chain(
+                    apk_path,
+                    os.path.join(out_dir, "decompile"))
+        except Exception as e:
+            EXEC_LOG.append({
+                "stage": stage_name, "module": "narlib.chains",
+                "tool": "nar-analyze",
+                "tool_version": NAR_VERSION,
+                "status": "failed",
+                "duration_s": round(time.time() - started, 3),
+                "budget": _budget_snapshot()})
+            report["limitations"].append(
+                f"2.0 stage {stage_name} degraded: "
+                f"decompile chain failed ({e})")
+            return None
+        # Validate against the companion schema before the
+        # record enters the case (same C-02 discipline as
+        # the generic stage path).
+        if _evidence is not None:
+            try:
+                with open(os.path.join(
+                        os.path.dirname(HERE), "schemas",
+                        "decompile.schema.json"),
+                        encoding="utf-8") as fh:
+                    schema = json.load(fh)
+                violations = _evidence.validate(record, schema)
+            except (OSError, ValueError):
+                violations = []
+            if violations:
+                report["limitations"].append(
+                    f"2.0 stage {stage_name} degraded: "
+                    "decompile record failed its companion "
+                    f"schema: {violations[0]}")
+                return None
+        os.makedirs(os.path.dirname(cache_path),
+                    exist_ok=True)
+        tmp_doc = cache_path + ".tmp"
+        with open(tmp_doc, "w", encoding="utf-8") as fh:
+            json.dump(record, fh)
+        os.replace(tmp_doc, cache_path)
+        tmp_key = key_path + ".tmp"
+        with open(tmp_key, "w", encoding="utf-8") as fh:
+            fh.write(key)
+        os.replace(tmp_key, key_path)
+        EXEC_LOG.append({
+            "stage": stage_name, "module": "narlib.chains",
+            "tool": "nar-analyze",
+            "tool_version": NAR_VERSION, "status": "ok",
+            "duration_s": round(time.time() - started, 3),
+            "budget": _budget_snapshot()})
+    _write_companion(
+        os.path.join(out_dir, "decompile.json"), record)
+    companions[stage_name] = {"file": "decompile.json",
+                              "cached": cached}
+    report["decompile"] = record
+    report["decompile_summary"] = {
+        "capability": record.get("capability"),
+        "served_by": record.get("served_by"),
+        "fidelity": record.get("fidelity"),
+        "chain": record.get("chain"),
+        "caveats": record.get("caveats"),
+        "attempts": [
+            {"rung": a.get("rung"), "status": a.get("status"),
+             "classification": a.get("classification")}
+            for a in record.get("attempts", [])],
+    }
+    return record
+
+
 def run_2_0_stages(report, apk_path, out_dir, work_dir,
-                   perms_data=None, key_path=None):
+                   perms_data=None, key_path=None,
+                   stage_target=None, merged=False):
     """The 2.0 module stages: fingerprint, engine fusion, DEX,
     native, network, security, assets. Each writes its
     standardized companion document into the case directory
@@ -1038,10 +1480,32 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     os.makedirs(out_dir, exist_ok=True)
     cache_key_base = sha256_of(key_path or apk_path) \
         + "|" + NAR_VERSION
+    if merged:
+        # Merged-container stage documents differ from the
+        # base-only documents for the same input hash: keep
+        # their cache entries separate so a merged run and a
+        # --no-merge-splits run into one case directory never
+        # serve each other's documents.
+        cache_key_base += "|container-merged"
+    # Stage tools that resolve containers themselves
+    # (engines / dex / native / network / security / assets)
+    # receive the ORIGINAL target in merged mode and merge
+    # splits on their own; the fingerprint and decompile
+    # stages keep running on the base APK (apk_path).
+    tool_target = stage_target or apk_path
+    # The two stages whose merged output changes shape
+    # (nar-assets / nar-native) are told to stay in their
+    # legacy single-archive mode whenever this case is not
+    # a merged-container case — so a --no-merge-splits run
+    # (and any plain-APK run) keeps byte-identical stage
+    # documents.
+    split_flag = [] if merged else ["--no-merge-splits"]
 
-    def stage(stage_name, script, args, companion_file, summarize):
+    def stage(stage_name, script, args, companion_file, summarize,
+              key_base_extra=""):
         key = hashlib.sha256(
-            f"{cache_key_base}|{stage_name}".encode()).hexdigest()
+            f"{cache_key_base}{key_base_extra}|{stage_name}"
+            .encode()).hexdigest()
         data, err, cached = run_cached_stage(
             stage_name, script, args, key, out_dir)
         if data is None:
@@ -1079,9 +1543,8 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
             report["limitations"].append(
                 f"2.0 stage {stage_name} degraded: {problem}")
             return None
-        with open(os.path.join(out_dir, companion_file),
-                  "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=1)
+        _write_companion(
+            os.path.join(out_dir, companion_file), data)
         companions[stage_name] = {"file": companion_file,
                                   "cached": cached}
         summarize(data)
@@ -1144,7 +1607,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
 
     fp_data = stage("fingerprint", "nar-fingerprint.py", [apk_path],
                     "fingerprint.json", sum_fingerprint)
-    eng_data = stage("engines", "nar-engines.py", [apk_path],
+    eng_data = stage("engines", "nar-engines.py", [tool_target],
                      "engines.json", sum_engines)
     dex_dir = os.path.join(out_dir, "dex")
     # The DEX stage runs over the streaming path (2.6.1
@@ -1155,8 +1618,13 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     # and falls back to the classic stage path unchanged.
     try:
         dex_data = _dex_stage_streamed(
-            report, companions, apk_path, out_dir, dex_dir,
+            report, companions, tool_target, out_dir, dex_dir,
             cache_key_base, sum_dex)
+    except _MemoryBudgetExceeded:
+        # A budget abort is not a streaming failure: the
+        # stage's cache + companion are valid resume
+        # state and must not be unlinked or re-run.
+        raise
     except Exception:
         _cache_path = _stage_cache_path(out_dir, "dex")
         for _p in (_cache_path, _cache_path + ".key",
@@ -1164,18 +1632,64 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                    os.path.join(out_dir, "dex.json")):
             _quiet_unlink(_p)
         dex_data = stage("dex", "nar-dex.py",
-                         [apk_path, "--out", dex_dir],
-                         "dex.json", sum_dex)
-    nat_data = stage("native", "nar-native.py", [apk_path],
+                         [tool_target, "--out", dex_dir]
+                         + (["--full"] if DEX_FULL["enabled"]
+                            else []),
+                         "dex.json", sum_dex,
+                         key_base_extra=("|dex-full"
+                                         if DEX_FULL["enabled"]
+                                         else ""))
+    # Decompile stage (Part 10.5): the java-decompile
+    # fallback chain, after the DEX stage, riding the same
+    # stage cache. A chain failure degrades to a
+    # limitation; the case continues.
+    if _chains is not None:
+        try:
+            _decompile_stage(report, companions, apk_path,
+                             out_dir, cache_key_base)
+        except _MemoryBudgetExceeded:
+            raise
+        except Exception as e:
+            report["limitations"].append(
+                f"2.0 stage decompile degraded: {e}")
+    else:
+        report["limitations"].append(
+            "2.0 stage decompile degraded: narlib.chains "
+            "unavailable")
+    nat_data = stage("native", "nar-native.py",
+                     [tool_target] + split_flag,
                      "native.json", sum_native)
     net_data = stage("network", "nar-network.py",
-                     [apk_path, "--work",
+                     [tool_target, "--work",
                       os.path.join(work_dir, "network")],
                      "endpoints.json", sum_network)
-    sec_data = stage("security", "nar-security.py", [apk_path],
+    sec_data = stage("security", "nar-security.py", [tool_target],
                      "security-findings.json", sum_security)
-    assets_data = stage("assets", "nar-assets.py", [apk_path],
+    assets_data = stage("assets", "nar-assets.py",
+                        [tool_target] + split_flag,
                         "assets.json", sum_assets)
+
+    def sum_app(data):
+        totals = data.get("totals") or {}
+        perm = data.get("permissions_in_use") or {}
+        report["app_summary"] = {
+            "verdict": data.get("verdict"),
+            "activities": totals.get("activities"),
+            "fragments": totals.get("fragments"),
+            "composable_methods": totals.get("composable_methods"),
+            "layouts": totals.get("layouts"),
+            "deep_links": totals.get("deep_links"),
+            "shipped_databases": totals.get("shipped_databases"),
+            "sdks": totals.get("sdks"),
+            "over_requested_permissions":
+                perm.get("declared_but_unreferenced"),
+            "jwt_structures": totals.get("jwt_structures"),
+            "screen_map_entries": totals.get("screen_map_entries"),
+            "data_flow_edges": totals.get("data_flow_edges"),
+        }
+
+    app_data = stage("app", "nar-app.py", [tool_target],
+                     "app.json", sum_app)
 
     # permissions.json: the raw nar-perms document, written
     # verbatim as a case companion (2.6.1 W3 integration
@@ -1187,9 +1701,8 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     # output, not a projection, so it is registered
     # without the "projected" marker the projections use.
     if perms_data is not None:
-        with open(os.path.join(out_dir, "permissions.json"),
-                  "w", encoding="utf-8") as fh:
-            json.dump(perms_data, fh, indent=1)
+        _write_companion(
+            os.path.join(out_dir, "permissions.json"), perms_data)
         companions["permissions"] = {"file": "permissions.json",
                                       "cached": False}
 
@@ -1252,9 +1765,8 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                     f"companion {filename} not emitted: "
                     f"projection failed validation ({errors[0]})")
                 continue
-            with open(os.path.join(out_dir, filename),
-                      "w", encoding="utf-8") as fh:
-                json.dump(doc, fh, indent=1)
+            _write_companion(
+                os.path.join(out_dir, filename), doc)
             companions[key] = {"file": filename, "projected": True}
 
     # Cross-module correlations (Evolution Phase 8): explicit
@@ -1290,9 +1802,8 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                 "companion correlations.json not emitted: "
                 f"failed validation ({corr_errors[0]})")
         else:
-            with open(os.path.join(out_dir, "correlations.json"),
-                      "w", encoding="utf-8") as fh:
-                json.dump(corr, fh, indent=1)
+            _write_companion(
+                os.path.join(out_dir, "correlations.json"), corr)
             companions["correlations"] = {
                 "file": "correlations.json", "projected": True}
             report["correlations_summary"] = corr["counts"]
@@ -1303,9 +1814,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                         native_doc = json.load(fh)
                     native_doc["jni_correlations"] = \
                         corr["jni_bindings"]
-                    with open(native_path, "w",
-                              encoding="utf-8") as fh:
-                        json.dump(native_doc, fh, indent=1)
+                    _write_companion(native_path, native_doc)
                 except (OSError, ValueError) as e:
                     report["limitations"].append(
                         "native.json JNI correlation enrichment "
@@ -1327,6 +1836,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     # analysis continues — an optional layer never fails
     # the whole run.
     def emit_optional(stage_name, filename, schema_name, builder):
+        _check_memory_budget(stage_name)
         started = time.time()
         try:
             doc = builder()
@@ -1360,9 +1870,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
                 f"companion {filename} not emitted: "
                 f"failed validation ({errors[0]})")
             return None
-        with open(os.path.join(out_dir, filename),
-                  "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, indent=1)
+        _write_companion(os.path.join(out_dir, filename), doc)
         companions[stage_name] = {"file": filename,
                                   "projected": True}
         EXEC_LOG.append({
@@ -1371,6 +1879,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
             "status": "ok",
             "duration_s": round(time.time() - started, 3),
             "budget": _budget_snapshot()})
+        _check_memory_budget(stage_name)
         return doc
 
     if _evidence is not None and _graph is not None \
@@ -1404,7 +1913,7 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
             report["investigation_summary"] = inv_doc["counts"]
 
 
-def analyze(target, work_dir, out_dir=None):
+def analyze(target, work_dir, out_dir=None, merge_splits=True):
     _EXTRACT_BUDGET["used"] = 0
     report = {"tool": "nar-analyze", "version": NAR_VERSION,
               "nar_version": NAR_VERSION,
@@ -1467,12 +1976,62 @@ def analyze(target, work_dir, out_dir=None):
     # Resolve the APK that perms/strings/engine steps should run on.
     apk_for_steps = target
     step_notes = []
+    # Container resolution (3.0 Part 2): with split merging
+    # on (the default), a container target is resolved once
+    # through narlib.container — base + splits extracted via
+    # safearchive — and the stages consume the ResolvedTarget.
+    # With --no-merge-splits the historical single-base
+    # extraction below runs unchanged.
+    resolved_target = None
+    scan_roots = None
+    _detected_kind = None
+    if merge_splits and _container_mod is not None:
+        try:
+            _detected_kind = _container_mod.detect_container(target)
+        except Exception:
+            _detected_kind = None
+    _is_container_input = bool(triage.get("is_container")) or \
+        _detected_kind in (_container_mod.CONTAINER_KINDS
+                           if _container_mod else ())
     if triage.get("is_aab"):
         step_notes.append(
             "target is an AAB bundle: permission, string, and engine"
             " steps need an APK built from it (bundletool build-apks)"
             " and were skipped")
         apk_for_steps = None
+    elif _is_container_input and merge_splits and \
+            _container_mod is not None:
+        resolved_target = _container_mod.resolve_target(
+            target, work_dir=os.path.join(
+                work_dir, "container-resolved"))
+        report["container"] = resolved_target.container_block()
+        if report["identity"].get("kind") == "apk":
+            report["identity"]["kind"] = (
+                f"{resolved_target.input_kind} container")
+        if resolved_target.base_entry is not None and \
+                os.path.isfile(resolved_target.base):
+            apk_for_steps = resolved_target.base
+            scan_roots = list(resolved_target.assets_roots)
+            merged_names = [s["name"] for s in
+                            resolved_target.splits_merged]
+            step_notes.append(
+                f"container: steps ran on the contained base "
+                f"APK {resolved_target.base_entry} resolved "
+                f"through narlib.container; splits merged: "
+                f"{merged_names or 'none'}")
+            for skipped in resolved_target.split_skipped:
+                step_notes.append(
+                    f"container split skipped: "
+                    f"{skipped['name']} ({skipped['reason']})")
+        else:
+            apk_for_steps = None
+            step_notes.append(
+                "container holds no triageable base APK; "
+                "APK-level steps skipped")
+        report["contained_obbs"] = [
+            o.get("source_entry") or o["name"]
+            for o in resolved_target.obbs
+            if o.get("source") == "container"]
     elif triage.get("is_container"):
         with zipfile.ZipFile(target) as zf:
             names = zf.namelist()
@@ -1504,7 +2063,8 @@ def analyze(target, work_dir, out_dir=None):
     # leaves the identity empty even though the steps run on a
     # real base APK: take the identity from that base instead of
     # reporting an unnamed target.
-    if (triage.get("is_container") and apk_for_steps
+    if ((triage.get("is_container") or resolved_target is not None)
+            and apk_for_steps
             and not report["identity"].get("package")):
         base_triage, base_err = run_json_tool(
             "nar-triage.py", [apk_for_steps])
@@ -1534,6 +2094,9 @@ def analyze(target, work_dir, out_dir=None):
 
     strings_target = apk_for_steps or (target if triage.get("is_obb")
                                        else None)
+    if resolved_target is not None:
+        # nar-strings resolves and merges splits itself.
+        strings_target = target
     if strings_target:
         strings, err = run_json_tool("nar-strings.py", [strings_target])
         report["strings"] = (summarize_strings(strings) if strings
@@ -1542,13 +2105,56 @@ def analyze(target, work_dir, out_dir=None):
             report["limitations"].append(f"String scan failed: {err}")
 
     # Engine deep dives, routed by the analyzed APK's own contents.
+    _check_memory_budget("engines")
     engines = {}
     scan_path = apk_for_steps
     if scan_path and zipfile.is_zipfile(scan_path):
-        with zipfile.ZipFile(scan_path) as zf:
-            flags = zip_entry_flags(zf.namelist())
-            pak_sources = [(scan_path, n) for n in flags["paks"]]
-        if triage.get("is_container"):
+        # Merged mode: the scan spans every resolved root
+        # (base + splits) — .pak/.pck/.utoc members inside
+        # splits reach the engine stages through the roots,
+        # and each deep dive runs on the root that carries
+        # its marker.
+        roots = scan_roots or [scan_path]
+        root_flags = {}
+        for root in roots:
+            if zipfile.is_zipfile(root):
+                with zipfile.ZipFile(root) as zf:
+                    root_flags[root] = zip_entry_flags(
+                        zf.namelist())
+        flags = {"il2cpp": False, "flutter": False,
+                 "rn_bundle": False, "godot": False,
+                 "paks": [], "utocs": [], "uassets": []}
+        for root in roots:
+            rf = root_flags.get(root)
+            if not rf:
+                continue
+            for key in ("il2cpp", "flutter", "rn_bundle",
+                        "godot"):
+                flags[key] = flags[key] or rf[key]
+            flags["paks"].extend(rf["paks"])
+            flags["utocs"].extend(rf["utocs"])
+            flags["uassets"].extend(rf["uassets"])
+
+        def _root_with(key, _flags=root_flags, _roots=roots):
+            for root in _roots:
+                rf = _flags.get(root)
+                if rf and rf.get(key):
+                    return root
+            return scan_path
+
+        pak_sources = [(root, n) for root in roots
+                       for n in (root_flags.get(root) or {})
+                       .get("paks", [])]
+        if resolved_target is not None:
+            for obb in resolved_target.obbs:
+                if not zipfile.is_zipfile(obb["path"]):
+                    continue
+                with zipfile.ZipFile(obb["path"]) as ozf:
+                    for n in ozf.namelist():
+                        if n.lower().endswith(".pak"):
+                            pak_sources.append((obb["path"], n))
+        if triage.get("is_container") and \
+                resolved_target is None:
             for obb_name in report.get("contained_obbs", []):
                 with zipfile.ZipFile(target) as zf:
                     try:
@@ -1567,7 +2173,8 @@ def analyze(target, work_dir, out_dir=None):
         if flags["il2cpp"]:
             data, err = run_json_tool(
                 "nar-il2cpp.py",
-                [scan_path, "--out", os.path.join(work_dir, "il2cpp")])
+                [_root_with("il2cpp"), "--out",
+                 os.path.join(work_dir, "il2cpp")])
             engines["unity_il2cpp"] = data or {"error": err}
         else:
             # Metadata without the native library: the IL2CPP pair
@@ -1575,30 +2182,39 @@ def analyze(target, work_dir, out_dir=None):
             # file alone. Say so explicitly instead of silently
             # omitting the section.
             hints = triage.get("engine_hints") or []
+            _meta_name = _formats.metadata_file(
+                "unity-il2cpp") if _formats else None
+            _il2cpp_lib = next(
+                (m for m in (_formats.path_markers(
+                    "unity-il2cpp") if _formats else [])
+                 if m.endswith(".so")), "the IL2CPP library")
             meta_hint = bool(
                 (triage.get("engine_versions") or {}).get(
                     "unity_metadata_version")) or any(
-                        "global-metadata.dat" in marker
+                        _meta_name and _meta_name in marker
                         for hint in hints
                         for marker in (hint.get("markers") or []))
             if meta_hint:
                 step_notes.append(
                     "Unity IL2CPP metadata present but no"
-                    " libil2cpp.so in this file; the IL2CPP deep"
+                    f" {_il2cpp_lib} in this file; the IL2CPP deep"
                     " dive was skipped (the native pair likely"
                     " lives in a split APK — see triage"
                     " split_native_suspected)")
                 report["step_notes"] = step_notes
         if flags["flutter"]:
-            data, err = run_json_tool("nar-flutter.py", [scan_path])
+            data, err = run_json_tool(
+                "nar-flutter.py", [_root_with("flutter")])
             engines["flutter"] = data or {"error": err}
         if flags["rn_bundle"]:
             data, err = run_json_tool(
                 "nar-rn.py",
-                [scan_path, "--work", os.path.join(work_dir, "rn")])
+                [_root_with("rn_bundle"), "--work",
+                 os.path.join(work_dir, "rn")])
             engines["react_native"] = data or {"error": err}
         if flags["godot"]:
-            data, err = run_json_tool("nar-godot.py", [scan_path])
+            data, err = run_json_tool(
+                "nar-godot.py", [_root_with("godot")])
             engines["godot"] = data or {"error": err}
         pak_reports = []
         for src_zip, entry in pak_sources[:3]:
@@ -1627,7 +2243,9 @@ def analyze(target, work_dir, out_dir=None):
         if pak_reports:
             engines["unreal_pak"] = pak_reports
         utoc_reports = []
-        utoc_sources = [(scan_path, n) for n in flags["utocs"]]
+        utoc_sources = [(root, n) for root in roots
+                        for n in (root_flags.get(root) or {})
+                        .get("utocs", [])]
         for src_zip, entry in utoc_sources[:3]:
             with zipfile.ZipFile(src_zip) as zf:
                 try:
@@ -1692,16 +2310,56 @@ def analyze(target, work_dir, out_dir=None):
     # 2.0 module stages (fingerprint / engine fusion / DEX /
     # native / network / security / assets) with case caching.
     if apk_for_steps and not triage.get("is_obb"):
-        run_2_0_stages(report, apk_for_steps, out_dir, work_dir,
-                       perms_data=perms, key_path=target)
+        try:
+            run_2_0_stages(
+                report, apk_for_steps, out_dir, work_dir,
+                perms_data=perms, key_path=target,
+                stage_target=target if resolved_target is not None
+                else None,
+                merged=resolved_target is not None)
+        except _MemoryBudgetExceeded as e:
+            # Named, resumable abort (3.0 Part 11): the
+            # stages completed before the boundary are in
+            # the case stage cache + companions; the case
+            # record (written by main) carries the boundary
+            # as resume_boundary, and a re-run of the same
+            # --out directory without the budget (or with a
+            # sufficient one) resumes from it.
+            report["budget_abort"] = {
+                "boundary": e.boundary,
+                "stage": e.stage,
+                "budget_mb": e.budget_mb,
+                "peak_rss_bytes": e.peak_rss_bytes,
+                "resumable": True,
+                "resume": "re-run the same command and "
+                          "--out directory without "
+                          "--budget-mb (or with a higher "
+                          "budget); completed stages are "
+                          "served from the case stage cache"}
+            report["limitations"].append(
+                f"run aborted at {e.boundary}: memory "
+                f"budget of {e.budget_mb} MB exceeded "
+                f"(peak RSS {e.peak_rss_bytes} bytes); "
+                "the case is resumable from this boundary "
+                "via the stage cache")
 
     # Limitations and unknowns: the honest tail of every report.
     lim = report["limitations"]
     lim.append("Static analysis only: nothing was executed, so no"
                " runtime behavior, network traffic, or server-side"
                " verdict (for example Play Integrity's) is claimed.")
-    lim.append("Decompilation (jadx) is not part of this workup; see"
-               " references/dex-smali-and-decompile.md for that step.")
+    _dec = report.get("decompile_summary") or {}
+    if _dec:
+        lim.append(
+            "Decompilation served by "
+            f"{_dec.get('served_by') or 'no rung'} at "
+            f"{_dec.get('fidelity')} fidelity (fallback "
+            "chain in decompile.json); decompiled output is "
+            "an approximation, and a bytecode listing is "
+            "not Java source.")
+    else:
+        lim.append("Decompilation (jadx) is not part of this workup; see"
+                   " references/dex-smali-and-decompile.md for that step.")
     key_hits = ((report.get("strings") or {}).get("groups") or {}
                 ).get("key_patterns", {}).get("count")
     if key_hits:
@@ -1927,6 +2585,24 @@ def render_md(report):
                 lines.append(f"- {section['note']}")
         else:
             lines.append(f"- `{json.dumps(section)[:400]}`")
+    dec = report.get("decompile") or \
+        report.get("decompile_summary")
+    if dec:
+        lines += ["", "## Decompilation", ""]
+        lines.append(f"- Served by: {dec.get('served_by')}")
+        lines.append(f"- Fidelity: {dec.get('fidelity')}")
+        lines.append("- Chain: "
+                     + " -> ".join(dec.get("chain") or []))
+        for a in dec.get("attempts") or []:
+            if isinstance(a, dict):
+                lines.append(
+                    f"- Attempt {a.get('rung')}: "
+                    f"{a.get('status')}"
+                    + (f" ({a.get('classification')})"
+                       if a.get("classification") else ""))
+        lines.append("- Caveats:")
+        for c in dec.get("caveats") or []:
+            lines.append(f"  - {c}")
     lines += ["", "## Limitations and unknowns", ""]
     for item in report.get("limitations", []):
         lines.append(f"- {item}")
@@ -2151,6 +2827,8 @@ _COMPANION_SCHEMAS = {
     "fingerprint.json": "fingerprint.schema.json",
     "engines.json": "engine.schema.json",
     "dex.json": "dex.schema.json",
+    "app.json": "app.schema.json",
+    "decompile.json": "decompile.schema.json",
     "native.json": "native.schema.json",
     "endpoints.json": "endpoints.schema.json",
     "security-findings.json": "security-findings.schema.json",
@@ -2942,11 +3620,33 @@ def verify_case(case_dir):
                 recorded = fh.read().strip()
             # Recompute exactly as run_2_0_stages derives
             # it: sha256 of "<input sha>|<version>|<stage>".
-            expected = hashlib.sha256(
-                f"{input_sha}|{case_version}|{stage}".encode()
-            ).hexdigest()
+            # Era variants are derived from the case's own
+            # record, the same discipline as the legacy
+            # tolerances above: a merged-container case
+            # (case.json carries the container block) binds
+            # "|container-merged" into every stage key, and
+            # a case recorded with dex_format "full" (3.0
+            # Part 11) binds "|dex-full" into the dex
+            # stage's key. Any of the recorded variants is
+            # a valid key for its stage.
+            key_bases = [f"{input_sha}|{case_version}"]
+            if isinstance(case_doc.get("container"), dict):
+                key_bases.append(
+                    key_bases[0] + "|container-merged")
+            expected_set = {
+                hashlib.sha256(
+                    f"{base}|{stage}".encode()).hexdigest()
+                for base in key_bases}
+            if stage == "dex" and (
+                    (case_doc.get("config") or {})
+                    .get("dex_format") == "full"):
+                expected_set |= {
+                    hashlib.sha256(
+                        f"{base}|dex-full|{stage}".encode()
+                    ).hexdigest()
+                    for base in key_bases}
             checked += 1
-            if recorded != expected:
+            if recorded not in expected_set:
                 if legacy_container:
                     legacy_key_notes.append(stage)
                 else:
@@ -3044,6 +3744,21 @@ def main(argv=None):
     p.add_argument("--total-budget", type=float, metavar="S",
                    help="total budget in seconds for the whole "
                         "run (orchestration budget)")
+    p.add_argument("--budget-mb", type=float, metavar="MB",
+                   help="peak-RSS budget in MiB for the whole "
+                        "run (3.0 Part 11): crossing it aborts "
+                        "the run at the named, resumable "
+                        "boundary memory-budget:<stage>, "
+                        "recorded in the case + execution log; "
+                        "re-running the same --out directory "
+                        "without the budget resumes from the "
+                        "stage cache")
+    p.add_argument("--dex-full", action="store_true",
+                   help="write dex.json in the full 2.6.2 "
+                        "shape instead of the compact 3.0 "
+                        "shape (nar-dex --full; the shape is "
+                        "recorded in case.json and bound into "
+                        "the dex stage cache key)")
     p.add_argument("--out", metavar="DIR",
                    help="report directory (default ./nar-analyze-<name>)")
     p.add_argument("--work", metavar="DIR",
@@ -3056,6 +3771,10 @@ def main(argv=None):
     p.add_argument("--no-cache", action="store_true",
                    help="ignore the case stage cache and re-run "
                         "every 2.0 stage")
+    p.add_argument("--no-merge-splits", action="store_true",
+                   help="analyse only the base APK of a "
+                        "container (pre-3.0 behaviour, "
+                        "byte-identical output)")
     args = p.parse_args(argv)
     # Case view modes (2.6.0 Phases 7/8): graph query and
     # investigation summary over an existing case directory.
@@ -3163,7 +3882,9 @@ def main(argv=None):
     if not args.target:
         p.error("a target file is required (or use --export / "
                 "--import / --verify)")
-    set_budgets(args.stage_timeout, args.total_budget)
+    set_budgets(args.stage_timeout, args.total_budget,
+                budget_mb=args.budget_mb)
+    set_dex_full(args.dex_full)
     stem = os.path.splitext(os.path.basename(args.target))[0] or "target"
     out_dir = args.out or os.path.join(os.getcwd(), f"nar-analyze-{stem}")
     # Default work dir via mkdtemp (Phase 10): the previous
@@ -3177,15 +3898,45 @@ def main(argv=None):
         import shutil
         shutil.rmtree(os.path.join(out_dir, "cache"))
     try:
-        report = analyze(args.target, work_dir, out_dir)
+        report = analyze(args.target, work_dir, out_dir,
+                         merge_splits=not args.no_merge_splits)
     except FileNotFoundError as e:
         print(f"nar-analyze: {e}", file=sys.stderr)
         return 2
+    except _MemoryBudgetExceeded as e:
+        # The budget was crossed before the stage section
+        # (doctor / triage / engine deep dives): the abort
+        # is still recorded as a resumable case state —
+        # a minimal report carrying the named boundary —
+        # never a traceback (3.0 Part 11).
+        report = {
+            "tool": "nar-analyze", "version": NAR_VERSION,
+            "nar_version": NAR_VERSION,
+            "target": os.path.abspath(args.target),
+            "target_name": os.path.basename(args.target),
+            "target_sha256": sha256_of(args.target),
+            "target_size_bytes": os.path.getsize(args.target),
+            "limitations": [
+                f"run aborted at {e.boundary}: memory "
+                f"budget of {e.budget_mb} MB exceeded "
+                f"(peak RSS {e.peak_rss_bytes} bytes); "
+                "the case is resumable from this boundary "
+                "via the stage cache"],
+            "budget_abort": {
+                "boundary": e.boundary, "stage": e.stage,
+                "budget_mb": e.budget_mb,
+                "peak_rss_bytes": e.peak_rss_bytes,
+                "resumable": True,
+                "resume": "re-run the same command and "
+                          "--out directory without "
+                          "--budget-mb (or with a higher "
+                          "budget); completed stages are "
+                          "served from the case stage cache"},
+        }
     os.makedirs(out_dir, exist_ok=True)
     json_path = os.path.join(out_dir, "report.json")
     md_path = os.path.join(out_dir, "report.md")
-    with open(json_path, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, indent=2)
+    _write_report_json(json_path, report)
     with open(md_path, "w", encoding="utf-8") as fh:
         fh.write(render_md(report))
     # Case workspace record + execution log (2.0).
@@ -3204,22 +3955,40 @@ def main(argv=None):
                   "sha256": report.get("target_sha256"),
                   "size_bytes": report.get("target_size_bytes")},
         "config": {"profile": "full",
-                   "budgets": _budget_snapshot()},
+                   "budgets": _budget_snapshot(),
+                   "dex_format": ("full" if DEX_FULL["enabled"]
+                                  else "compact")},
         "tool_versions": {"nar": NAR_VERSION,
                           "python": sys.version.split()[0]},
         "stages": stages,
     }
-    with open(os.path.join(out_dir, "case.json"), "w",
-              encoding="utf-8") as fh:
-        json.dump(case_doc, fh, indent=2)
+    if report.get("budget_abort"):
+        # The named, resumable boundary (3.0 Part 11): a
+        # later run of the same --out directory resumes
+        # from the stage cache past this boundary.
+        case_doc["resume_boundary"] = report["budget_abort"]
+    if report.get("container"):
+        # Split-merge provenance lands in case.json (3.0
+        # Part 2): which splits were merged into the case's
+        # stages and which were skipped, with reasons.
+        case_doc["container"] = report["container"]
+    _write_report_json(
+        os.path.join(out_dir, "case.json"), case_doc)
     exec_doc = {"tool": "nar-analyze", "case_id": case_id,
                 "input_sha256": report.get("target_sha256"),
                 "entries": EXEC_LOG}
-    with open(os.path.join(out_dir, "execution-log.json"), "w",
-              encoding="utf-8") as fh:
-        json.dump(exec_doc, fh, indent=2)
-    with open(json_path, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, indent=2)
+    _write_report_json(
+        os.path.join(out_dir, "execution-log.json"), exec_doc)
+    _write_report_json(json_path, report)
+    if report.get("budget_abort"):
+        abort = report["budget_abort"]
+        print(f"nar-analyze: aborted at {abort['boundary']} "
+              f"(memory budget {abort['budget_mb']} MB, "
+              f"peak RSS {abort['peak_rss_bytes']} bytes); "
+              f"case state recorded in {out_dir} — re-run "
+              "without --budget-mb to resume from the "
+              "stage cache", file=sys.stderr)
+        return 1
     if not args.no_html:
         try:
             proc = subprocess.run(

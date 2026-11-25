@@ -8,6 +8,10 @@ signature:
 - nar-triage path signatures (native libraries, payload files),
 - triage binary-header version evidence,
 - triage DEX content markers (corroboration),
+- JNI / native dynamic-symbol evidence read directly from the
+  dynamic export table of every lib/**/*.so (narlib.elf): a
+  family JNI match is direct evidence — medium on its own,
+  high with a corroborating DEX/path marker for the family,
 - a direct layout pass of its own (IoStore containers, Unity
   Data layout, Flutter assets, Hermes bundles, Godot packs),
 - with --deep, the matching deep-dive tool's verdict
@@ -35,54 +39,21 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import container as container_mod  # noqa: E402
+from narlib import formats_registry as _formats  # noqa: E402
+from narlib.elf import Elf, ElfError, SHT_DYNSYM  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Canonical engine -> the triage hint names that feed it, the
 # deep-dive tool that confirms it, and version keys in triage's
-# engine_versions block.
-ENGINES = {
-    "Unity (IL2CPP)": {
-        "hints": ["Unity (IL2CPP)"], "deep": "nar-il2cpp.py",
-        "version_keys": ["unity_metadata_version"]},
-    "Unity (Mono)": {
-        "hints": ["Unity (Mono)"], "deep": None,
-        "version_keys": []},
-    "Unreal Engine": {
-        "hints": ["Unreal Engine"], "deep": "nar-unreal.py",
-        "version_keys": ["unreal_version", "unreal_engine"]},
-    "Godot": {
-        "hints": ["Godot"], "deep": "nar-godot.py",
-        "version_keys": ["godot_version"]},
-    "Flutter": {
-        "hints": ["Flutter"], "deep": "nar-flutter.py",
-        "version_keys": []},
-    "React Native": {
-        "hints": ["React Native", "React Native (new architecture)"],
-        "deep": "nar-rn.py", "version_keys": []},
-    "Cocos2d-x": {"hints": ["Cocos2d-x"], "deep": None,
-                  "version_keys": []},
-    "libGDX": {"hints": ["libGDX"], "deep": None, "version_keys": []},
-    "Adobe AIR": {"hints": ["Adobe AIR"], "deep": None,
-                  "version_keys": []},
-    "Xamarin / .NET": {"hints": ["Xamarin / .NET"], "deep": None,
-                       "version_keys": []},
-    "Cordova (hybrid)": {"hints": ["Cordova (hybrid)"], "deep": None,
-                         "version_keys": []},
-    "Capacitor (hybrid)": {"hints": ["Capacitor (hybrid)"],
-                           "deep": None, "version_keys": []},
-    "Qt for Android": {"hints": ["Qt for Android"], "deep": None,
-                       "version_keys": []},
-    "Defold": {"hints": ["Defold"], "deep": None, "version_keys": []},
-    "Ren'Py": {"hints": ["Ren'Py"], "deep": None, "version_keys": []},
-    "RPG Maker (web export)": {"hints": ["RPG Maker (web export)"],
-                               "deep": None, "version_keys": []},
-    "Embedded Python": {"hints": ["Embedded Python"], "deep": None,
-                        "version_keys": []},
-    "Web assets (assets/www)": {"hints": ["Web assets (assets/www)"],
-                                "deep": None, "version_keys": []},
-}
+# engine_versions block. Since Part 16 this table is a derived
+# view of scripts/formats.json (the single source of truth,
+# loaded via narlib.formats_registry); the marker data lives
+# in the JSON, never as literals here.
+ENGINES = _formats.engines_table()
+
 STRONG_MARKERS = (".so", ".dat", ".pak", ".pck", "application.xml",
                   "capacitor.config", "cordova.js", "cordova-",
                   "phonegap", "assemblies/",
@@ -91,6 +62,197 @@ STRONG_MARKERS = (".so", ".dat", ".pak", ".pck", "application.xml",
                   # shipped by exactly one engine, so a single hit
                   # is strong evidence, not a weak path hint.
                   ".rpyc", "rpg_core.js", "rmmz_core.js")
+
+# ------------------------------------------------------------------
+# JNI / dynamic-symbol evidence (Part 3.1).
+#
+# nar-engines previously never read ELF exports, so a build
+# whose game library carried a NON-canonical name scored only
+# its DEX corroboration (+10) no matter how many family JNI
+# symbols it exported \u2014 e.g. a Cocos2d-x build exporting the
+# full Cocos2d-x JNI surface under libgame.so came
+# back detected=false / low. The symbol half of the engine
+# marker matrix \u2014 JNI package prefixes and named exported
+# symbols, classed strong (one hit is family-specific) vs
+# weak (generic runtime surface; needs JNI_WEAK_MIN_MATCHES
+# distinct hits), with also_requires where a family needs a
+# specific corroborating symbol (L\u00d6VE: luaL_* alone is the
+# stock Lua C API exported by every Lua embedder) \u2014 lives in
+# scripts/formats.json since Part 16 and is loaded here as a
+# derived view. Markers that are file/path facts (libhermes*,
+# .pak, .rpa, libpython*, application.xml, libCore.so) are NOT
+# symbol evidence and stay with the path/DEX channels.
+JNI_SYMBOL_MARKERS = _formats.jni_markers()
+# Families whose symbol matches are excluded when they come
+# from a named library (formats.json jni_excluded_from): the
+# IL2CPP runtime derives from the Mono codebase and its
+# library exports the mono_* API as Unity internals, so those
+# matches are not Xamarin evidence; a real Xamarin runtime
+# ships its own Mono libraries, which keep their matches.
+JNI_EXCLUSIONS = _formats.jni_exclusions()
+# Weak-only families need this many distinct weak symbol hits
+# before the surface counts as family evidence at all.
+JNI_WEAK_MIN_MATCHES = 3
+# Symbol score: a family JNI match is direct evidence, sized
+# to land at medium (>= 40) entirely on its own; fuse() then
+# raises a corroborated match (any DEX/path/layout/version
+# indicator for the same family) to the high floor.
+JNI_SCORE = 45
+JNI_HIGH_FLOOR = 70
+# Bounded scan, in the codebase's budget style: libraries are
+# parsed one at a time and released, oversized members are
+# skipped, and a corrupt library degrades to no evidence.
+# Members are visited largest-first within the cap: engine
+# runtime libraries are large, while the hundreds of tiny
+# per-assembly stubs some frameworks ship would otherwise
+# crowd the runtime out of the scan window.
+JNI_MAX_LIBRARIES = 128
+JNI_MAX_LIBRARY_BYTES = 256 * 1024 * 1024
+JNI_MAX_SYMBOLS_PER_LIBRARY = 20000
+JNI_SAMPLE_SIZE = 10
+
+
+def _classify_symbol(name, spec):
+    """'strong' / 'weak' / None for one exported symbol name."""
+    for prefix in spec["prefixes"]:
+        if name.startswith(prefix):
+            return "strong"
+    if name in spec["exact"]:
+        return "strong"
+    for sub in spec["substrings"]:
+        if sub in name:
+            return "strong"
+    for prefix in spec["weak_prefixes"]:
+        if name.startswith(prefix):
+            return "weak"
+    lowered = name.lower()
+    for sub in spec["weak_substrings"]:
+        if sub in lowered:
+            return "weak"
+    return None
+
+
+def match_jni_symbols(symbol_names):
+    """Family matches over a flat iterable of exported names.
+
+    Returns {canonical: {"matched": [...], "count": int,
+    "strong": int, "weak": int}} for the families whose bar is
+    met: at least one strong hit, or JNI_WEAK_MIN_MATCHES
+    distinct weak hits (plus the family's also_requires
+    substring, when declared, among the matched names)."""
+    hits = {}
+    for name in symbol_names:
+        if not name:
+            continue
+        for canonical, spec in JNI_SYMBOL_MARKERS.items():
+            kind = _classify_symbol(name, spec)
+            if kind is None:
+                continue
+            entry = hits.setdefault(canonical, {
+                "names": [], "strong": 0, "weak": 0})
+            if name not in entry["names"]:
+                entry["names"].append(name)
+            entry[kind] += 1
+    out = {}
+    for canonical, entry in hits.items():
+        spec = JNI_SYMBOL_MARKERS[canonical]
+        if entry["strong"] < 1 and \
+                entry["weak"] < JNI_WEAK_MIN_MATCHES:
+            continue
+        required = spec.get("also_requires")
+        if required and not any(required in n.lower()
+                                for n in entry["names"]):
+            continue
+        names = sorted(entry["names"])
+        out[canonical] = {
+            "matched": names[:JNI_SAMPLE_SIZE],
+            "count": len(names),
+            "strong": entry["strong"], "weak": entry["weak"]}
+    return out
+
+
+def jni_evidence(apk_path, extra_paths=None):
+    """Dynamic-export evidence from every lib/**/*.so member.
+
+    ``extra_paths`` are additional archives (the merged
+    splits of a container, resolved through
+    narlib.container) whose libraries are scanned with the
+    same budget; library names are then qualified with the
+    archive they came from. Returns {"per_engine":
+    {canonical: {matched, count, strong, weak, libraries}},
+    "libraries_scanned": int, "libraries_with_exports": int,
+    "anative_activity": bool}. A member that is not a
+    parseable ELF, or exceeds the size budget, contributes
+    no evidence and never fails the scan.
+    """
+    result = {"per_engine": {}, "libraries_scanned": 0,
+              "libraries_with_exports": 0,
+              "anative_activity": False}
+    for path in [apk_path] + list(extra_paths or []):
+        _jni_evidence_one(path, result,
+                          qualify=bool(extra_paths))
+    return result
+
+
+def _jni_evidence_one(apk_path, result, qualify=False):
+    try:
+        zf = zipfile.ZipFile(apk_path)
+    except (zipfile.BadZipFile, OSError):
+        return
+    with zf:
+        members = [i for i in zf.infolist()
+                   if i.filename.startswith("lib/")
+                   and i.filename.endswith(".so")]
+        members.sort(key=lambda i: (-i.file_size, i.filename))
+        for info in members[:JNI_MAX_LIBRARIES]:
+            if info.file_size > JNI_MAX_LIBRARY_BYTES:
+                continue
+            result["libraries_scanned"] += 1
+            try:
+                data = zf.read(info.filename)
+                elf = Elf(data, info.filename)
+                symbols = elf.symbols(SHT_DYNSYM)
+            except ElfError:
+                # Corrupt or non-ELF member: no evidence.
+                continue
+            except Exception:
+                # A zip read failure or a struct error on a
+                # hostile header degrades the same way; one
+                # bad library never crashes the whole scan.
+                continue
+            exports = []
+            for sym in symbols[:JNI_MAX_SYMBOLS_PER_LIBRARY]:
+                if sym["defined"] and sym["name"] \
+                        and sym["bind"] in (1, 2):
+                    exports.append(sym["name"])
+            if not exports:
+                continue
+            result["libraries_with_exports"] += 1
+            if "ANativeActivity_onCreate" in exports:
+                result["anative_activity"] = True
+            matches = match_jni_symbols(exports)
+            for excluded in JNI_EXCLUSIONS.get(
+                    info.filename.rsplit("/", 1)[-1], []):
+                matches.pop(excluded, None)
+            for canonical, match in matches.items():
+                slot = result["per_engine"].setdefault(
+                    canonical, {"matched": [], "count": 0,
+                                "strong": 0, "weak": 0,
+                                "libraries": []})
+                for name in match["matched"]:
+                    if name not in slot["matched"]:
+                        slot["matched"].append(name)
+                slot["matched"] = sorted(
+                    slot["matched"])[:JNI_SAMPLE_SIZE]
+                slot["count"] += match["count"]
+                slot["strong"] += match["strong"]
+                slot["weak"] += match["weak"]
+                lib_label = (
+                    f"{os.path.basename(apk_path)}:"
+                    f"{info.filename}") if qualify \
+                    else info.filename
+                if lib_label not in slot["libraries"]:
+                    slot["libraries"].append(lib_label)
 
 
 def run_json_tool(script, args, timeout=1800):
@@ -109,13 +271,20 @@ def run_json_tool(script, args, timeout=1800):
         return None
 
 
-def layout_evidence(apk_path):
-    """Direct ZIP-layout indicators computed by this tool."""
+def layout_evidence(apk_path, extra_paths=None):
+    """Direct ZIP-layout indicators computed by this tool.
+    With ``extra_paths`` (merged container splits), names
+    from every archive contribute; split members are
+    qualified with their archive name."""
     ev = {}
-    try:
-        with zipfile.ZipFile(apk_path) as zf:
-            names = zf.namelist()
-    except zipfile.BadZipFile:
+    names = []
+    for path in [apk_path] + list(extra_paths or []):
+        try:
+            with zipfile.ZipFile(path) as zf:
+                names.extend(zf.namelist())
+        except zipfile.BadZipFile:
+            continue
+    if not names and extra_paths is None:
         return ev
     lower = [n.lower() for n in names]
     ev["iostore_files"] = [n for n in names
@@ -147,10 +316,81 @@ def confidence_for(score):
 
 
 def fuse(apk_path, deep=False, work_dir=None):
+    # Container inputs resolve through narlib.container:
+    # layout and JNI evidence scan the base APK plus every
+    # merged split (the ABI split is where the engine's
+    # native libraries usually live), deep dives run on the
+    # base APK, and the resolution is recorded under the
+    # report's `container` block — the container file itself
+    # is never scanned as if it were an APK.
+    resolved = None
+    scan_path = apk_path
+    extra_paths = []
+    if container_mod.detect_container(apk_path) in \
+            container_mod.CONTAINER_KINDS:
+        resolved = container_mod.resolve_target(apk_path)
+        scan_path = resolved.base
+        extra_paths = [s["path"] for s in resolved.splits]
+    try:
+        return _fuse_resolved(apk_path, scan_path, extra_paths,
+                              resolved, deep, work_dir)
+    finally:
+        if resolved is not None:
+            resolved.cleanup()
+
+
+def _fuse_resolved(apk_path, scan_path, extra_paths, resolved,
+                   deep=False, work_dir=None):
     triage = run_json_tool("nar-triage.py", [apk_path])
     if triage is None:
         raise RuntimeError("nar-triage failed on this input")
-    layout = layout_evidence(apk_path)
+    if resolved is not None:
+        # Container: the container-level triage sees no
+        # payload (the engine's files live in the contained
+        # APKs), so fuse the per-archive triage evidence of
+        # the base and every merged split as well — hints by
+        # engine (marker union), version evidence (first
+        # wins) and DEX markers (union). The merged verdict
+        # is then at least as strong as the strongest
+        # single-archive verdict, never weaker.
+        merged_hints = {}
+        for hint in triage.get("engine_hints") or []:
+            merged_hints[hint["engine"]] = {
+                "engine": hint["engine"],
+                "markers": list(hint.get("markers") or []),
+                "marker_count": hint.get("marker_count", 0)}
+        merged_versions = dict(triage.get("engine_versions")
+                                 or {})
+        merged_dex = {m["marker"]: m for m in
+                      triage.get("dex_markers") or []}
+        for path in [scan_path] + list(extra_paths):
+            sub = run_json_tool("nar-triage.py", [path])
+            if sub is None:
+                continue
+            for hint in sub.get("engine_hints") or []:
+                slot = merged_hints.setdefault(
+                    hint["engine"],
+                    {"engine": hint["engine"], "markers": [],
+                     "marker_count": 0})
+                for marker in hint.get("markers") or []:
+                    if marker not in slot["markers"]:
+                        slot["markers"].append(marker)
+                slot["marker_count"] = max(
+                    slot["marker_count"],
+                    hint.get("marker_count", 0))
+            for key, value in (sub.get("engine_versions")
+                               or {}).items():
+                merged_versions.setdefault(key, value)
+            for marker in sub.get("dex_markers") or []:
+                merged_dex.setdefault(marker["marker"], marker)
+        triage = dict(triage)
+        triage["engine_hints"] = sorted(
+            merged_hints.values(), key=lambda h: h["engine"])
+        triage["engine_versions"] = merged_versions
+        triage["dex_markers"] = sorted(
+            merged_dex.values(), key=lambda m: m["marker"])
+    layout = layout_evidence(scan_path, extra_paths)
+    jni = jni_evidence(scan_path, extra_paths)
     hints = {h["engine"]: h for h in triage.get("engine_hints") or []}
     versions = triage.get("engine_versions") or {}
     dex_markers = {m["marker"] for m in triage.get("dex_markers") or []
@@ -220,6 +460,24 @@ def fuse(apk_path, deep=False, work_dir=None):
                     "kind": "dex-marker",
                     "detail": f"DEX marker: {marker}"})
                 break
+        # JNI / dynamic-symbol evidence: direct evidence.
+        # Alone it scores medium (JNI_SCORE >= 40); with any
+        # corroborating indicator for the same family (path,
+        # DEX, layout, version) the verdict is raised to the
+        # high floor. Path evidence alone is unchanged.
+        jni_match = jni["per_engine"].get(canonical)
+        if jni_match:
+            corroborated = bool(indicators)
+            score += JNI_SCORE
+            if corroborated:
+                score = max(score, JNI_HIGH_FLOOR)
+            indicators.append({
+                "kind": "jni-symbols",
+                "detail": f"{jni_match['count']} exported "
+                          f"symbol(s) match {canonical} "
+                          f"(sample: "
+                          f"{', '.join(jni_match['matched'][:3])}) "
+                          f"in {', '.join(jni_match['libraries'][:3])}"})
         if not indicators:
             continue
         version = None
@@ -234,8 +492,15 @@ def fuse(apk_path, deep=False, work_dir=None):
                    "version": version,
                    "indicators": indicators,
                    "recommended_next": spec["deep"]}
+        if jni_match:
+            verdict["jni_symbols"] = {
+                "matched_symbols": jni_match["matched"],
+                "match_count": jni_match["count"],
+                "strong_matches": jni_match["strong"],
+                "weak_matches": jni_match["weak"],
+                "libraries": jni_match["libraries"]}
         if deep and spec["deep"] and verdict["detected"]:
-            deep_args = [apk_path]
+            deep_args = [scan_path]
             if work_dir and spec["deep"] == "nar-il2cpp.py":
                 # The dumper output is large; keep it out of
                 # the /tmp default location.
@@ -290,10 +555,25 @@ def fuse(apk_path, deep=False, work_dir=None):
             if v["engine"] == "React Native" and v["detected"]:
                 v["variant"] = "new architecture (Fabric/TurboModules)"
     verdicts.sort(key=lambda v: -v["score"])
-    return {"tool": "nar-engines", "version": "2.6.2",
-            "target": os.path.abspath(apk_path),
-            "target_sha256": sha256_of(apk_path),
-            "verdicts": verdicts, "ambiguities": ambiguities}
+    report = {"tool": "nar-engines", "version": "3.0.0",
+              "target": os.path.abspath(apk_path),
+              "target_sha256": sha256_of(apk_path),
+              "verdicts": verdicts, "ambiguities": ambiguities,
+              "jni_scan": {
+                "libraries_scanned": jni["libraries_scanned"],
+                "libraries_with_exports":
+                    jni["libraries_with_exports"],
+                "anative_activity_oncreate":
+                    jni["anative_activity"],
+                # ANativeActivity_onCreate with no family JNI
+                # match and no detected engine is a plain
+                # native app: identified as native, never
+                # scored as an engine.
+                "native_no_engine": bool(
+                    jni["anative_activity"] and not names)}}
+    if resolved is not None:
+        report["container"] = resolved.container_block()
+    return report
 
 
 def human(report):
@@ -315,6 +595,10 @@ def human(report):
             print(f"    [{ind['kind']}] {ind['detail']}")
         if v.get("recommended_next"):
             print(f"    next: {v['recommended_next']}")
+    scan = report.get("jni_scan") or {}
+    if scan.get("native_no_engine"):
+        print("- Native (no engine): ANativeActivity_onCreate "
+              "exported and no engine-family JNI symbols found")
     for amb in report["ambiguities"]:
         print(f"ambiguity: {amb}")
 

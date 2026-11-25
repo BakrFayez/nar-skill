@@ -17,6 +17,19 @@ For an APK (or a bare .pak / IoStore container):
   containers are inventoried, never decrypted,
 - config and content signals: .uasset/.umap counts from pak
   listings, Engine/Game config file presence,
+- audio banks and localization: .bnk/.wem members in pak
+  and IoStore inventories are counted with total sizes,
+  and up to 8 readable members per container carry
+  narlib.mediainfo Wwise bank facts ({file, bank});
+  .locres members are counted with total sizes and up to
+  3 readable members per container are decoded by
+  narlib.locres (namespace/key entry tables resolved
+  against the localized string array; the decoder
+  validates end to end and was verified on real samples).
+  Members in Oodle-compressed or encrypted chunks are
+  inventoried with a named not-readable reason, never
+  decoded from an unreadable payload. A bare .bnk/.wem
+  or .locres file is a target of its own,
 - UAsset-level inspection by narlib.uasset (pure Python,
   public package layout): FPackageFileSummary with UE4/UE5
   version gating, name/import/export/depends tables with
@@ -57,16 +70,20 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import iostore as _iostore_mod  # noqa: E402
+from narlib import locres as _locres_mod  # noqa: E402
+from narlib import mediainfo as _mediainfo_mod  # noqa: E402
 from narlib import uasset as _uasset_mod  # noqa: E402
 from narlib import zen as _zen_mod  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 from narlib.mmapio import mapped_file  # noqa: E402
 from narlib.iostore import (IoStoreError, extract_chunk,  # noqa: E402
                             parse_utoc)
+from narlib.locres import LocResError, parse_locres  # noqa: E402
 from narlib.uasset import UAssetError, parse_package  # noqa: E402
 from narlib.zen import (ZenError, is_zen_package,  # noqa: E402
                         parse_zen_package)
@@ -101,6 +118,18 @@ IOSTORE_PACKAGE_CONTAINER_CAP = 2
 # promised detail caps lift; this one was wired to the
 # constant directly and never lifted).
 RELATIONSHIP_CAP = 250
+# Audio-bank (.bnk/.wem) members fully read per container
+# for Wwise bank facts; counts always cover every member.
+BANK_CAP = 8
+# .locres members fully decoded per container; counts
+# always cover every member.
+LOCRES_CAP = 3
+# Sample entries kept per decoded .locres member.
+LOCRES_SAMPLE_CAP = 10
+# Members larger than this are inventoried, never read
+# for bank facts or .locres decoding.
+MEDIA_MAX_BYTES = 32 * 1024 * 1024
+BANK_EXTS = (".bnk", ".wem")
 
 
 class UnrealLimits:
@@ -204,12 +233,193 @@ def run_json_tool(script, args, timeout=1200):
         return None
 
 
+def _member_census(pairs):
+    """Counts + total sizes for the media/localization
+    member kinds (.locres/.bnk/.wem), from (lowercased
+    name, uncompressed size) pairs. Purely additive
+    accounting alongside the .uasset/.umap counts."""
+    out = {}
+    for ext in (".locres", ".bnk", ".wem"):
+        sel = [size for name, size in pairs
+               if name.endswith(ext)]
+        key = ext[1:]
+        out[f"{key}_count"] = len(sel)
+        out[f"{key}_total_bytes"] = sum(sel)
+    return out
+
+
+def _locres_presentation(parsed):
+    """Presentation record for one decoded .locres:
+    counts cover the whole file; only a sample of the
+    resolved entries is kept."""
+    sample = [{
+        "namespace": e["namespace"], "key": e["key"],
+        "value": e["value"][:120]
+        if isinstance(e["value"], str) else e["value"],
+    } for e in parsed["entries"][:LOCRES_SAMPLE_CAP]]
+    return {
+        "format": parsed["format"],
+        "version": parsed["version"],
+        "version_name": parsed["version_name"],
+        "namespace_count": parsed["namespace_count"],
+        "entry_count": parsed["entry_count"],
+        "string_count": parsed["string_count"],
+        "namespace_names": [
+            n["name"]
+            for n in parsed["namespaces"][:LOCRES_SAMPLE_CAP]],
+        "sample_entries": sample,
+        "sample_counts": _account(
+            parsed["entry_count"], len(sample)),
+    }
+
+
+def _pak_member_bytes(pak_path, out_dir, name):
+    """Extract one pak member via nar-pak's own extractor
+    (the same machinery pak_packages uses). Returns
+    (bytes, None) or (None, reason)."""
+    rep = run_json_tool(
+        "nar-pak.py",
+        [pak_path, "--extract", name, "--out", out_dir])
+    extracted = (rep or {}).get("extracted") or []
+    errors = (rep or {}).get("extract_errors") or []
+    if extracted:
+        with open(extracted[0]["out_path"], "rb") as fh:
+            return fh.read(), None
+    if errors:
+        return None, errors[0].get("error") or \
+            "entry not extracted"
+    return None, "entry not extracted"
+
+
+def pak_bank_facts(pak_path, out_dir):
+    """Wwise bank facts for a pak's .bnk/.wem members
+    (up to BANK_CAP per container). Members that cannot
+    be read (encrypted, over the size bound, or refused
+    by nar-pak's extractor, e.g. Oodle) carry a named
+    not-readable reason, never a decode attempt."""
+    listing = run_json_tool("nar-pak.py", [pak_path])
+    if not listing or not listing.get("supported"):
+        return []
+    entries = listing.get("entries") or []
+    cands = [e for e in entries
+             if e["name"].lower().endswith(BANK_EXTS)]
+    records = []
+    for i, e in enumerate(cands):
+        name = e["name"]
+        ext = "." + name.rsplit(".", 1)[-1].lower()
+        if i >= BANK_CAP:
+            records.append({
+                "file": name,
+                "not_readable": f"bank-facts cap of "
+                                f"{BANK_CAP} per container "
+                                "reached; not attempted"})
+            continue
+        size = e.get("uncompressed_size_bytes") or 0
+        if e.get("encrypted"):
+            records.append({
+                "file": name,
+                "not_readable": "entry is flagged "
+                                "encrypted (AES); bank "
+                                "facts are inventoried, "
+                                "never decrypted"})
+            continue
+        if size > MEDIA_MAX_BYTES:
+            records.append({
+                "file": name,
+                "not_readable": f"member is {size} bytes, "
+                                f"over the "
+                                f"{MEDIA_MAX_BYTES}-byte "
+                                "bank-facts limit; skipped"})
+            continue
+        blob, err = _pak_member_bytes(pak_path, out_dir, name)
+        if blob is None:
+            records.append({
+                "file": name,
+                "not_readable": f"pak extraction failed: "
+                                f"{err}"})
+            continue
+        records.append({
+            "file": name,
+            "bank": _mediainfo_mod.wwise_bank_facts(blob, ext)})
+    return records
+
+
+def pak_locres_summaries(pak_path, out_dir):
+    """Decoded .locres summaries for a pak's members
+    (up to LOCRES_CAP per container), via nar-pak's own
+    extractor and narlib.locres. Unreadable members
+    carry a named not-readable reason; members that
+    extract but fail the decoder's end-to-end validation
+    carry the parse error."""
+    listing = run_json_tool("nar-pak.py", [pak_path])
+    if not listing or not listing.get("supported"):
+        return []
+    entries = listing.get("entries") or []
+    cands = [e for e in entries
+             if e["name"].lower().endswith(".locres")]
+    records = []
+    for i, e in enumerate(cands):
+        name = e["name"]
+        if i >= LOCRES_CAP:
+            records.append({
+                "file": name,
+                "not_readable": f".locres decode cap of "
+                                f"{LOCRES_CAP} per container "
+                                "reached; not attempted"})
+            continue
+        size = e.get("uncompressed_size_bytes") or 0
+        if e.get("encrypted"):
+            records.append({
+                "file": name,
+                "not_readable": "entry is flagged "
+                                "encrypted (AES); .locres "
+                                "tables are inventoried, "
+                                "never decrypted"})
+            continue
+        if size > MEDIA_MAX_BYTES:
+            records.append({
+                "file": name,
+                "not_readable": f"member is {size} bytes, "
+                                f"over the "
+                                f"{MEDIA_MAX_BYTES}-byte "
+                                ".locres limit; skipped"})
+            continue
+        blob, err = _pak_member_bytes(pak_path, out_dir, name)
+        if blob is None:
+            records.append({
+                "file": name,
+                "not_readable": f"pak extraction failed: "
+                                f"{err}"})
+            continue
+        try:
+            parsed = parse_locres(blob, name)
+        except LocResError as exc:
+            records.append({
+                "file": name,
+                "error": f".locres parse failed: {exc}"})
+            continue
+        records.append({"file": name,
+                        "locres": _locres_presentation(parsed)})
+    return records
+
+
+def _attach_pak_media(summary, pak_path, out_dir):
+    """Attach bank facts / .locres summaries to a pak
+    summary record when its census names candidates."""
+    if summary.get("bnk_count") or summary.get("wem_count"):
+        summary["bank_facts"] = pak_bank_facts(
+            pak_path, out_dir)
+    if summary.get("locres_count"):
+        summary["locres_files"] = pak_locres_summaries(
+            pak_path, out_dir)
+
+
 def pak_summary(data_path):
     out = run_json_tool("nar-pak.py", [data_path])
     if out is None:
         return {"error": "nar-pak failed"}
     entries = out.get("entries") or []
-    return {
+    summary = {
         "pak_version": out.get("pak_version"),
         "supported": out.get("supported"),
         "index_encrypted": out.get("index_encrypted"),
@@ -223,6 +433,12 @@ def pak_summary(data_path):
                           if e["name"].endswith(".umap")),
         "stats": out.get("stats"),
     }
+    summary.update(_member_census([
+        (e["name"].lower(),
+         e.get("uncompressed_size_bytes")
+         or e.get("size_bytes") or 0)
+        for e in entries]))
+    return summary
 
 
 def iostore_summary(utoc_bytes, name, ucas_name=None,
@@ -237,6 +453,9 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
         return {"entry": name, "error": f"IoStore parse failed: {e}"}
     parsed.pop("_blocks", None)
     entries = parsed.pop("entries")
+    parsed.update(_member_census([
+        ((e.get("file") or "").lower(), e.get("length") or 0)
+        for e in entries]))
     total = len(entries)
     shown, counts = _capped(entries, limits.max_chunks)
     parsed["entries"] = shown
@@ -251,6 +470,143 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
         parsed["ucas_entry"] = ucas_name
         parsed["ucas_size"] = ucas_size
     return parsed
+
+
+def _iostore_media_candidates(utoc_bytes, container_name,
+                              exts):
+    """Parse a container and return (parsed, named
+    entries) for the directory-indexed members whose
+    file names end with one of exts. (None, []) when the
+    container itself does not parse."""
+    try:
+        container = parse_utoc(utoc_bytes, container_name)
+    except IoStoreError:
+        return None, []
+    named = [entry for entry in container["entries"]
+             if (entry.get("file") or "").lower().endswith(
+                 exts)]
+    return container, named
+
+
+def _iostore_member_blob(container, ucas_bytes, entry):
+    """Read one IoStore member through the existing
+    readable paths only (stored / Zlib chunks of an
+    unencrypted container, under the size bound).
+    Returns (bytes, None) or (None, named reason):
+    Oodle/encrypted members are never decode-attempted.
+    """
+    if ucas_bytes is None:
+        return None, ("container data (.ucas) unavailable; "
+                      "member payload not read")
+    if "Encrypted" in container["header"].get(
+            "container_flag_names", []):
+        return None, ("container is flagged Encrypted; "
+                      "member payloads are inventoried, "
+                      "never decrypted")
+    bad = [m for m in entry.get("compression_methods") or []
+           if m not in ("None", "Zlib")]
+    if bad:
+        return None, (f"compression method {bad[0]!r} is "
+                      "named, not decoded; member payload "
+                      "not read")
+    size = entry.get("length") or 0
+    if size > MEDIA_MAX_BYTES:
+        return None, (f"member is {size} bytes, over the "
+                      f"{MEDIA_MAX_BYTES}-byte limit; "
+                      "skipped")
+    try:
+        return extract_chunk(container, ucas_bytes,
+                             entry["index"]), None
+    except IoStoreError as e:
+        return None, f"IoStore extraction failed: {e}"
+
+
+def iostore_bank_facts(utoc_bytes, ucas_bytes,
+                       container_name):
+    """Wwise bank facts for a container's .bnk/.wem
+    members (up to BANK_CAP). Members on unreadable
+    paths (Oodle, encrypted, missing .ucas, oversize)
+    carry a named not-readable reason."""
+    container, named = _iostore_media_candidates(
+        utoc_bytes, container_name, BANK_EXTS)
+    if container is None:
+        return []
+    records = []
+    for i, entry in enumerate(named):
+        path = entry.get("file") or ""
+        ext = "." + path.rsplit(".", 1)[-1].lower()
+        if i >= BANK_CAP:
+            records.append({
+                "file": path,
+                "not_readable": f"bank-facts cap of "
+                                f"{BANK_CAP} per container "
+                                "reached; not attempted"})
+            continue
+        blob, reason = _iostore_member_blob(
+            container, ucas_bytes, entry)
+        if blob is None:
+            records.append({"file": path,
+                            "not_readable": reason})
+            continue
+        records.append({
+            "file": path,
+            "bank": _mediainfo_mod.wwise_bank_facts(blob, ext)})
+    return records
+
+
+def iostore_locres_summaries(utoc_bytes, ucas_bytes,
+                             container_name):
+    """Decoded .locres summaries for a container's
+    members (up to LOCRES_CAP), via the readable chunk
+    paths only and narlib.locres. Unreadable members
+    carry a named not-readable reason; members that
+    extract but fail end-to-end validation carry the
+    parse error."""
+    container, named = _iostore_media_candidates(
+        utoc_bytes, container_name, (".locres",))
+    if container is None:
+        return []
+    records = []
+    for i, entry in enumerate(named):
+        path = entry.get("file") or ""
+        if i >= LOCRES_CAP:
+            records.append({
+                "file": path,
+                "not_readable": f".locres decode cap of "
+                                f"{LOCRES_CAP} per container "
+                                "reached; not attempted"})
+            continue
+        blob, reason = _iostore_member_blob(
+            container, ucas_bytes, entry)
+        if blob is None:
+            records.append({"file": path,
+                            "not_readable": reason})
+            continue
+        try:
+            parsed = parse_locres(blob, path)
+        except LocResError as exc:
+            records.append({
+                "file": path,
+                "error": f".locres parse failed: {exc}"})
+            continue
+        records.append({"file": path,
+                        "locres": _locres_presentation(parsed)})
+    return records
+
+
+def _attach_iostore_media(container_record, utoc_bytes,
+                          ucas_bytes, container_name):
+    """Attach bank facts / .locres summaries to an
+    IoStore container record when its census names
+    candidates."""
+    if container_record.get("bnk_count") or \
+            container_record.get("wem_count"):
+        container_record["bank_facts"] = iostore_bank_facts(
+            utoc_bytes, ucas_bytes, container_name)
+    if container_record.get("locres_count"):
+        container_record["locres_files"] = \
+            iostore_locres_summaries(
+                utoc_bytes, ucas_bytes, container_name)
 
 
 def _package_index_target(index, imports, exports):
@@ -523,7 +879,37 @@ def unreal_capabilities():
         "uasset": _uasset_mod.capabilities(),
         "zen": _zen_mod.capabilities(),
         "iostore": _iostore_mod.capabilities(),
+        "locres": _locres_mod.capabilities(),
     }
+
+
+def _locres_limitations(caps=None):
+    """Generated from narlib.locres capability facts."""
+    if caps is None:
+        caps = unreal_capabilities()
+    lc = caps["locres"]
+    lays = {lay["layout"]: lay for lay in lc["layouts"]}
+    v1 = lays["v1-entry-metadata"]
+    v0 = lays["v0-initial"]
+    return [
+        f".locres localization string tables are decoded "
+        f"(namespace/key entry tables resolved against "
+        f"the localized string array): the "
+        f"{v1['layout']} layout is {v1['status']} with "
+        f"verification: {v1['verification']} "
+        f"({lc['real_files_verified']} real files parse "
+        f"end to end under the decoder's exact-consumption "
+        f"rules), and the {v0['layout']} layout is "
+        f"{v0['status']} with verification: "
+        f"{v0['verification']}. .locres members on "
+        f"unreadable paths (Oodle-compressed or encrypted "
+        f"chunks) are inventoried with a named "
+        f"not-readable reason, never decoded from an "
+        f"unreadable payload.",
+        "Wwise bank facts are header/section facts from "
+        "the member bytes (narlib.mediainfo); embedded "
+        "audio payloads are not decoded.",
+    ]
 
 
 def _package_limitations(caps=None):
@@ -749,11 +1135,53 @@ def pak_packages(pak_path, out_dir, limits=None):
 def analyze(target, work_dir=None, limits=None):
     if limits is None:
         limits = UnrealLimits()
-    report = {"tool": "nar-unreal", "version": "2.6.2",
+    report = {"tool": "nar-unreal", "version": "3.0.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target),
               "limits": limits.describe()}
     lower = target.lower()
+    if lower.endswith(BANK_EXTS):
+        name = os.path.basename(target)
+        ext = "." + lower.rsplit(".", 1)[-1]
+        size = os.path.getsize(target)
+        report["verdict"] = "audio-bank"
+        if size > MEDIA_MAX_BYTES:
+            report["bank_facts"] = [{
+                "file": name,
+                "not_readable": f"file is {size} bytes, "
+                                f"over the "
+                                f"{MEDIA_MAX_BYTES}-byte "
+                                "bank-facts limit; skipped"}]
+        else:
+            with mapped_file(target) as data:
+                report["bank_facts"] = [{
+                    "file": name,
+                    "bank": _mediainfo_mod.wwise_bank_facts(
+                        data, ext)}]
+        report["limitations"] = [
+            "Bank facts are header and section facts "
+            "from the file bytes (narlib.mediainfo); "
+            "embedded audio payloads are not decoded.",
+        ]
+        return report
+    if lower.endswith(".locres"):
+        name = os.path.basename(target)
+        report["verdict"] = "locres"
+        report.update(_member_census(
+            [(lower, os.path.getsize(target))]))
+        try:
+            with mapped_file(target) as data:
+                parsed = parse_locres(data, name)
+            report["locres_files"] = [{
+                "file": name,
+                "locres": _locres_presentation(parsed)}]
+        except LocResError as e:
+            report["locres_files"] = [{
+                "file": name,
+                "error": f".locres parse failed: {e}"}]
+        report["capabilities"] = unreal_capabilities()
+        report["limitations"] = _locres_limitations()
+        return report
     if lower.endswith((".uasset", ".umap")):
         stem = target.rsplit(".", 1)[0]
         # Bare packages are mapped, not read whole (the
@@ -777,6 +1205,17 @@ def analyze(target, work_dir=None, limits=None):
     if lower.endswith(".pak"):
         report["verdict"] = "pak-container"
         report["paks"] = [pak_summary(target)]
+        summary = report["paks"][0]
+        if summary.get("bnk_count") or summary.get("wem_count") \
+                or summary.get("locres_count"):
+            if work_dir:
+                _attach_pak_media(
+                    summary, target,
+                    os.path.join(work_dir, "pak-media"))
+            else:
+                with tempfile.TemporaryDirectory(
+                        prefix="nar-unreal-media-") as td:
+                    _attach_pak_media(summary, target, td)
         if work_dir:
             pkgs, total, pkg_counts = pak_packages(
                 target, os.path.join(work_dir, "pak-assets"),
@@ -790,13 +1229,14 @@ def analyze(target, work_dir=None, limits=None):
                     f"{limits.max_packages} of {total} "
                     "(--max-packages or --all-packages to "
                     "lift); counts cover every package")
-            report["limitations"] = _package_limitations()
+            report["limitations"] = _package_limitations() \
+                + _locres_limitations()
         else:
             report["limitations"] = [
                 "Asset-level parsing inside a .pak needs "
                 "--work DIR (entries are extracted there "
                 "first).",
-            ]
+            ] + _locres_limitations()
         return report
     if lower.endswith(".utoc"):
         sibling = target[:-5] + ".ucas"
@@ -820,6 +1260,10 @@ def analyze(target, work_dir=None, limits=None):
             container = iostore_summary(
                 utoc_bytes, os.path.basename(target),
                 ucas_name, ucas_size, limits=limits)
+            if not container.get("error"):
+                _attach_iostore_media(
+                    container, utoc_bytes, ucas_bytes,
+                    os.path.basename(target))
             report["verdict"] = "iostore-container"
             report["generation"] = "UE5-era (IoStore packaging)"
             report["iostore_files"] = [os.path.basename(target)]
@@ -828,7 +1272,8 @@ def analyze(target, work_dir=None, limits=None):
                 1, 0 if container.get("error") else 1,
                 1 if container.get("error") else 0)
             report["capabilities"] = unreal_capabilities()
-            report["limitations"] = _iostore_limitations()
+            report["limitations"] = _iostore_limitations() \
+                + _locres_limitations()
             pkgs, pkg_counts = iostore_packages(
                 utoc_bytes, ucas_bytes,
                 os.path.basename(target), limits=limits)
@@ -881,6 +1326,10 @@ def analyze(target, work_dir=None, limits=None):
                     with open(tmp, "wb") as fh:
                         fh.write(zf.read(name))
                     summary = pak_summary(tmp)
+                    _attach_pak_media(
+                        summary, tmp,
+                        os.path.join(work_dir, "pak-media",
+                                     os.path.basename(name)))
                     extracted_paks.append((name, tmp))
                 else:
                     summary = {"entry": name,
@@ -904,9 +1353,19 @@ def analyze(target, work_dir=None, limits=None):
             ucas_name = ucas_by_prefix.get(name[:-5].lower())
             ucas_size = (infos[ucas_name].file_size
                          if ucas_name else None)
-            containers.append(iostore_summary(
-                zf.read(name), name, ucas_name, ucas_size,
-                limits=limits))
+            utoc_bytes = zf.read(name)
+            container = iostore_summary(
+                utoc_bytes, name, ucas_name, ucas_size,
+                limits=limits)
+            if not container.get("error") and (
+                    container.get("bnk_count")
+                    or container.get("wem_count")
+                    or container.get("locres_count")):
+                _attach_iostore_media(
+                    container, utoc_bytes,
+                    zf.read(ucas_name) if ucas_name else None,
+                    name)
+            containers.append(container)
         loose_names = asset_names \
             if limits.max_packages is None \
             else asset_names[:limits.max_packages]
@@ -1027,7 +1486,7 @@ def analyze(target, work_dir=None, limits=None):
     limitations = [
         "Encrypted pak entries are counted, never decrypted "
         "(key extraction is out of scope).",
-    ]
+    ] + _locres_limitations()
     if containers:
         limitations = _iostore_limitations() + limitations
     if packages or io_packages or pak_pkgs:
@@ -1161,11 +1620,19 @@ def human(report):
               f"{pak.get('entry_count')}, encrypted "
               f"{pak.get('encrypted_entries')}, uassets "
               f"{pak.get('uasset_count')}, maps "
-              f"{pak.get('umap_count')}")
+              f"{pak.get('umap_count')}"
+              + (f", locres {pak.get('locres_count')} "
+                 f"({pak.get('locres_total_bytes')} bytes), "
+                 f"bnk {pak.get('bnk_count')} "
+                 f"({pak.get('bnk_total_bytes')} bytes), "
+                 f"wem {pak.get('wem_count')} "
+                 f"({pak.get('wem_total_bytes')} bytes)"
+                 if "locres_count" in pak else ""))
         if pak.get("note"):
             print(f"    {pak['note']}")
         if pak.get("error"):
             print(f"    ERROR: {pak['error']}")
+        _human_media(pak)
     if report.get("iostore_files"):
         print(f"IoStore files: {report['iostore_files']}")
     for c in report.get("iostore_containers", []):
@@ -1188,6 +1655,17 @@ def human(report):
             print(f"    directory index: mount "
                   f"{di.get('mount_point')!r}, "
                   f"{di.get('files_named')} files named")
+        if "locres_count" in c and (
+                c.get("locres_count") or c.get("bnk_count")
+                or c.get("wem_count")):
+            print(f"    media/localization members: locres "
+                  f"{c.get('locres_count')} "
+                  f"({c.get('locres_total_bytes')} bytes), "
+                  f"bnk {c.get('bnk_count')} "
+                  f"({c.get('bnk_total_bytes')} bytes), "
+                  f"wem {c.get('wem_count')} "
+                  f"({c.get('wem_total_bytes')} bytes)")
+        _human_media(c)
         if c.get("entries_capped"):
             print(f"    {c['entries_capped']}")
     for key in ("iostore_container_counts", "package_counts",
@@ -1211,8 +1689,38 @@ def human(report):
     if report.get("package_file_count"):
         print(f"Package files in target: "
               f"{report['package_file_count']}")
+    _human_media(report)
     for lim in report.get("limitations", []):
         print(f"limitation: {lim}")
+
+
+def _human_media(record):
+    """Bank-fact and .locres lines for one container /
+    pak / top-level record, when it carries them."""
+    for bf in record.get("bank_facts") or []:
+        bank = bf.get("bank") or {}
+        if bf.get("not_readable"):
+            print(f"    bank {bf.get('file')}: not readable "
+                  f"({bf['not_readable']})")
+        else:
+            print(f"    bank {bf.get('file')}: "
+                  f"{bank.get('format')}, version "
+                  f"{bank.get('version')}, id "
+                  f"{bank.get('bank_id')}, sections "
+                  f"{bank.get('section_ids') or bank.get('chunks')}")
+    for lf in record.get("locres_files") or []:
+        loc = lf.get("locres") or {}
+        if lf.get("not_readable"):
+            print(f"    locres {lf.get('file')}: not readable "
+                  f"({lf['not_readable']})")
+        elif lf.get("error"):
+            print(f"    locres {lf.get('file')}: "
+                  f"{lf['error']}")
+        else:
+            print(f"    locres {lf.get('file')}: "
+                  f"{loc.get('namespace_count')} namespaces, "
+                  f"{loc.get('entry_count')} entries, "
+                  f"{loc.get('string_count')} strings")
 
 
 def _human_package(pkg):
@@ -1269,8 +1777,8 @@ def main(argv=None):
                     "inventory/encryption, IoStore parsing, and "
                     "UAsset-level package inspection.")
     p.add_argument("target",
-                   help="path to an .apk, .pak, .utoc, .uasset "
-                        "or .umap file")
+                   help="path to an .apk, .pak, .utoc, .uasset, "
+                        ".umap, .bnk, .wem or .locres file")
     p.add_argument("--json", action="store_true")
     p.add_argument("--work", metavar="DIR",
                    help="extraction dir for parsing bundled paks")

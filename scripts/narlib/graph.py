@@ -58,6 +58,30 @@ EDGE_KINDS = (
 
 # nar-unreal relationship kind -> graph edge kind (2.6.1:
 # Unreal package relationships joined into the graph).
+try:
+    from . import formats_registry as _formats_registry
+except Exception:  # registry unavailable: names pass through
+    _formats_registry = None
+
+
+def _canonical_engine_name(name):
+    """Resolve an engine verdict name through formats.json
+    (Part 16): a registry id or display name maps to the
+    registry's canonical display name; an unknown name passes
+    through unchanged (never dropped)."""
+    if _formats_registry is None or not name:
+        return name
+    try:
+        doc = _formats_registry.load_formats()
+    except Exception:
+        return name
+    entry = (doc.get("engines") or {}).get(name)
+    if entry:
+        return entry.get("name") or name
+    found = _formats_registry.engine_by_name(name, doc)
+    return found["name"] if found else name
+
+
 _UNREAL_EDGE_KINDS = {
     "class": "unreal_class", "super": "unreal_super",
     "outer": "unreal_outer", "template": "unreal_template",
@@ -293,7 +317,7 @@ def build_graph(dex_data=None, native_data=None,
                 fingerprint_data=None, engines_data=None,
                 security_data=None, assets_data=None,
                 correlations_data=None, unreal_data=None,
-                version="2.6.2"):
+                version="3.0.0"):
     """Build the graph document. Any input may be None (a
     degraded stage): its nodes/edges are then absent and a
     note records the gap, mirroring correlations."""
@@ -484,7 +508,7 @@ def build_graph(dex_data=None, native_data=None,
                 engines_data.get("verdicts") or []):
             if not verdict.get("detected"):
                 continue
-            ename = verdict.get("engine")
+            ename = _canonical_engine_name(verdict.get("engine"))
             if not ename:
                 continue
             eid = g.node(

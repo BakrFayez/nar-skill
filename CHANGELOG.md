@@ -2,6 +2,193 @@
 
 ## Unreleased
 
+## 3.0.0 — the answer release (2026-11-25; prepared on the `3.0.0` branch; final acceptance group complete — publication is the owner's decision)
+
+The release whose goal is that any question about any app or
+game gets a complete, evidence-cited answer — never a bare
+"I don't know". Verification labels below are per Part:
+**verified** = executed acceptance on fixtures and/or real
+targets in this round; **synthetic-only** = proven on
+synthetic fixtures, no real corpus; **NOT RUN** = not
+executed, with the reason. The Part 13 verification protocol
+and the Part 15 five-target acceptance were run by the final
+group; their measured outcomes are in the Part 13 + 15 entry
+below and in docs/NAR_3.0.0_UPDATE_REPORT.md.
+
+- Part 0 (contract): the Answer Contract (ANSWER / EVIDENCE /
+  CONFIDENCE / WHY / CHAIN / BOUNDARY, plus REASON / PROBE /
+  COST when unknown) is the output shape of `nar ask` and the
+  citation discipline of `nar blueprint`. Verified in the
+  Part 7 acceptance run (120 answers, 0 contract violations).
+- Part 1 (coverage doctrine): `scripts/coverage.json`
+  generated from the registry; `nar coverage [--gap]`
+  enumerates every non-supported entry with reason + cheapest
+  probe. Verified.
+- Part 2 (containers): one shared container layer resolves
+  APK/AAB/APKS/XAPK/APKM/OBB and nested wrappers; splits are
+  merged by default with per-item `source_split` provenance,
+  and `--no-merge-splits` reproduces 2.6.2 output
+  byte-identically (6/6 empty diffs). Verified on a retained
+  real XAPK (0 → 95 assets, 0 → 18 native libraries).
+- Part 3 (engines): 3.1 — engine detection reads JNI dynamic
+  symbols, fixing a demonstrably wrong verdict (a Cocos2d-x
+  build with a non-canonical library name scored
+  not-detected; now medium on JNI alone, high with a DEX
+  marker); no-regression sweep over 44 retained targets.
+  3.2 — deep dives for 21 more families through
+  `nar-engines --deep`; per-family status is whatever the
+  evidence supports in the registry (supported / partial /
+  identified_only, never inflated). Unreal `.locres` string
+  tables decode and reconcile exactly on real samples
+  (482 namespaces / 4,806 entries). Verified per family on
+  fixtures; most breadth families are synthetic-only (no
+  real local corpus), and their registry reasons say so.
+- Part 4 (assets & animation): `nar atlas` and `nar anim`
+  verbs; compressed-texture header decode; atlas parsers
+  with part grouping and inferred composition classification;
+  animation-system parsers (Spine, DragonBones, Lottie,
+  Aseprite, Godot, Spriter, Creature decoded at stated
+  fidelity; Rive and Spine `.skel` header-level); the
+  Composition Report. Verified on fixtures and on a real
+  container target — measured 30 atlases / 672 frames with
+  parser reach 71/71 over the target's plist members; the
+  brief's larger numeric thresholds were **not met** because
+  that build ships fewer, and the code was not tuned to the
+  number.
+- Part 5 (scripts): `nar script` verb — structural parsers
+  for Lua/LuaJIT, GDScript, Dart (via nar-flutter), Hermes
+  (via nar-rn), JavaScript bundles, WebAssembly (full
+  structural parse), .NET CIL (via dotnetmeta), Python
+  `.pyc` (structural marshal census, never executed),
+  AngelScript/Squirrel/Pawn; custom-VM bytecode is detected
+  and named, never decoded, and undecoded bytecode is never
+  presented as source. Verified on synthetic fixtures plus
+  retained real fixtures.
+- Part 6 (apps): `nar app` verb and the app.json case
+  companion — Compose census, layout roots, WebView
+  JS-bridge surface, Activity/Fragment graph + deep-link
+  route map, SharedPreferences candidates, Room/SQLite
+  schemas read by a new read-only sqlite_master byte parser,
+  encrypted-storage detection, OAuth + JWT structure only
+  (values redacted; planted-token leak scan zero hits),
+  background work, declared-vs-referenced permission
+  over-request report, SDK inventory with versions from
+  META-INF `.version` files, compliance surface, and
+  evidence-cited screen + data-flow maps. Verified on
+  synthetic fixtures and three real targets run locally.
+  The SQLite parser is synthetic-fixture-verified only:
+  no local target ships a database member (measured), so a
+  real-app database parse is **NOT RUN**.
+- Part 7 (Q&A): `nar ask` — deterministic intent
+  classification (no LLM, no network), case reuse, full
+  Answer Contract on every answer, and a 289-question
+  canonical library, each question mapped to its serving
+  modules by test. Verified: 40 questions × 3 fixtures,
+  120 complete contracts, zero bare unknowns.
+- Part 8 (rebuild): `nar blueprint` — the 9-file rebuild
+  specification (features, architecture, data model, flows,
+  assets, network, build order, unrecoverable, unknowns)
+  from verified case evidence only; every feature claim
+  cited or marked inferred; evidence-free sections render
+  NOT RECOVERABLE. Verified on a fixture (48 claims,
+  0 uncited) and a real container target (51 claims,
+  0 uncited, redaction leak scan clean).
+- Part 9 (knowledge base): 26 per-family engine guides plus
+  asset-formats, animation-systems, script-formats,
+  app-patterns, protection-playbook, rebuild-playbook and
+  glossary guides. Every registry entry claiming
+  `supported` (114 of 114) has a guide section showing a
+  real command and a real captured output shape; a
+  docs-consistency guard now pins the section's existence.
+- Part 10 (cross-platform): the doctor resolves its Python
+  interpreter through `$NAR_PYTHON → python3 → python →
+  py -3` (≥ 3.10) and uses it for every self-check, fixing
+  the false `core_ok: false` on python-only systems;
+  verified by PATH simulation on Linux, including the old
+  doctor reproducing the defect under the same shim. The CI
+  matrix (ubuntu/windows/macos) is prepared in-tree;
+  Windows/macOS execution is **NOT RUN** locally (hosted CI
+  runs it at publication).
+- Part 10.5 (fallback chains): one failure-classification
+  enum and a chain runner with the Fallback Record;
+  the java-decompile chain (jadx → baksmali → dex2jar+cfr →
+  dex2jar+procyon → built-in disassembler) is wired into
+  `nar analyze` as a cached decompile stage. Verified:
+  kill-switch run (no external tools on PATH) completes a
+  full case served by the built-in disassembler; broken-JDK
+  run served by baksmali in under a second. The dex2jar
+  rungs are **NOT RUN** (tools absent here; they record
+  NOT_INSTALLED with an install hint).
+- Part 11 (performance): compact DEX document shape is the
+  default (method tables stored once, index-array class
+  methods); `--full` restores the 2.6.2 shape byte-identically.
+  On the largest retained fixture (273 MB): dex.json
+  390,522,756 → 153,375,252 bytes (−60.7%), nar-dex peak RSS
+  −36.8%; graph.json and investigation.json byte-identical
+  across shapes (control comparison: nondeterministic set
+  empty). Streaming writers for the large companions are
+  byte-identical to the previous writers on 316 documents.
+  `nar analyze --budget-mb N` aborts at a named, resumable
+  boundary (`memory-budget:<stage>`) instead of dying;
+  resume completes and verifies. Verified, including
+  `nar case verify` on compact, full, and retained pre-3.0
+  cases. Recorded in tests/benchmarks/baseline-3.0.0.json.
+- Part 12 (schemas & docs): schemas 37 → 38 (the brief's
+  set is complete: atlas, animation, coverage, blueprint,
+  ask, composition, question, and fallback-chain — the
+  chain record, cross-referenced with decompile.schema.json);
+  the capability matrix gains a one-row-per-coverage-entry
+  appendix (177 entries) generated from coverage.json;
+  SKILL.md routing covers every new verb; example prompts
+  extended for ask / blueprint / coverage / atlas / anim /
+  script / app.
+- Part 13 + Part 15 (verification & acceptance): **run by
+  the final group.** Part 13 protocol on the brief's audit
+  container: doctor PASS on Linux (Windows leg NOT RUN, no
+  host; simulation evidence stands), coverage gap list
+  50 entries each with reason + probe, analyze PASS
+  (7 native libraries, 3 splits merged, 2,413 assets),
+  both headline asks PASS with full contracts, blueprint
+  PASS (9 files, 52 feature bullets, 0 uncited), engines
+  PASS on the merged target (Cocos family detected, high,
+  15 matched JNI symbols), kill-switch PASS (complete case
+  served by the built-in disassembler, zero unclassified
+  failures), case verify PASS on both protocol cases.
+  Part 15: the full 289-question library × 5 targets =
+  1,445 answers — zero bare unknowns, 100% of non-unknown
+  answers evidence-cited, all 220 unknowns
+  contract-complete (every one a true `absent`), blueprint
+  9 files with citations on all five, case verify PASS on
+  all five. One defect found and fixed in-cycle (the answer
+  schema's intent enum missed the `scripts` intent; three
+  answers re-run clean). The fifth target is a recorded
+  substitution: no locally held target yields a genuine
+  `@Composable` census (measured — see the update report),
+  so the closest modern app ran in full and is not labelled
+  Compose. A 12-target real-app corpus sweep also completed
+  12/12 end-to-end; one ask wording defect (animation
+  answers claiming decoding for identified-only systems)
+  was found there, fixed, and re-run.
+- Part 14 (non-goals, held): analysis only — no app
+  modification, patching, repackaging, signature bypass,
+  IAP manipulation, currency granting, or DRM
+  circumvention; `dependencies = []` unchanged; no LLM/API
+  call at runtime; the 1.x compatibility surface unchanged.
+- Part 16 (generality): `scripts/formats.json` is the single
+  source of truth for engines and formats; detection,
+  triage, analysis, graph, and coverage all read it.
+  Verified by the generality test: a synthetic engine added
+  as one registry row + one fixture is detected, triaged,
+  covered, and analyzed with zero code changes, and removing
+  the row removes it everywhere. A guard test greps for
+  hardcoded target identifiers (zero hits).
+- Part 17 (delivery): one commit per Part on the `3.0.0`
+  branch; per-Part evidence in the round's audit record;
+  the 3.0.0 update report (docs/NAR_3.0.0_UPDATE_REPORT.md)
+  is assembled by the final group with the Part 15
+  transcript, the Part 13 protocol record and the
+  corpus-sweep summary. Nothing is published by this entry.
+
 ## 2.6.2 — stability & certification campaign (2026-11-25)
 
 The unpublished 2.6.2 tree was hardened in place under

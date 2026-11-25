@@ -48,8 +48,25 @@ analysis itself; the parsed document is field-identical
 either way, and every consumer of this output parses it
 as JSON. Human-readable output remains the default.
 
+Compact shape (3.0 Part 11, DEFAULT): the document is
+emitted in the compact shape — each DEX's method-id
+table is stored once (parallel class/name string tables
+plus [class_idx, name_idx, shorty] index rows), each
+class's defined methods are [method_idx, access_flags,
+kind] index rows into that table, fields are [name,
+type, kind] rows, and call edges are [from_method_idx,
+to_method_idx, kind_idx] rows over a per-DEX invoke-kind
+legend. The document carries "dex_format": "compact".
+--full restores the 2.6.2 document shape EXACTLY (every
+fact as per-method / per-edge objects, no dex_format
+marker); narlib.dex.expand_dex_classes /
+expand_call_edges read both shapes identically, and
+every in-repo consumer goes through them or through
+fields both shapes share.
+
 Usage:
     python3 nar-dex.py app.apk [--json] [--out DIR]
+                       [--compact | --full]
                        [--jadx] [--baksmali]
                        [--disassemble --disasm-class TEXT
                         [--disasm-method TEXT] | --disasm-all]
@@ -66,6 +83,7 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import container as container_mod  # noqa: E402
 from narlib import registry as reg_mod  # noqa: E402
 from narlib import dexdis  # noqa: E402
 from narlib import oat as oat_mod  # noqa: E402
@@ -262,7 +280,8 @@ def obfuscation_indicators(dex):
                     "not an obfuscated / not-obfuscated verdict."}
 
 
-def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None):
+def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None,
+                compact=True):
     dex = dex_obj if dex_obj is not None else Dex(data, name)
     strings = dex.strings()
     types = dex.types()
@@ -281,6 +300,8 @@ def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None):
     }
     classes = []
     call_edges = []
+    invoke_kinds = []
+    invoke_kind_idx = {}
     edge_count = 0
     string_ref_classes = {}
     native_methods = []
@@ -313,12 +334,15 @@ def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None):
     for cdef in defs:
         cls = cdef["class"]
         methods = []
-        for mname, flags, code_off, kind in dex.class_methods(
-                cdef["class_data_off"]):
+        for caller_idx, mname, flags, code_off, kind in \
+                dex.class_methods_indexed(cdef["class_data_off"]):
             is_native = bool(flags & 0x0100)
-            methods.append({"name": mname, "kind": kind,
-                            "native": is_native,
-                            "access_flags": flags})
+            if compact:
+                methods.append([caller_idx, flags, kind])
+            else:
+                methods.append({"name": mname, "kind": kind,
+                                "native": is_native,
+                                "access_flags": flags})
             if is_native:
                 native_methods.append({"class": cls, "name": mname})
             if code_off:
@@ -343,14 +367,24 @@ def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None):
                 for midx, ikind in scan["invokes"]:
                     edge_count += 1
                     if len(call_edges) < MAX_CALL_EDGES:
-                        ref = dex.method_full(midx)
-                        if ref:
-                            call_edges.append({
-                                "from_class": cls,
-                                "from_method": mname,
-                                "to_class": ref[0],
-                                "to_method": ref[1],
-                                "kind": ikind})
+                        if compact:
+                            if midx < dex.method_ids_size:
+                                kidx = invoke_kind_idx.get(ikind)
+                                if kidx is None:
+                                    kidx = len(invoke_kinds)
+                                    invoke_kind_idx[ikind] = kidx
+                                    invoke_kinds.append(ikind)
+                                call_edges.append(
+                                    [caller_idx, midx, kidx])
+                        else:
+                            ref = dex.method_full(midx)
+                            if ref:
+                                call_edges.append({
+                                    "from_class": cls,
+                                    "from_method": mname,
+                                    "to_class": ref[0],
+                                    "to_method": ref[1],
+                                    "kind": ikind})
                 for sidx in scan["string_refs"]:
                     if sidx < len(strings):
                         key = strings[sidx]
@@ -358,9 +392,14 @@ def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None):
                             key, set())
                         if len(bucket) < 50:
                             bucket.add(cls)
-        fields = [{"name": fname, "type": ftype, "kind": fkind}
-                  for fname, ftype, _fl, fkind
-                  in dex.class_fields(cdef["class_data_off"])]
+        if compact:
+            fields = [[fname, ftype, fkind]
+                      for fname, ftype, _fl, fkind
+                      in dex.class_fields(cdef["class_data_off"])]
+        else:
+            fields = [{"name": fname, "type": ftype, "kind": fkind}
+                      for fname, ftype, _fl, fkind
+                      in dex.class_fields(cdef["class_data_off"])]
         if has_metadata_type:
             for annotation in dex.class_annotations(cdef):
                 if annotation["type"] != "Lkotlin/Metadata;":
@@ -405,10 +444,38 @@ def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None):
                 ref[0] in REFLECTION_TYPES or ref[0] in LOADER_TYPES
                 or ref[0].startswith("Ljava/lang/reflect/")):
             reflection_method_refs.add(f"{ref[0]}->{ref[1]}")
+    if compact:
+        # The method-id table, stored once: parallel
+        # class/name string tables (first-use order over
+        # the method-id index space) plus one
+        # [class_idx, name_idx, shorty] row per method id.
+        # Class method rows and call edges above reference
+        # it by index instead of repeating the strings.
+        tbl_classes, tbl_names, tbl_ids = [], [], []
+        tbl_class_idx, tbl_name_idx = {}, {}
+        for idx in range(dex.method_ids_size):
+            ref = dex.method_ref(idx)
+            mcls, mname, mshorty = ref if ref else ("?", "?", "")
+            ci = tbl_class_idx.get(mcls)
+            if ci is None:
+                ci = len(tbl_classes)
+                tbl_class_idx[mcls] = ci
+                tbl_classes.append(mcls)
+            ni = tbl_name_idx.get(mname)
+            if ni is None:
+                ni = len(tbl_names)
+                tbl_name_idx[mname] = ni
+                tbl_names.append(mname)
+            tbl_ids.append([ci, ni, mshorty])
+        report["method_table"] = {
+            "classes": tbl_classes, "names": tbl_names,
+            "ids": tbl_ids}
     report["classes"] = classes
     report["class_count"] = len(classes)
     report["method_count"] = sum(len(c["methods"]) for c in classes)
     report["field_count"] = sum(len(c["fields"]) for c in classes)
+    if compact:
+        report["invoke_kinds"] = invoke_kinds
     report["call_edges"] = call_edges
     report["call_edge_count"] = edge_count
     report["call_edges_truncated"] = edge_count > len(call_edges)
@@ -585,10 +652,12 @@ def baksmali_index(dex_bytes_path, out_dir):
 
 def analyze(target, out_dir=None, use_jadx=False,
             use_baksmali=False, disasm=None, cfg=None,
-            xref=None):
-    report = {"tool": "nar-dex", "version": "2.6.2",
+            xref=None, merge_splits=True, compact=True):
+    report = {"tool": "nar-dex", "version": "3.0.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
+    if compact:
+        report["dex_format"] = "compact"
     artifact = compiled_artifact_info(target)
     if artifact is not None:
         report["compiled_artifact"] = artifact
@@ -596,7 +665,28 @@ def analyze(target, out_dir=None, use_jadx=False,
               "call_edges": 0, "native_methods": 0}
     first_dex_path = None
     dex_entries = []
-    for name, data in load_dexes(target):
+    # Container inputs resolve through narlib.container:
+    # the DEX set is the base APK's DEXes plus every merged
+    # split's DEXes (split DEXes are named
+    # "<archive>:<member>" so their provenance is explicit
+    # and the cross-DEX call graph spans the whole set).
+    resolved = None
+    dex_iter = load_dexes(target)
+    if merge_splits and os.path.isfile(target) and \
+            container_mod.detect_container(target) in \
+            container_mod.CONTAINER_KINDS:
+        resolved = container_mod.resolve_target(target)
+
+        def _merged_dexes(_resolved=resolved):
+            for _name, _data in load_dexes(_resolved.base):
+                yield _name, _data
+            for _split in _resolved.splits:
+                _prefix = os.path.basename(_split["path"]) + ":"
+                for _name, _data in load_dexes(_split["path"]):
+                    yield _prefix + _name, _data
+
+        dex_iter = _merged_dexes()
+    for name, data in dex_iter:
         if data is None:
             report["dex_files"].append({
                 "name": name,
@@ -626,7 +716,8 @@ def analyze(target, out_dir=None, use_jadx=False,
         try:
             dex_obj = Dex(data, name)
             dex_report = analyze_dex(name, data, disasm, cfg,
-                                     dex_obj=dex_obj)
+                                     dex_obj=dex_obj,
+                                     compact=compact)
         except DexError as e:
             report["dex_files"].append({"name": name,
                                         "error": str(e)})
@@ -651,13 +742,20 @@ def analyze(target, out_dir=None, use_jadx=False,
         # labeled by scope (single-dex / multi-dex).
         report["call_graph"] = dex_mod.assemble_call_graph(
             dex_entries, xref_pattern=xref)
+    if resolved is not None:
+        report["container"] = resolved.container_block()
+    jadx_target = resolved.base if resolved is not None \
+        else target
     if use_jadx:
         report["jadx"] = jadx_index(
-            target, os.path.join(out_dir or "nar-dex-jadx", "jadx"))
+            jadx_target,
+            os.path.join(out_dir or "nar-dex-jadx", "jadx"))
     if use_baksmali and first_dex_path:
         report["baksmali"] = baksmali_index(
             first_dex_path,
             os.path.join(out_dir or "nar-dex-smali", "smali"))
+    if resolved is not None:
+        resolved.cleanup()
     return report
 
 
@@ -776,6 +874,13 @@ def main(argv=None):
                                   ".vdex, .odex, .oat, or "
                                   ".cdex file")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--compact", action="store_true",
+                   help="emit the compact dex shape (3.0 "
+                        "Part 11; this is the default)")
+    p.add_argument("--full", action="store_true",
+                   help="emit the full 2.6.2 dex shape "
+                        "exactly (per-method / per-edge "
+                        "objects; larger)")
     p.add_argument("--out", metavar="DIR",
                    help="write classes/methods companion JSON here")
     p.add_argument("--jadx", action="store_true",
@@ -834,7 +939,8 @@ def main(argv=None):
                "limit": args.disasm_limit}
     try:
         report = analyze(args.target, args.out, args.jadx,
-                         args.baksmali, disasm, cfg, args.xref)
+                         args.baksmali, disasm, cfg, args.xref,
+                         compact=not args.full)
     except (FileNotFoundError, IsADirectoryError,
             zipfile.BadZipFile) as e:
         print(f"nar-dex: {e}", file=sys.stderr)
@@ -844,7 +950,11 @@ def main(argv=None):
         classes = []
         methods = []
         for d in report["dex_files"]:
-            for c in d.get("classes", []):
+            # The sidecars keep their 2.6.2 shape in both
+            # modes: compact class rows are expanded through
+            # the method table (narlib.dex), full rows pass
+            # through unchanged.
+            for c in dex_mod.expand_dex_classes(d):
                 classes.append({"dex": d["name"], **{
                     k: c[k] for k in ("class", "superclass",
                                       "interfaces")}})

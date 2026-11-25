@@ -8,6 +8,26 @@
    },
    "type": "array"
   },
+  "jni_scan": {
+   "description": "Part 3.1 additive block: summary of the lib/**/*.so dynamic-export scan behind the verdicts' jni_symbols evidence.",
+   "properties": {
+    "anative_activity_oncreate": {
+     "type": "boolean"
+    },
+    "libraries_scanned": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "libraries_with_exports": {
+     "minimum": 0,
+     "type": "integer"
+    },
+    "native_no_engine": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
   "target": {
    "type": "string"
   },
@@ -55,6 +75,41 @@
        "type": "object"
       },
       "type": "array"
+     },
+     "jni_symbols": {
+      "description": "Part 3.1 additive block: dynamic-symbol (JNI) evidence for this verdict, present only when the family's exported-symbol bar was met.",
+      "properties": {
+       "libraries": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "match_count": {
+        "minimum": 1,
+        "type": "integer"
+       },
+       "matched_symbols": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "strong_matches": {
+        "minimum": 0,
+        "type": "integer"
+       },
+       "weak_matches": {
+        "minimum": 0,
+        "type": "integer"
+       }
+      },
+      "required": [
+       "matched_symbols",
+       "match_count",
+       "libraries"
+      ],
+      "type": "object"
      },
      "recommended_next": {
       "type": [

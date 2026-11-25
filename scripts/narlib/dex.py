@@ -932,3 +932,137 @@ def identifier_shape_stats(dex):
             "methods": shape(method_names),
             "fields": shape(field_names),
             "class_def_failures": def_failures}
+
+
+# ------------------------------------------------------------------
+# Compact dex.json shape (3.0 Part 11)
+#
+# nar-dex's default output since 3.0 is the compact shape:
+# the per-DEX method-id table is stored ONCE (as parallel
+# class/name string tables plus [class_idx, name_idx,
+# shorty] index rows), each class's defined methods are
+# index rows into that table ([method_idx, access_flags,
+# kind] triples), fields are [name, type, kind] rows, and
+# call edges are [from_method_idx, to_method_idx,
+# kind_idx] rows over a per-DEX invoke-kind legend. The
+# full shape (2.6.2, restored by nar-dex --full) stores
+# the same facts as per-method / per-edge objects with the
+# class and method names repeated on every row.
+#
+# The helpers below are the ONE expansion path every
+# consumer of a dex document uses, so both shapes read
+# identically downstream: expand_dex_classes yields the
+# full-shape class rows, expand_call_edges yields the
+# full-shape edge rows, and dex_doc_format names the
+# shape. A document with no method_table is full shape
+# (every pre-3.0 document, and every --full document).
+# ------------------------------------------------------------------
+
+def dex_file_is_compact(dex_file):
+    """True when one dex_files entry is in compact shape."""
+    return isinstance(dex_file, dict) and \
+        "method_table" in dex_file
+
+
+def dex_doc_format(doc):
+    """'compact' or 'full' for a whole nar-dex document."""
+    for f in (doc or {}).get("dex_files") or []:
+        if dex_file_is_compact(f):
+            return "compact"
+    return "full"
+
+
+def _method_table_parts(dex_file):
+    table = dex_file.get("method_table") or {}
+    return (table.get("classes") or [],
+            table.get("names") or [],
+            table.get("ids") or [])
+
+
+def method_id_parts(dex_file, method_idx):
+    """(class_descriptor, name, shorty) for one method-table
+    index of a compact dex file; None when out of range."""
+    classes, names, ids = _method_table_parts(dex_file)
+    if not isinstance(method_idx, int) or \
+            not 0 <= method_idx < len(ids):
+        return None
+    row = ids[method_idx]
+    if not isinstance(row, (list, tuple)) or len(row) < 2:
+        return None
+    cls = classes[row[0]] if isinstance(row[0], int) and \
+        0 <= row[0] < len(classes) else "?"
+    name = names[row[1]] if isinstance(row[1], int) and \
+        0 <= row[1] < len(names) else "?"
+    shorty = row[2] if len(row) > 2 else ""
+    return (cls, name, shorty)
+
+
+def expand_class_row(dex_file, cls):
+    """One class entry of a dex file, in full shape:
+    {class, superclass, interfaces, methods: [{name, kind,
+    native, access_flags}], fields: [{name, type, kind}]}.
+    A full-shape row passes through unchanged; a compact
+    row's index/array rows are resolved through the
+    method table."""
+    if not dex_file_is_compact(dex_file):
+        return cls
+    methods = []
+    for row in cls.get("methods") or []:
+        if isinstance(row, dict):
+            methods.append(row)
+            continue
+        parts = method_id_parts(dex_file, row[0])
+        flags = row[1] if len(row) > 1 else 0
+        methods.append({
+            "name": parts[1] if parts else "?",
+            "kind": row[2] if len(row) > 2 else "direct",
+            "native": bool(flags & ACC_NATIVE),
+            "access_flags": flags})
+    fields = []
+    for row in cls.get("fields") or []:
+        if isinstance(row, dict):
+            fields.append(row)
+            continue
+        fields.append({
+            "name": row[0] if len(row) > 0 else "?",
+            "type": row[1] if len(row) > 1 else "?",
+            "kind": row[2] if len(row) > 2 else "instance"})
+    return {"class": cls.get("class"),
+            "superclass": cls.get("superclass"),
+            "interfaces": cls.get("interfaces") or [],
+            "methods": methods, "fields": fields}
+
+
+def expand_dex_classes(dex_file):
+    """All class entries of one dex file, in full shape."""
+    return [expand_class_row(dex_file, c)
+            for c in dex_file.get("classes") or []]
+
+
+def expand_call_edges(dex_file):
+    """All call edges of one dex file, in full shape:
+    [{from_class, from_method, to_class, to_method, kind}].
+    A full-shape edge passes through unchanged; a compact
+    [from_idx, to_idx, kind_idx] row resolves through the
+    method table and the invoke-kind legend."""
+    edges = dex_file.get("call_edges") or []
+    if not dex_file_is_compact(dex_file):
+        return list(edges)
+    kinds = dex_file.get("invoke_kinds") or []
+    out = []
+    for row in edges:
+        if isinstance(row, dict):
+            out.append(row)
+            continue
+        src = method_id_parts(dex_file, row[0])
+        dst = method_id_parts(dex_file, row[1])
+        kind = kinds[row[2]] if len(row) > 2 and \
+            isinstance(row[2], int) and \
+            0 <= row[2] < len(kinds) else "?"
+        out.append({
+            "from_class": src[0] if src else "?",
+            "from_method": src[1] if src else "?",
+            "to_class": dst[0] if dst else "?",
+            "to_method": dst[1] if dst else "?",
+            "kind": kind})
+    return out

@@ -121,7 +121,7 @@ def build_investigation(dex_data=None, native_data=None,
                         perms_data=None, network_data=None,
                         security_data=None,
                         correlations_data=None,
-                        engines_data=None, version="2.6.2"):
+                        engines_data=None, version="3.0.0"):
     facts, paths, hypotheses, unknowns = [], [], [], []
     unverified = []
     suppressed_hypotheses = []

@@ -289,5 +289,60 @@ class YamlValidityTest(unittest.TestCase):
         self.assertEqual(data["metadata"]["version"], found["SKILL.md"])
 
 
+class SupportedGuideTest(unittest.TestCase):
+    """Part 9 rule (3.0 knowledge base): a registry entry may
+    claim `supported` only if its guide section exists. The
+    section mapping follows the Part 9 guide table: engines
+    get one file per family under references/engines/, the
+    other registries get a headed section in their topical
+    guide. Existence of the section is pinned here; that the
+    section shows a real command with a real output shape is
+    established by the guide-production record (the guides
+    were written from captured runs)."""
+
+    GUIDE_FOR_SECTION = {
+        "asset_formats": "asset-formats.md",
+        "script_formats": "script-formats.md",
+        "animation_systems": "animation-systems.md",
+        "app_frameworks": "app-patterns.md",
+        "protection_kinds": "protection-playbook.md",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "scripts", "coverage.json"),
+                  encoding="utf-8") as fh:
+            cls.coverage = json.load(fh)
+
+    def test_supported_engines_have_a_family_guide(self):
+        for entry in self.coverage["engines"]:
+            if entry["status"] != "supported":
+                continue
+            rel = os.path.join("references", "engines",
+                               entry["id"] + ".md")
+            path = os.path.join(ROOT, rel)
+            self.assertTrue(os.path.isfile(path),
+                            "supported engine %s has no guide: %s"
+                            % (entry["id"], rel))
+            self.assertGreater(os.path.getsize(path), 400,
+                               "guide for %s is a stub" % entry["id"])
+
+    def test_supported_entries_have_a_guide_section(self):
+        for section, guide in self.GUIDE_FOR_SECTION.items():
+            text = _read(ROOT, os.path.join("references", guide))
+            heading_lines = re.findall(r"^##\s+(.+)$", text, re.M)
+            heading_tokens = set()
+            for line in heading_lines:
+                heading_tokens.update(re.findall(r"[a-z0-9][a-z0-9_-]*",
+                                                 line))
+            for entry in self.coverage[section]:
+                if entry["status"] != "supported":
+                    continue
+                self.assertIn(
+                    entry["id"], heading_tokens,
+                    "supported %s entry %s has no section in %s"
+                    % (section, entry["id"], guide))
+
+
 if __name__ == "__main__":
     unittest.main()

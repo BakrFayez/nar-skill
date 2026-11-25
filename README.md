@@ -7,7 +7,7 @@
 
 An AI agent skill for Android APK reverse engineering — all apps and games, old and new.
 
-Version 2.6.2
+Version 3.0.0
 
 NAR covers regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
 
@@ -56,9 +56,9 @@ Then open `SKILL.md` and follow the routing table for your question.
 
 ## Latest release
 
-**2.6.2** — a verification, security and integrity round, hardened by a full stability and certification campaign (3 critical and 21 high-priority audit defects fixed, each with regression tests; all 12 stability Definition-of-Done items pass). Unreal Zen relationships are verified on 2,644 real packages, and accuracy is measured on cross-labeled real corpora. Full record: [NAR_2.6.2_VERIFICATION_REPORT.md](docs/NAR_2.6.2_VERIFICATION_REPORT.md) and [NAR_FINAL_VERIFICATION_REPORT.md](docs/NAR_FINAL_VERIFICATION_REPORT.md).
+**3.0.0** — the answer release: any question about any app or game gets a complete, evidence-cited answer under the Answer Contract (`nar ask`), containers and split sets are resolved and merged by every module, engine detection reads JNI symbols and 21 more engine families gained deep dives, fallback chains replace single-tool dead ends, `nar atlas` / `nar anim` / `nar script` / `nar app` open the asset, animation, script and app-intelligence universes, `nar blueprint` emits a 9-file rebuild specification from verified evidence, and the compact DEX shape cuts the largest companion by 60.7%. This release is prepared on the `3.0.0` branch; publication follows the final acceptance run. Full record: [CHANGELOG.md](CHANGELOG.md) (3.0.0 section).
 
-Version history lives in [CHANGELOG.md](CHANGELOG.md); binaries and notes are on the [release page](https://github.com/BakrFayez/nar-skill/releases/tag/v2.6.2).
+Version history lives in [CHANGELOG.md](CHANGELOG.md); binaries and notes for published releases are on the [releases page](https://github.com/BakrFayez/nar-skill/releases).
 
 ## Example prompts
 
@@ -213,9 +213,11 @@ REA (reverse-engineer-anything) covers everything: native binaries, Electron app
 
 ## Documentation
 
-The guides in `references/` (25 guides, one per topic) carry the method in depth. The repository-level records:
+The guides in `references/` (26 guides, one per topic) carry the method in depth. The repository-level records:
 
 - [CHANGELOG.md](CHANGELOG.md) — release history (the only place version history lives)
+- [NAR_3.0.0_UPDATE_REPORT.md](docs/NAR_3.0.0_UPDATE_REPORT.md) — 3.0.0 update report: per-Part defect → fix → test → measured evidence, Part 13 protocol, Part 15 acceptance transcript, Definition-of-Done verdict
+- [NAR_COVERAGE_REPORT.md](docs/NAR_COVERAGE_REPORT.md) — generated coverage matrix and gap list: every non-supported entry with reason + probe
 - [NAR_2.6.2_VERIFICATION_REPORT.md](docs/NAR_2.6.2_VERIFICATION_REPORT.md) — 2.6.2 verification, security and integrity round: per-workstream record and final battery
 - [NAR_FINAL_VERIFICATION_REPORT.md](docs/NAR_FINAL_VERIFICATION_REPORT.md) — stability & certification campaign: final verification report and Definition-of-Done verdict
 - [NAR_STABILITY_AUDIT.md](docs/NAR_STABILITY_AUDIT.md) — stability audit: findings register by priority
@@ -246,11 +248,13 @@ nar-skill/
     NAR_2.6.0_UPDATE_REPORT.md      2.6.0 update report
     NAR_2.6.1_VERIFICATION_REPORT.md  2.6.1 verification report
     NAR_2.6.2_VERIFICATION_REPORT.md  2.6.2 verification, security and integrity record
+    NAR_3.0.0_UPDATE_REPORT.md      3.0.0 update report: per-Part evidence, acceptance, DoD verdict
     NAR_ACCURACY_REPORT.md          Labeled-corpus accuracy measurements
     NAR_ARCHITECTURE.md             System architecture (2.0 program record)
     NAR_AUDIT.md                    Repository audit + reconciliation record
     NAR_CAPABILITY_MATRIX.md        Capability matrix: one row per capability area, with status + evidence
     NAR_COMPATIBILITY_REPORT.md     Compatibility and regression record
+    NAR_COVERAGE_REPORT.md          Generated coverage matrix + gap list (reason + probe per gap)
     NAR_FINAL_VERIFICATION_REPORT.md  Stability & certification campaign: final verification report
     NAR_GAP_ANALYSIS.md             Capability baseline with per-area statuses
     NAR_IMPLEMENTATION_PLAN.md      Phase plans and completion records
@@ -261,9 +265,12 @@ nar-skill/
     NAR_STABILITY_AUDIT.md          Stability audit: findings register by priority
     NAR_TEST_MATRIX.md              Executed test evidence matrix
   .gitignore                Keeps APKs and decoded output out of git
-  references/               One guide per topic (25 guides)
+  references/               One guide per topic (33 guides)
+    animation-systems.md
     app-bundles.md
+    app-patterns.md
     architecture.md
+    asset-formats.md
     benchmarks.md
     dex-smali-and-decompile.md
     dynamic-analysis.md
@@ -271,15 +278,21 @@ nar-skill/
     example-prompts.md
     flutter-dart.md
     frida-scripts.md
+    glossary.md
     legacy-analysis.md
     manifest-and-resources.md
     modern-analysis.md
     native-libs-and-jni.md
     network-traffic.md
     output-schema.md
+    protection-playbook.md
+    question-library.json   Canonical `nar ask` question library (289 questions; validated by question.schema.json)
+    question-library.md     Human rendering of question-library.json (kept in sync by test)
     react-native.md
+    rebuild-playbook.md
     release-guide.md
     safety-and-authorization.md
+    script-formats.md
     setup-and-doctor.md
     signatures-and-integrity.md
     tool-registry.md
@@ -287,20 +300,56 @@ nar-skill/
     troubleshooting.md
     unity-il2cpp.md
     version-compare-and-feature-map.md
-  schemas/                  JSON schemas for the structured outputs (26 schemas)
+    engines/                Per-family engine guides (26)
+      adobe-air.md
+      bevy-rust.md
+      capacitor.md
+      cocos2d-x.md
+      cordova.md
+      defold.md
+      ebitengine.md
+      embedded-python.md
+      flutter.md
+      gamemaker.md
+      godot.md
+      heaps-haxe.md
+      libgdx.md
+      love.md
+      monogame-fna.md
+      qt.md
+      react-native.md
+      renpy.md
+      rpg-maker.md
+      sdl.md
+      solar2d.md
+      unity-il2cpp.md
+      unity-mono.md
+      unreal.md
+      web-assets.md
+      xamarin-dotnet.md
+  schemas/                  JSON schemas for the structured outputs (38 schemas)
+    animation.schema.json
     api-architecture.schema.json
+    app.schema.json
     application.schema.json
+    ask.schema.json
+    blueprint.schema.json
     assets.schema.json
+    atlas.schema.json
     case.schema.json
     compare-feature-map.schema.json
     comparison.schema.json
+    composition.schema.json
     correlations.schema.json
+    coverage.schema.json
+    decompile.schema.json
     dex.schema.json
     dex-classes.schema.json
     dex-methods.schema.json
     endpoints.schema.json
     engine.schema.json
     execution-log.schema.json
+    fallback-chain.schema.json
     fingerprint.schema.json
     frameworks.schema.json
     graph.schema.json
@@ -311,8 +360,10 @@ nar-skill/
     native-inventory.schema.json
     network-analysis.schema.json
     permissions.schema.json
+    question.schema.json
     report.schema.json
     runtime-session.schema.json
+    script.schema.json
     security-findings.schema.json
     timeline.schema.json
   scripts/
@@ -335,35 +386,77 @@ nar-skill/
     nar-flutter.py          Flutter/Dart fingerprint (plain and --json)
     nar-godot.py            Godot .pck inspector (plain and --json)
     nar-rn.py               React Native bundle inspector (plain and --json)
+    nar-cocos.py            Cocos2d-x deep dive: plist atlases/particles, .ccb/.csb, .jsc census (nar-engines --deep)
+    nar-libgdx.py           libGDX deep dive: .atlas/.pack, .tmx maps, GWT/RoboVM markers (nar-engines --deep)
+    nar-defold.py           Defold deep dive: .arci index walk + .arcd census (nar-engines --deep)
+    nar-gamemaker.py        GameMaker deep dive: data.win chunk walk + string census (nar-engines --deep)
+    nar-renpy.py            Ren'Py deep dive: .rpa index (restricted unpickler) + .rpyc census (nar-engines --deep)
+    nar-solar2d.py          Solar2D deep dive: resource.car listing + Lua census (nar-engines --deep)
+    nar-heaps.py            Heaps/HashLink deep dive: hlboot.dat header facts (nar-engines --deep)
+    nar-qt.py               Qt deep dive: .rcc tree walk + resource listing (nar-engines --deep)
+    nar-cordova.py          Cordova deep dive: config.xml, www census, plugin merge (nar-engines --deep)
+    nar-capacitor.py        Capacitor deep dive: config, public/ census, plugin list (nar-engines --deep)
+    nar-air.py              Adobe AIR deep dive: application.xml descriptor + SWF tag census (nar-engines --deep)
+    nar-love.py             LÖVE deep dive: .love listing + conf.lua facts (nar-engines --deep)
+    nar-rpgmaker.py         RPG Maker deep dive: www/data census + plugin list (nar-engines --deep)
+    nar-webassets.py        Web-assets deep dive: www inventory + JS framework markers (nar-engines --deep)
+    nar-xamarin.py          Xamarin deep dive: assemblies + assemblies.blob carving via dotnetmeta (nar-engines --deep)
+    nar-monogame.py         MonoGame/FNA deep dive: framework assembly + .xnb census (nar-engines --deep)
+    nar-mono.py             Unity Mono deep dive: Managed assembly census + obfuscation indicator (nar-engines --deep)
+    nar-python.py           Embedded Python deep dive: .pyc header + code-object census, Kivy facts (nar-engines --deep)
+    nar-sdl.py              SDL deep dive: SDL dynsym census via narlib.elf (nar-engines --deep)
+    nar-ebiten.py           Ebitengine deep dive: Go build info + embedded asset census (nar-engines --deep)
+    nar-bevy.py             Bevy deep dive: asset census + .ron facts + rust evidence (nar-engines --deep)
     nar-network.py          Static network intelligence: endpoints, services, NSC
     nar-security.py         Structured security findings (NAR-SEC schema)
     nar-assets.py           Typed asset inventory (types, sizes, hashes, duplicates)
     nar-runtime.py          Runtime observation: adb + Frida adapters, session plans
     nar-report.py           Offline HTML dashboard for a case directory
     nar-tools.py            Tool-registry view: declared tools with live probes
+    nar-coverage.py         Coverage matrix + gap report from formats.json (nar coverage)
+    nar-ask.py              Q&A layer: deterministic intent classification + Answer Contract answers from a case (nar ask)
+    nar-blueprint.py        Rebuild layer: 9-file rebuild specification from verified case evidence (nar blueprint)
+    nar-atlas.py            Sprite-atlas layer: Cocos/TexturePacker/Starling/libGDX/Godot/Unity atlas parsing + part grouping (nar atlas)
+    nar-anim.py             Animation layer: Spine/DragonBones/Lottie/Aseprite/Godot/Spriter/Unity/Cocos systems + composition report (nar anim)
+    nar-script.py           Script & bytecode layer: Lua/LuaJIT, GDScript, Dart, Hermes, JS bundles, Wasm, .NET CIL, .pyc, AngelScript/Squirrel/Pawn, custom VM (nar script)
+    nar-app.py              App layer: UI frameworks (Compose census, layouts, WebView bridge), navigation/route map, storage (SharedPreferences, Room/SQLite, DataStore), encrypted storage, auth (JWT structure only), background work, permissions in use, SDKs, compliance — app.json companion (nar app)
+    formats.json            Single source of truth: engines, asset/script formats, animation systems, frameworks, protections
+    coverage.json           Coverage matrix generated from formats.json (freshness-tested)
     registry.json           Capability registry: every orchestrated tool, probed
     protection-signatures.json  Versioned protection-signature database (nar-triage, via narlib)
     narlib/                 Shared core library used by the 2.0 modules
       __init__.py
+      anim.py               Animation-system parsers (Spine, DragonBones, Lottie, Aseprite, Godot, Spriter, Rive, Unity, Cocos) + physics-rig detection
+      atlas.py              Sprite-atlas parsers (Cocos plist, TexturePacker, Starling/Phaser, libGDX, Godot, Unity SpriteAtlas)
       budget.py             ResourceBudget: validated archive/resource limits shared by the extraction paths
       cdex.py               Compact DEX header + section-table parser (payload not decoded)
+      chains.py             Fallback chains: chain runner, chain registry, java-decompile chain (Part 10.5)
       companions.py         Brief-named case companion projections
+      composition.py        Part grouping + composition classification over atlas/animation parts (generalised naming discovery)
+      container.py          Container detection + split-set resolution (base pick, merged roots, duplicates)
       correlations.py       Cross-module correlation records (DEX/ELF/manifest/network joins)
       dex.py                DEX parser (tables, hierarchies, call edges)
       dexdis.py             DEX disassembler (oracle-verified listings)
       dotnetmeta.py         .NET / Xamarin metadata reader
       elf.py                ELF parser (headers, dynamic, symbols, hardening)
       evidence.py           Evidence envelope + fact classes
+      failures.py           Failure classification enum (FailureKind) for fallback chains
       formats.py            Magic + structure format identification
+      formats_registry.py   formats.json loader: derived engine/format tables + coverage projection
       graph.py              Unified application intelligence graph (graph.json companion)
       hashing.py            Streaming hashes
       iostore.py            Unreal IoStore (UTOC/UCAS) parser
       investigation.py      Deterministic offline investigation layer (investigation.json companion)
+      locres.py             Unreal .locres string-table parser (v1 layout verified on real samples)
+      mediainfo.py          Media header facts: Wwise banks, video codec/profile, font glyph/name/subsetting, model counts
       mmapio.py             Read-only file mapping (mmap) for the parsers
       oat.py                OAT / VDEX / ODEX / ART parser
       registry.py           Capability-registry reader
       safearchive.py        Guarded archive extraction (slip/bomb/traversal)
+      scriptparse.py        Script/bytecode structural parsers (Lua, GDScript, Wasm, .pyc marshal walker, JS census, Pawn AMX, Squirrel)
+      sqlite.py             Read-only SQLite schema parser (header + sqlite_master page walk over raw bytes; never the sqlite3 module)
       signatures.py         Protection-signature database loader + validator
+      textures.py           Compressed-texture header decode (ASTC, KTX/KTX2, PVR, DDS, PKM: dimensions, block geometry, mips)
       uasset.py             Classic Unreal package inspector
       zen.py                Unreal Zen package parser
     frida/                  Frida observation scripts (Java, JNI, file, network)
@@ -383,10 +476,11 @@ nar-skill/
     benchmarks/
       run_benchmarks.py     Fixture-corpus benchmark runner (timings, accuracy metrics, peak memory)
       check_regression.py   Regression gate over the committed baselines
-      baseline-2.5.2.json   Per-release performance baselines (2.5.2 … 2.6.2)
+      baseline-2.5.2.json   Per-release performance baselines (2.5.2 … 3.0.0)
       baseline-2.6.0.json
       baseline-2.6.1.json
       baseline-2.6.2.json
+      baseline-3.0.0.json   3.0.0 performance record: module timings, peak memory, compact-vs-full DEX sizes
       accuracy-2.6.2.json   The 2.6.2 labeled-corpus accuracy record
   examples/
     sample-report.md        Filled report from a real triage run

@@ -41,6 +41,13 @@ working standalone, exactly as in 1.x):
                                fixture corpus
     nar runtime SUBCMD         runtime subsystem (status /
                                plan / timeline-template)
+    nar coverage [--gap]       coverage matrix from
+                               formats.json (Part 1/16)
+    nar ask "Q" APP [--json]   question answering over a
+                               case (Part 7 Answer Contract)
+    nar blueprint APP          rebuild specification from
+           [--out DIR]         verified evidence (Part 8:
+                               9 files, cited claims)
     nar version                product identity + version
 
 Part of NAR (Nirous Android Reversing).
@@ -55,7 +62,7 @@ sys.path.insert(0, HERE)
 try:
     from narlib import __version__ as VERSION
 except Exception:
-    VERSION = "2.6.2"
+    VERSION = "3.0.0"
 
 # verb -> (kind, script, fixed prefix args). The prefix is how
 # the alias verbs (identify / validate) reach the nar-input
@@ -89,6 +96,13 @@ COMMANDS = {
     "benchmark": ("py", os.path.join(
         "..", "tests", "benchmarks", "run_benchmarks.py"), []),
     "runtime": ("py", "nar-runtime.py", []),
+    "coverage": ("py", "nar-coverage.py", []),
+    "ask": ("py", "nar-ask.py", []),
+    "blueprint": ("py", "nar-blueprint.py", []),
+    "atlas": ("py", "nar-atlas.py", []),
+    "anim": ("py", "nar-anim.py", []),
+    "script": ("py", "nar-script.py", []),
+    "app": ("py", "nar-app.py", []),
 }
 
 CASE_USAGE = """usage: nar case <export|import|verify|graph|investigation> ...

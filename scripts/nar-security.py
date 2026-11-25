@@ -40,6 +40,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import container as container_mod  # noqa: E402
+from narlib import dex as dexlib  # noqa: E402
 from narlib import evidence as ev  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 
@@ -85,9 +87,23 @@ class Findings:
 
 
 def review(target, deep=False, work_dir=None):
-    perms = run_json_tool("nar-perms.py", [target])
+    # Container inputs resolve through narlib.container:
+    # the manifest audit (nar-perms) runs on the base APK —
+    # never on the container file itself as if it were an
+    # APK — while triage / network / dex consume the
+    # container through their own resolution. The resolution
+    # is recorded under the report's `container` block.
+    resolved = None
+    if container_mod.detect_container(target) in \
+            container_mod.CONTAINER_KINDS:
+        resolved = container_mod.resolve_target(target)
+    perms_target = resolved.base if resolved is not None \
+        else target
+    perms = run_json_tool("nar-perms.py", [perms_target])
     triage = run_json_tool("nar-triage.py", [target])
     if perms is None or triage is None:
+        if resolved is not None:
+            resolved.cleanup()
         raise RuntimeError("nar-perms/nar-triage failed")
     network_args = [target]
     network = run_json_tool("nar-network.py", network_args)
@@ -296,7 +312,10 @@ def review(target, deep=False, work_dir=None):
                 loaders.update(
                     d.get("reflection", {}).get(
                         "loader_types_present", []))
-                for edge in d.get("call_edges", []):
+                # nar-dex emits compact call edges by
+                # default since 3.0; expand_call_edges
+                # reads both shapes identically.
+                for edge in dexlib.expand_call_edges(d):
                     if edge.get("to_method") == \
                             "addJavascriptInterface":
                         js_bridge = True
@@ -336,17 +355,21 @@ def review(target, deep=False, work_dir=None):
                     "The bridge may only serve first-party "
                     "bundled pages.",
                     verification_status="STRONGLY_INDICATED")
-    return {"tool": "nar-security", "version": "2.6.2",
-            "target": os.path.abspath(target),
-            "target_sha256": sha256_of(target),
-            "findings": findings.items,
-            "checks_skipped": skipped,
-            "positive_observations": positives,
-            "severity_counts": {
-                s: sum(1 for f in findings.items
-                       if f["severity"] == s)
-                for s in ("critical", "high", "medium", "low",
-                          "informational")}}
+    report = {"tool": "nar-security", "version": "3.0.0",
+              "target": os.path.abspath(target),
+              "target_sha256": sha256_of(target),
+              "findings": findings.items,
+              "checks_skipped": skipped,
+              "positive_observations": positives,
+              "severity_counts": {
+                  s: sum(1 for f in findings.items
+                         if f["severity"] == s)
+                  for s in ("critical", "high", "medium", "low",
+                            "informational")}}
+    if resolved is not None:
+        report["container"] = resolved.container_block()
+        resolved.cleanup()
+    return report
 
 
 def human(report):

@@ -1,0 +1,2877 @@
+{
+ "version": "1",
+ "questions": [
+  {
+   "question": "What is this app?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is this?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is this game?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What package is this?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is the package name?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What version is this app?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What version is it?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is the app name?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is the name of this app?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Who made this app?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Who developed this game?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "How big is it in size?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What size is the file?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is its identity?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Which app is this?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Which game is this?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What label does it carry?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What version name and version code does it declare?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What package and version does it declare?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Tell me the identity of this target.",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is the package, label and version?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What version of the app is this?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is this application?",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Identify this target: package, version, size.",
+   "intent": "identity",
+   "answer_shape": "identity summary: label, package, version, SDK levels, size and target hash, each cited to its companion property",
+   "modules": [
+    "case",
+    "manifest",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What engine?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What language?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What toolchain?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What engine does it use?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What engine is it built on?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What language is it written in?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What languages does it use?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What toolchain was used to build it?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What framework does it use?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What frameworks are present?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "Is it built with Kotlin?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "Was it built with Kotlin?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What compiler produced the DEX?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What technology stack does it use?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What is it made with?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What was it made in?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "Is it IL2CPP or Mono?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What engine version is it?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "Which engine family does it belong to?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What framework markers are present?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What is the build stack?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "How was it built?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What engine, language and toolchain does it use?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "Does it use a game engine?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What engine is this game?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What language is the main code in?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What toolchain produced this build?",
+   "intent": "build",
+   "answer_shape": "build summary: detected engine/framework verdicts with confidence, language markers, toolchain versions and DEX totals",
+   "modules": [
+    "engines",
+    "frameworks",
+    "fingerprint",
+    "dex"
+   ]
+  },
+  {
+   "question": "What screens does it have?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "What screens are there?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "List the screens.",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "What activities does it declare?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the settings screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "What is the main screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "What menus does it have?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "Show me the screen inventory.",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "What deep links does it register?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "Which screens are exported?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the settings screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the profile screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the search screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the home screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the library screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the player screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the map screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the chat screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the store screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the inbox screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the gallery screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the editor screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the dashboard screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How do I get to the calendar screen?",
+   "intent": "screens",
+   "answer_shape": "screen inventory: launcher activity, component counts, activity list and deep-link intent filters; for a named screen, its component record and the launcher entry point",
+   "modules": [
+    "permissions",
+    "manifest"
+   ]
+  },
+  {
+   "question": "How does login work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does search work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does checkout work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does sync work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How do notifications work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How do downloads work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does matchmaking work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does the shop work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does the leaderboard work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does offline mode work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does sharing work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does the player work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does chat work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does backup work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does restore work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does the tutorial work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does scoring work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does the inventory work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does crafting work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "What happens when the user logs in?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "What happens when a level is completed?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "Trace the login flow.",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "Trace the checkout flow.",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How is the main feature implemented?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How does the settings feature work?",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "Explain the behaviour of the download feature.",
+   "intent": "behaviour",
+   "answer_shape": "static trace: component -> matching DEX classes/methods -> investigation verified facts, with the static boundary named",
+   "modules": [
+    "dex",
+    "permissions",
+    "investigation",
+    "decompile"
+   ]
+  },
+  {
+   "question": "How is progress saved?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Where are my coins?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How are coins stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How is user data stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How are settings stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How is the inventory stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Where is progress kept?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How is progress stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "What database does it use?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Does it use SQLite?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Does it use SharedPreferences?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How are high scores stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How is the save game stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Where are saves kept?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How is account data stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How are downloaded levels stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "What storage does it use?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Describe its storage.",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How is local data persisted?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Where is the wallet stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How are preferences stored?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How is game state saved?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "How does storage work for progress?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "Is progress saved locally or remotely?",
+   "intent": "storage",
+   "answer_shape": "storage summary: storage-API classes found in DEX (prefs/SQLite/Room/DataStore/…), subject-linked classes and save-like assets; values are runtime state",
+   "modules": [
+    "dex",
+    "assets"
+   ]
+  },
+  {
+   "question": "What does it talk to?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What endpoints does it use?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "Which servers does it contact?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What API does it call?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What URLs are in the code?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What domains does it reference?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What hosts are used?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "Describe its network surface.",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What does it connect to?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What is this endpoint for?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "Which backend does it use?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What network libraries does it use?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What requests does it make?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "How does it communicate with the server?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What API hosts appear?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "List the endpoints.",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What is the main API endpoint for?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "Does it use HTTPS everywhere?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What network calls are implied by the code?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "Which hosts does the app talk to?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What endpoints are classified as third-party?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What is the analytics endpoint for?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "What does the update endpoint do on the network?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "Where does it send network requests?",
+   "intent": "network",
+   "answer_shape": "network surface: endpoint inventory with classification counts, hosts, network libraries and cleartext/pinning posture; purposes labelled inferred",
+   "modules": [
+    "endpoints",
+    "network-analysis"
+   ]
+  },
+  {
+   "question": "Is it protected?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Which packer?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Which packer is used?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Can static analysis see the logic?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Can static analysis see the code?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Is the code obfuscated?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What obfuscation is present?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it use certificate pinning?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What pinning is configured?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What security findings are there?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How secure is it?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What are the security issues?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it have DRM?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What DRM is present?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Is there tamper protection?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it do root detection?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What hardening is applied?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Is it vulnerable?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What protection systems are present?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Which protector was applied?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Are there signature verification checks?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What RASP is present?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How is it protected against analysis?",
+   "intent": "security",
+   "answer_shape": "security posture: findings with severity and verification status, protection records and coverage protection kinds; for visibility questions, the decompile served rung and fidelity",
+   "modules": [
+    "security-findings",
+    "report",
+    "decompile",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How is it monetised?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "How is it monetized?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What does the ad flow do?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Where is purchase verified?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Does it have in-app purchases?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What purchases are offered?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Which ad SDKs does it use?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What ads does it show?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "How does it make money?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Is there a paywall?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What subscription tiers exist?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Does it use billing?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What billing library is used?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Where is a purchase verified?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "How are purchases handled?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What advertising networks are integrated?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Does it show ads?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What is the ad flow?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Is premium content unlocked by purchase?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What IAP surface exists?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "Which billing classes are present?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "How is the purchase flow built?",
+   "intent": "monetisation",
+   "answer_shape": "monetisation surface: billing/purchase classes, advertising SDK classes, billing/ad permissions and ad/purchase endpoints; verification boundary named",
+   "modules": [
+    "dex",
+    "endpoints",
+    "permissions"
+   ]
+  },
+  {
+   "question": "What assets does it contain?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What assets are inside?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "List the assets.",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What textures are included?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What sprites does it ship?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What images are inside?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What audio files does it contain?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What sounds are included?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What music is included?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What fonts does it ship?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What models are included?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What resources does it carry?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What's inside the APK?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What is inside the asset folders?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "How many assets are there?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What are the largest assets?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What asset types are present?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What files does it contain under assets?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "Describe the asset inventory.",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What media assets are bundled?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "Which textures take the most space?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "What data files are inside?",
+   "intent": "assets",
+   "answer_shape": "asset inventory: totals, byte size, per-type and per-category counts and the largest assets, cited to assets.json",
+   "modules": [
+    "assets"
+   ]
+  },
+  {
+   "question": "How is the character animated?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How is the car animated?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How are enemies animated?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What animation system does it use?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it use Spine?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it use Lottie?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it use Rive?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Are there skeletal animations?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What animations are present?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How is the main character animated?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Which animation files exist?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Is Spine animation used?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Is Lottie animation used?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What keyframe data is present?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How are the vehicles animated?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What animation assets can be identified?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it use DragonBones?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "Are sprite sheet animations used?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How is the player character animated?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "What skeletal systems are present?",
+   "intent": "animation",
+   "answer_shape": "animation identification: animation-shaped assets by name/extension plus per-system coverage status; boundary names composition decoding as not built (Part 4)",
+   "modules": [
+    "assets",
+    "coverage"
+   ]
+  },
+  {
+   "question": "How do I rebuild this app?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How do I rebuild it?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How would I build an equivalent app?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How can I build my own version?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "Give me the rebuild plan.",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How do I recreate it?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How do I reimplement this?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "What is the build order for a rebuild?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How do I build a clone of this behaviour?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "Describe the rebuild specification.",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "What would rebuilding it take?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How do I recreate the game from evidence?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "Plan the rebuild.",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How do I re-create the app?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "What is the implementation order for a rebuild?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "How would I rebuild the core features?",
+   "intent": "rebuild",
+   "answer_shape": "rebuild summary from verified evidence (stack, verified features, storage, network, build order); boundary names nar blueprint as the full-spec route",
+   "modules": [
+    "engines",
+    "frameworks",
+    "investigation",
+    "dex",
+    "endpoints",
+    "blueprint"
+   ]
+  },
+  {
+   "question": "What changed between v1 and v2?",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "Compare these two versions.",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "What is the difference between the two versions?",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "What changed in the newer version compared to the old?",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "Compare the old and new builds.",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "Give me the version diff.",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "How do the two artifacts compare?",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "What changed between the two supplied builds?",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "Compare v1 and v2.",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "What is different between them?",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "Run a comparison of the two versions.",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "What changed between the legacy and current version?",
+   "intent": "compare",
+   "answer_shape": "two-artifact diff summary from nar-compare (identity and per-dimension changes); with one artifact, an unknown contract block naming the missing second path as the probe",
+   "modules": [
+    "compare"
+   ]
+  },
+  {
+   "question": "What can you NOT tell me, and why?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What can you not tell me?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What can't you tell me?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What do you not know about it?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What don't you know?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What is unknown?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What are the unknowns?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What are the gaps?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What gaps remain?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What are its limitations?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What limitation applies here?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "What is missing from the analysis?",
+   "intent": "gaps",
+   "answer_shape": "gap enumeration: every non-supported coverage entry with reason and probe, plus investigation unknowns and report limitations",
+   "modules": [
+    "coverage",
+    "investigation",
+    "report"
+   ]
+  },
+  {
+   "question": "Tell me about the leaderboard.",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Describe the main character.",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is the leaderboard?",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Tell me about the tutorial.",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Describe the final boss.",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is the tutorial?",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Tell me about the crafting system.",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Describe the world map.",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What is the final boss?",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "Tell me about the daily rewards.",
+   "intent": "other",
+   "answer_shape": "fallback: keyword-matched investigation verified facts, or the case identity summary, with the fallback boundary named",
+   "modules": [
+    "investigation",
+    "application",
+    "fingerprint"
+   ]
+  },
+  {
+   "question": "What scripts does it ship?",
+   "intent": "scripts",
+   "answer_shape": "script inventory: per-format records from nar-script (format, status, header/count facts), identified_only entries carrying their named reason; bytecode reported structurally, never as source",
+   "modules": [
+    "coverage"
+   ]
+  },
+  {
+   "question": "Does it use Lua or Hermes bytecode?",
+   "intent": "scripts",
+   "answer_shape": "script inventory: per-format records from nar-script (format, status, header/count facts), identified_only entries carrying their named reason; bytecode reported structurally, never as source",
+   "modules": [
+    "coverage"
+   ]
+  },
+  {
+   "question": "Are there any WebAssembly modules or source maps?",
+   "intent": "scripts",
+   "answer_shape": "script inventory: per-format records from nar-script (format, status, header/count facts), identified_only entries carrying their named reason; bytecode reported structurally, never as source",
+   "modules": [
+    "coverage"
+   ]
+  }
+ ]
+}

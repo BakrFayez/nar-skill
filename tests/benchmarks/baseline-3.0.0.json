@@ -1,0 +1,262 @@
+{
+ "baseline_version": "3.0.0",
+ "nar_version": "3.0.0",
+ "generated": "2026-11-25",
+ "source_commit": "265a262 + Part 11 working tree (compact DEX default, streaming writers, --budget-mb)",
+ "machine": "Linux x86_64",
+ "python": "3.12.3",
+ "runs": [
+  {
+   "fixture_role": "demo (synthetic, ~29 KB)",
+   "size_bytes": 29297,
+   "module": "nar-triage.py",
+   "seconds": 0.7,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "demo (synthetic, ~29 KB)",
+   "size_bytes": 29297,
+   "module": "nar-fingerprint.py",
+   "seconds": 0.59,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "demo (synthetic, ~29 KB)",
+   "size_bytes": 29297,
+   "module": "nar-engines.py",
+   "seconds": 0.56,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "demo (synthetic, ~29 KB)",
+   "size_bytes": 29297,
+   "module": "nar-dex.py",
+   "seconds": 0.13,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "demo (synthetic, ~29 KB)",
+   "size_bytes": 29297,
+   "module": "nar-native.py",
+   "seconds": 0.11,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "demo (synthetic, ~29 KB)",
+   "size_bytes": 29297,
+   "module": "nar-network.py",
+   "seconds": 0.62,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "demo (synthetic, ~29 KB)",
+   "size_bytes": 29297,
+   "module": "nar-assets.py",
+   "seconds": 0.12,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "app (manifest FIX_APP)",
+   "size_bytes": 6118211,
+   "module": "nar-triage.py",
+   "seconds": 0.79,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "app (manifest FIX_APP)",
+   "size_bytes": 6118211,
+   "module": "nar-fingerprint.py",
+   "seconds": 0.93,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "app (manifest FIX_APP)",
+   "size_bytes": 6118211,
+   "module": "nar-engines.py",
+   "seconds": 0.89,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "app (manifest FIX_APP)",
+   "size_bytes": 6118211,
+   "module": "nar-dex.py",
+   "seconds": 2.28,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "app (manifest FIX_APP)",
+   "size_bytes": 6118211,
+   "module": "nar-native.py",
+   "seconds": 0.1,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "app (manifest FIX_APP)",
+   "size_bytes": 6118211,
+   "module": "nar-network.py",
+   "seconds": 3.28,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "app (manifest FIX_APP)",
+   "size_bytes": 6118211,
+   "module": "nar-assets.py",
+   "seconds": 0.13,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "game (manifest FIX_GAME)",
+   "size_bytes": 28430131,
+   "module": "nar-triage.py",
+   "seconds": 3.67,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "game (manifest FIX_GAME)",
+   "size_bytes": 28430131,
+   "module": "nar-fingerprint.py",
+   "seconds": 3.36,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "game (manifest FIX_GAME)",
+   "size_bytes": 28430131,
+   "module": "nar-engines.py",
+   "seconds": 4.47,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "game (manifest FIX_GAME)",
+   "size_bytes": 28430131,
+   "module": "nar-dex.py",
+   "seconds": 2.09,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "game (manifest FIX_GAME)",
+   "size_bytes": 28430131,
+   "module": "nar-native.py",
+   "seconds": 2.22,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "game (manifest FIX_GAME)",
+   "size_bytes": 28430131,
+   "module": "nar-network.py",
+   "seconds": 19.63,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "game (manifest FIX_GAME)",
+   "size_bytes": 28430131,
+   "module": "nar-assets.py",
+   "seconds": 0.13,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "unity (manifest FIX_UNITY)",
+   "size_bytes": 63764627,
+   "module": "nar-triage.py",
+   "seconds": 3.82,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "unity (manifest FIX_UNITY)",
+   "size_bytes": 63764627,
+   "module": "nar-fingerprint.py",
+   "seconds": 3.46,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "unity (manifest FIX_UNITY)",
+   "size_bytes": 63764627,
+   "module": "nar-engines.py",
+   "seconds": 4.11,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "unity (manifest FIX_UNITY)",
+   "size_bytes": 63764627,
+   "module": "nar-dex.py",
+   "seconds": 0.27,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "unity (manifest FIX_UNITY)",
+   "size_bytes": 63764627,
+   "module": "nar-native.py",
+   "seconds": 1.37,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "unity (manifest FIX_UNITY)",
+   "size_bytes": 63764627,
+   "module": "nar-network.py",
+   "seconds": 11.27,
+   "exit_code": 0
+  },
+  {
+   "fixture_role": "unity (manifest FIX_UNITY)",
+   "size_bytes": 63764627,
+   "module": "nar-assets.py",
+   "seconds": 0.74,
+   "exit_code": 0
+  }
+ ],
+ "runs_note": "Module timings from tests/benchmarks/run_benchmarks.py (--no-matrix --no-metrics --no-memory) on this machine; nar-dex.py runs emit the compact shape by default (Part 11). Fixture roles/sizes only; no fixture names or hashes are recorded.",
+ "memory": {
+  "status": "measured",
+  "fixture_role": "FIX_UNITY_BUNDLES (largest manifest fixture)",
+  "size_bytes": 273366540,
+  "peak_rss_bytes": 5709152256,
+  "wall_seconds": 782.7,
+  "exit_code": 0,
+  "scope": "Peak RSS of the whole nar-analyze process tree on a fresh full analyze (driver RUSAGE_CHILDREN; Linux folds descendants' peaks in).",
+  "attribution": {
+   "analyze_process_peak_rss_bytes": 590151680,
+   "analyze_process_method": "nar-analyze's own VmHWM sampled from /proc every 3 s across the same fresh run: the orchestrator itself stays under 0.6 GB with the compact DEX shape and the streaming writers.",
+   "stage_tools_measured_peak_rss_bytes": {
+    "nar-dex_compact": 1000869888,
+    "nar-dex_full_shape": 1583865856,
+    "nar-il2cpp": 1195716608,
+    "nar-strings": 793804800
+   },
+   "note": "Every measured stage tool peaks at or below ~1.6 GB; the balance of the 5.71 GB subtree peak is attributable to the jadx JVM of the decompile stage (a 3.0 pipeline addition that did not exist when the 2.6.2 baseline was recorded, and outside Part 11's scope)."
+  },
+  "cached_rerun": {
+   "peak_rss_bytes": 1194188800,
+   "wall_seconds": 393.82,
+   "note": "Same case re-run with every stage served from the case stage cache (no jadx execution): subtree peak 1.19 GB, below the 2.6.2 headline figure of 1545367552 B."
+  }
+ },
+ "dex_size": {
+  "fixture_role": "FIX_UNITY_BUNDLES (largest manifest fixture)",
+  "full_shape": {
+   "nar_dex_stdout_bytes": 312408174,
+   "dex_json_companion_bytes": 390522756,
+   "wall_seconds": 52.67
+  },
+  "compact_shape": {
+   "nar_dex_stdout_bytes": 77102463,
+   "dex_json_companion_bytes": 153375252,
+   "wall_seconds": 44.47
+  },
+  "note": "Part 11 headline: the compact dex.json companion is 60.7% smaller than the full-shape companion on the same input (153375252 vs 390522756 bytes; the full figure reproduces the 2.6.2-recorded ~390 MB dex.json for this fixture), and --full restores the 2.6.2 document byte-for-byte."
+ },
+ "benchmark_matrix": null,
+ "benchmark_matrix_note": "NOT RUN for the 3.0.0 baseline (recorded as null rather than estimated; the full-analyze memory run above covers the largest role).",
+ "prior_baselines": {
+  "baseline-2.6.2.json": {
+   "status": "measured",
+   "fixture_role": "FIX_UNITY_BUNDLES",
+   "size_bytes": 273366540,
+   "peak_rss_bytes": 1545367552,
+   "wall_seconds": 1241.59,
+   "exit_code": 0,
+   "scope": "peak RSS of the nar-analyze process itself (RUSAGE_CHILDREN, measured before any other child ran); stage subprocess peaks are excluded"
+  }
+ },
+ "methodology": "Module timings per fixture role via tests/benchmarks/run_benchmarks.py on this machine. Memory: one fresh full nar-analyze run on the largest manifest fixture in a driver process; peak RSS is the driver's RUSAGE_CHILDREN maximum (whole subtree), attributed with a /proc VmHWM sampler on the nar-analyze process itself and standalone driver measurements of the heavy stage tools. A second, fully-cached re-run of the same case is recorded for comparison. Wall time is load-dependent on this shared box and is never the headline metric; peak RSS and document bytes are. Prior-baseline memory block carried in verbatim for comparison. No fixture names or hashes are recorded.",
+ "metrics": null,
+ "metrics_note": "NOT RUN: no labeled corpus exists for accuracy measurement; accuracy remains NOT MEASURED (unchanged from 2.6.2)."
+}

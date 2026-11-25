@@ -34,6 +34,9 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import container as container_mod  # noqa: E402
+from narlib import mediainfo as mediainfo_mod  # noqa: E402
+from narlib import textures as textures_mod  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 
 EXT_TYPES = {
@@ -60,7 +63,42 @@ EXT_TYPES = {
     ".html": ("html", "data"), ".css": ("css", "data"),
     ".proto": ("protobuf-schema", "data"),
     ".bytes": ("binary", "data"), ".dat": ("binary", "data"),
-    ".bin": ("binary", "data"),
+    ".bin": ("binary", "data"), ".pack": ("libgdx-pack", "data"),
+    ".plist": ("plist", "data"), ".atlas": ("libgdx-atlas", "data"),
+    ".skel": ("spine-skeleton", "animation"),
+    ".spriteatlas": ("unity-spriteatlas", "data"),
+    ".tres": ("godot-resource", "data"),
+    ".tscn": ("godot-scene", "data"),
+    ".godot": ("godot-project", "config"),
+    ".import": ("godot-import", "config"),
+    ".uasset": ("unreal-asset", "data"),
+    ".umap": ("unreal-map", "data"),
+    ".wem": ("wwise-audio", "audio"), ".bnk": ("wwise-bank", "audio"),
+    ".bank": ("fmod-bank", "audio"),
+    ".astc": ("astc-texture", "texture"),
+    ".ktx": ("ktx-texture", "texture"),
+    ".ktx2": ("ktx2-texture", "texture"),
+    ".pvr": ("pvr-texture", "texture"),
+    ".dds": ("dds-texture", "texture"),
+    ".pkm": ("pkm-texture", "texture"),
+    ".tga": ("tga-image", "texture"), ".psd": ("psd-image", "texture"),
+    ".lua": ("lua-script", "code"), ".gd": ("gdscript", "code"),
+    ".dart": ("dart-source", "code"), ".wasm": ("wasm", "code"),
+    ".obb": ("obb", "container"), ".zip": ("zip", "container"),
+    ".7z": ("7z-archive", "container"),
+    ".ase": ("aseprite", "animation"),
+    ".aseprite": ("aseprite", "animation"),
+    ".riv": ("rive-animation", "animation"),
+    ".scml": ("spriter", "animation"),
+    ".jsc": ("javascript-compiled", "code"),
+    ".pyc": ("python-bytecode", "code"),
+    ".ccb": ("cocos-ccb", "data"), ".csb": ("cocos-csb", "data"),
+    ".locres": ("unreal-locres", "data"),
+    ".ron": ("ron-data", "data"), ".kv": ("kivy-layout", "data"),
+    ".rpa": ("renpy-archive", "container"),
+    ".love": ("love-package", "container"),
+    ".rcc": ("qt-resource", "container"),
+    ".car": ("solar2d-car", "container"),
 }
 
 
@@ -83,6 +121,18 @@ def magic_type(head):
         return ("elf", "code")
     if head.startswith(b"dex\n"):
         return ("dex", "code")
+    if head.startswith(b"\x13\xab\xa1\x5c"):
+        return ("astc-texture", "texture")
+    if head.startswith(b"\xabKTX 11\xbb\r\n\x1a\n"):
+        return ("ktx-texture", "texture")
+    if head.startswith(b"\xabKTX 20\xbb\r\n\x1a\n"):
+        return ("ktx2-texture", "texture")
+    if head.startswith(b"PVR\x03"):
+        return ("pvr-texture", "texture")
+    if head.startswith(b"DDS "):
+        return ("dds-texture", "texture")
+    if head.startswith(b"PKM 10") or head.startswith(b"PKM 20"):
+        return ("pkm-texture", "texture")
     return None
 
 
@@ -301,7 +351,193 @@ def audio_metadata(kind, head, tail, total_size):
         "OGG Vorbis/Opus, MP3)")
 
 
-def inventory(target):
+_TEXTURE_KIND_EXT = {
+    "astc-texture": ".astc", "ktx-texture": ".ktx",
+    "ktx2-texture": ".ktx2", "pvr-texture": ".pvr",
+    "dds-texture": ".dds", "pkm-texture": ".pkm",
+}
+
+
+def texture_metadata(kind, head):
+    """Header-level compressed-texture facts for one
+    inventory entry, delegated to narlib.textures (ASTC /
+    KTX1 / KTX2 / PVR v3 / DDS / PKM headers: dimensions,
+    block geometry, stored mip count). Header-only: pixel
+    data is never decoded, and fields a header does not
+    store come back null with their basis named."""
+    ext = _TEXTURE_KIND_EXT.get(kind)
+    if ext is None:
+        return {"format": None, "width": None, "height": None,
+                "depth": None, "block_width": None,
+                "block_height": None, "block_bytes": None,
+                "mip_count": None, "mip_count_basis": None,
+                "array_elements": None, "faces": None,
+                "error": f"no texture header parser for {kind}"}
+    return textures_mod.parse_texture_header(head, ext)
+
+
+# Media kinds whose §4.3 header facts are derivable from a
+# bounded prefix (font tables directory, glTF JSON chunk and
+# the Wwise/FMOD bank headers all sit at the start of the
+# file). Video and OBJ/FBX model facts stay narlib-level:
+# a video's moov atom may sit at the end of the file and an
+# OBJ census needs a full scan, so a prefix read would
+# silently under-report them.
+_MEDIA_KIND_FACTS = {
+    "ttf-font": (".ttf", "font"), "otf-font": (".otf", "font"),
+    "glb-model": (".glb", "model"),
+    "gltf-model": (".gltf", "model"),
+    "wwise-audio": (".wem", "bank"),
+    "wwise-bank": (".bnk", "bank"),
+    "fmod-bank": (".bank", "bank"),
+}
+
+
+def media_metadata(kind, head):
+    """Header-level media facts (§4.3) for one inventory
+    entry, delegated to narlib.mediainfo: font glyph count /
+    name table / subsetting signals, glTF model counts,
+    Wwise/FMOD bank header facts. Values a bounded prefix
+    cannot derive come back null with the basis named."""
+    ext, group = _MEDIA_KIND_FACTS[kind]
+    if group == "font":
+        return mediainfo_mod.font_facts(head)
+    if group == "model":
+        return mediainfo_mod.model_facts(head, ext)
+    return mediainfo_mod.wwise_bank_facts(head, ext)
+
+
+def _in_scope(name):
+    return (name.startswith("assets/")
+            or name.startswith("res/raw")
+            or name.startswith("base/assets/")
+            or name.lower().endswith(
+                (".pak", ".pck", ".utoc", ".ucas",
+                 ".bundle", ".unity3d", ".obb")))
+
+
+def inventory(target, merge_splits=True):
+    if not merge_splits:
+        return _inventory_single(target)
+    resolved = container_mod.resolve_target(target)
+    try:
+        if not resolved.is_container and \
+                resolved.input_kind not in ("apk", "aab", "obb"):
+            return _inventory_single(target)
+        return _inventory_merged(target, resolved)
+    finally:
+        resolved.cleanup()
+
+
+def _inventory_merged(target, resolved):
+    """Merged inventory across the resolved roots (base
+    first, then splits): every asset carries `source_split`
+    (the archive file name it came from), the report carries
+    `assets_by_split` counts and a `duplicates` section from
+    the cross-archive delta detection (each duplicate once,
+    with all locations)."""
+    assets = []
+    by_hash = {}
+    total_bytes = 0
+    for root in resolved.assets_roots:
+        archive_name = os.path.basename(root)
+        with zipfile.ZipFile(root) as zf:
+            for info in zf.infolist():
+                name = info.filename
+                if name.endswith("/"):
+                    continue
+                if not _in_scope(name):
+                    continue
+                with zf.open(name) as fh:
+                    head = fh.read(64)
+                    fh.seek(0)
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = fh.read(1 << 20)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                ext = os.path.splitext(name)[1].lower()
+                kind_cat = magic_type(head) or EXT_TYPES.get(
+                    ext, ("unknown", "other"))
+                if kind_cat[0] == "unknown" and not ext and (
+                        "/bin/Data/" in name):
+                    kind_cat = ("unity-serialized", "data")
+                width = height = None
+                if kind_cat[1] == "texture":
+                    with zf.open(name) as fh:
+                        width, height = image_dimensions(
+                            kind_cat[0], fh.read(1 << 16))
+                entry = {"path": name, "type": kind_cat[0],
+                         "category": kind_cat[1],
+                         "size_bytes": info.file_size,
+                         "sha256": digest.hexdigest(),
+                         "source_archive": archive_name,
+                         "source_split": archive_name,
+                         "width": width, "height": height}
+                if kind_cat[1] == "audio":
+                    with zf.open(name) as fh:
+                        head_b = fh.read(1 << 18)
+                        tail_b = b""
+                        if kind_cat[0] == "ogg-audio" \
+                                and info.file_size > (1 << 16):
+                            fh.seek(info.file_size - (1 << 16))
+                            tail_b = fh.read()
+                        else:
+                            tail_b = head_b
+                    entry["audio"] = audio_metadata(
+                        kind_cat[0], head_b, tail_b,
+                        info.file_size)
+                if kind_cat[0] in _TEXTURE_KIND_EXT:
+                    with zf.open(name) as fh:
+                        entry["texture"] = texture_metadata(
+                            kind_cat[0], fh.read(512))
+                if kind_cat[0] in _MEDIA_KIND_FACTS:
+                    with zf.open(name) as fh:
+                        entry[
+                            _MEDIA_KIND_FACTS[kind_cat[0]][1]
+                        ] = media_metadata(
+                            kind_cat[0], fh.read(1 << 22))
+                assets.append(entry)
+                total_bytes += info.file_size
+                by_hash.setdefault(
+                    entry["sha256"], []).append(
+                        {"archive": archive_name,
+                         "member": name})
+    duplicates = []
+    for h, locations in sorted(by_hash.items()):
+        if len(locations) <= 1:
+            continue
+        duplicates.append({
+            "sha256": h,
+            "paths": [loc["member"] for loc in locations],
+            "count": len(locations),
+            "locations": locations})
+    by_category = {}
+    assets_by_split = {}
+    for root in resolved.assets_roots:
+        assets_by_split[os.path.basename(root)] = 0
+    for a in assets:
+        by_category[a["category"]] = \
+            by_category.get(a["category"], 0) + 1
+        assets_by_split[a["source_split"]] = \
+            assets_by_split.get(a["source_split"], 0) + 1
+    report = {"tool": "nar-assets", "version": "3.0.0",
+              "target": os.path.abspath(target),
+              "target_sha256": sha256_of(target),
+              "assets": assets, "total_assets": len(assets),
+              "total_bytes": total_bytes,
+              "duplicates": duplicates,
+              "by_category": by_category,
+              "assets_by_split": assets_by_split,
+              "largest": sorted(
+                  assets, key=lambda a: -a["size_bytes"])[:10]}
+    if resolved.is_container:
+        report["container"] = resolved.container_block()
+    return report
+
+
+def _inventory_single(target):
     assets = []
     by_hash = {}
     total_bytes = 0
@@ -358,6 +594,16 @@ def inventory(target):
                         tail_b = head_b
                 entry["audio"] = audio_metadata(
                     kind_cat[0], head_b, tail_b, info.file_size)
+            if kind_cat[0] in _TEXTURE_KIND_EXT:
+                with zf.open(name) as fh:
+                    entry["texture"] = texture_metadata(
+                        kind_cat[0], fh.read(512))
+            if kind_cat[0] in _MEDIA_KIND_FACTS:
+                with zf.open(name) as fh:
+                    entry[
+                        _MEDIA_KIND_FACTS[kind_cat[0]][1]
+                    ] = media_metadata(
+                        kind_cat[0], fh.read(1 << 22))
             assets.append(entry)
             total_bytes += info.file_size
             by_hash.setdefault(entry["sha256"], []).append(name)
@@ -369,7 +615,7 @@ def inventory(target):
     for a in assets:
         by_category[a["category"]] = \
             by_category.get(a["category"], 0) + 1
-    return {"tool": "nar-assets", "version": "2.6.2",
+    return {"tool": "nar-assets", "version": "3.0.0",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "assets": assets, "total_assets": len(assets),
@@ -387,6 +633,14 @@ def human(report, top=10):
           f"({report['total_bytes']:,} bytes) — "
           f"{report['by_category']}")
     print(f"Duplicate groups: {len(report['duplicates'])}")
+    if report.get("assets_by_split"):
+        print(f"Assets by archive: {report['assets_by_split']}")
+    cont = report.get("container")
+    if cont:
+        print(f"Container: {cont['input_kind']} — base "
+              f"{cont['base']}; splits merged: "
+              f"{[s['name'] for s in cont['splits_merged']]}; "
+              f"skipped: {cont['split_skipped']}")
     print(f"Largest {top}:")
     for a in report["largest"][:top]:
         dims = (f" {a['width']}x{a['height']}"
@@ -409,9 +663,14 @@ def main(argv=None):
     p.add_argument("target", help="path to an .apk or .obb file")
     p.add_argument("--json", action="store_true")
     p.add_argument("--top", type=int, default=10)
+    p.add_argument("--no-merge-splits", action="store_true",
+                   help="analyse only the base APK of a "
+                        "container (pre-3.0 behaviour, "
+                        "byte-identical output)")
     args = p.parse_args(argv)
     try:
-        report = inventory(args.target)
+        report = inventory(args.target,
+                           merge_splits=not args.no_merge_splits)
     except (FileNotFoundError, IsADirectoryError,
             zipfile.BadZipFile) as e:
         print(f"nar-assets: {e}", file=sys.stderr)

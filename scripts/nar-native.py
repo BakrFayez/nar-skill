@@ -28,6 +28,7 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import container as container_mod  # noqa: E402
 from narlib import registry as reg_mod  # noqa: E402
 from narlib.elf import Elf, ElfError  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
@@ -144,54 +145,105 @@ def analyze_elf(name, data, cross_check_path=None):
     return facts
 
 
-def analyze(target, only_lib=None, work_dir=None):
-    report = {"tool": "nar-native", "version": "2.6.2",
+def analyze(target, only_lib=None, work_dir=None,
+            merge_splits=True):
+    if not merge_splits:
+        return _analyze_single(target, only_lib, work_dir)
+    report = {"tool": "nar-native", "version": "3.0.0",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
-    # Libraries are processed ONE AT A TIME (parse, record,
-    # release) — never accumulated. A bare .so is parsed
-    # over a read-only mapping instead of a whole-file
-    # read; zip members still materialize via zf.read()
-    # (decompression requires it) but each member's bytes
-    # are released before the next member is read.
+    resolved = None
+    try:
+        if target.lower().endswith(".so"):
+            roots = [target]
+        else:
+            resolved = container_mod.resolve_target(target)
+            roots = resolved.native_roots or [target]
+        for root in roots:
+            _scan_archive(report, root, only_lib, work_dir,
+                          source_split=os.path.basename(root))
+        if resolved is not None and resolved.is_container:
+            report["container"] = resolved.container_block()
+    finally:
+        if resolved is not None:
+            resolved.cleanup()
+    report["native_library_count"] = len(report["libraries"])
+    _finish_report(report)
+    return report
+
+
+def _scan_archive(report, archive_path, only_lib, work_dir,
+                  source_split=None):
+    """Scan one archive's lib/**/*.so members into report.
+
+    Libraries are processed ONE AT A TIME (parse, record,
+    release) — never accumulated. Zip members materialize
+    via the capped reader (decompression requires it) but
+    each member's bytes are released before the next."""
     def process(display, data, temp_path):
         try:
             facts = analyze_elf(display, data, temp_path)
         except ElfError as e:
-            report["libraries"].append({"name": display,
-                                        "error": str(e)})
+            entry = {"name": display, "error": str(e)}
+            if source_split is not None:
+                entry["source_split"] = source_split
+            report["libraries"].append(entry)
             return
         facts["display_name"] = display
+        if source_split is not None:
+            facts["source_split"] = source_split
         report["libraries"].append(facts)
 
-    if target.lower().endswith(".so"):
-        with mapped_file(target) as data:
-            process(os.path.basename(target), data, target)
-    else:
-        with zipfile.ZipFile(target) as zf:
-            for name in sorted(zf.namelist()):
-                m = SO_RE.match(name)
-                if not m:
-                    continue
-                if only_lib and m.group(3) != only_lib:
-                    continue
-                try:
-                    data = read_member_capped(zf, name)
-                except ValueError as e:
-                    report["libraries"].append({
-                        "name": f"{m.group(2)}/{m.group(3)}",
-                        "error": str(e)})
-                    continue
-                temp_path = None
-                if work_dir:
-                    os.makedirs(work_dir, exist_ok=True)
-                    temp_path = os.path.join(
-                        work_dir, f"{m.group(2)}-{m.group(3)}")
-                    with open(temp_path, "wb") as fh:
-                        fh.write(data)
-                process(f"{m.group(2)}/{m.group(3)}", data,
-                        temp_path)
-                data = None
+    if archive_path.lower().endswith(".so"):
+        with mapped_file(archive_path) as data:
+            process(os.path.basename(archive_path), data,
+                    archive_path)
+        return
+    with zipfile.ZipFile(archive_path) as zf:
+        for name in sorted(zf.namelist()):
+            m = SO_RE.match(name)
+            if not m:
+                continue
+            if only_lib and m.group(3) != only_lib:
+                continue
+            try:
+                data = read_member_capped(zf, name)
+            except ValueError as e:
+                entry = {"name": f"{m.group(2)}/{m.group(3)}",
+                         "error": str(e)}
+                if source_split is not None:
+                    entry["source_split"] = source_split
+                report["libraries"].append(entry)
+                continue
+            temp_path = None
+            if work_dir:
+                os.makedirs(work_dir, exist_ok=True)
+                if source_split is None:
+                    fname = f"{m.group(2)}-{m.group(3)}"
+                else:
+                    fname = (f"{source_split}-"
+                             f"{m.group(2)}-{m.group(3)}")
+                temp_path = os.path.join(work_dir, fname)
+                with open(temp_path, "wb") as fh:
+                    fh.write(data)
+            process(f"{m.group(2)}/{m.group(3)}", data,
+                    temp_path)
+            data = None
+
+
+def _analyze_single(target, only_lib=None, work_dir=None):
+    """The pre-3.0 single-archive behaviour, verbatim: the
+    --no-merge-splits path (byte-identical output)."""
+    report = {"tool": "nar-native", "version": "3.0.0",
+              "target": os.path.abspath(target),
+              "target_sha256": sha256_of(target), "libraries": []}
+    _scan_archive(report, target, only_lib, work_dir,
+                  source_split=None)
+    _finish_report(report)
+    return report
+
+
+def _finish_report(report):
     # Native dependency graph among bundled libraries. Entries
     # that failed ELF parsing carry {"name", "error"} instead of
     # the facts dict (no display_name/soname/needed): they take
@@ -274,12 +326,20 @@ def human(report):
     print(f"NAR native intelligence: "
           f"{os.path.basename(report['target'])}")
     print("=" * 60)
+    cont = report.get("container")
+    if cont:
+        print(f"Container: {cont['input_kind']} — base "
+              f"{cont['base']}; splits merged: "
+              f"{[s['name'] for s in cont['splits_merged']]}; "
+              f"skipped: {cont['split_skipped']}")
     for lib in report["libraries"]:
         if lib.get("error"):
             print(f"- {lib['name']}: ERROR {lib['error']}")
             continue
         print(f"- {lib['display_name']} ({lib['elf_class']}/"
-              f"{lib['arch']}, {lib['size_bytes']:,} bytes)")
+              f"{lib['arch']}, {lib['size_bytes']:,} bytes)"
+              + (f" [from {lib['source_split']}]"
+                 if lib.get("source_split") else ""))
         print(f"    needed: {', '.join(lib['needed'][:8])}"
               f"{' …' if len(lib['needed']) > 8 else ''}")
         print(f"    imports {len(lib['imports'])}, exports "
@@ -324,9 +384,14 @@ def main(argv=None):
     p.add_argument("--work", metavar="DIR",
                    help="extraction dir enabling the readelf "
                         "cross-check")
+    p.add_argument("--no-merge-splits", action="store_true",
+                   help="analyse only the base APK of a "
+                        "container (pre-3.0 behaviour, "
+                        "byte-identical output)")
     args = p.parse_args(argv)
     try:
-        report = analyze(args.target, args.lib, args.work)
+        report = analyze(args.target, args.lib, args.work,
+                         merge_splits=not args.no_merge_splits)
     except (FileNotFoundError, IsADirectoryError,
             zipfile.BadZipFile) as e:
         print(f"nar-native: {e}", file=sys.stderr)

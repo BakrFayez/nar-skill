@@ -26,7 +26,7 @@ find_sdk_tool() {
   local tool="$1" dir ver
   for dir in $SDK_CANDIDATES; do
     [ -z "$dir" ] && continue
-    for ver in $(ls "$dir/build-tools" 2>/dev/null | sort -Vr); do
+    for ver in $(ls "$dir/build-tools" 2>/dev/null | sort -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr); do
       if [ -x "$dir/build-tools/$ver/$tool" ]; then echo "$dir/build-tools/$ver/$tool"; return 0; fi
     done
     if [ -x "$dir/platform-tools/$tool" ]; then echo "$dir/platform-tools/$tool"; return 0; fi
@@ -168,19 +168,74 @@ check "zipalign" "core" "$ZIPALIGN_BIN" "$ZIPALIGN_DETAIL" "Install Android SDK 
 # doctor previously accepted any python3 while the
 # docs disagreed with pyproject about the floor —
 # E-12) ---
-PY_BIN="$(command -v python3 || true)"
+# Interpreter resolution chain (Part 10): try, in order,
+# $NAR_PYTHON, python3, python, then the Windows py
+# launcher (py -3). Each candidate is probed and must
+# report Python >= 3.10; a candidate that is too old (or
+# cannot run) falls through to the next. The winner is
+# recorded in PY_RESOLVED and used, via py_exec, for
+# every Python self-check below (nar-scripts,
+# protection-signatures, skill-yaml) — a python3-only
+# resolution reported those core checks missing on
+# python-only systems (stock Windows).
+PY_BIN=""
+PY_ARGS=""
+PY_RESOLVED=""
 PY_DETAIL=""
+PY_VER=""
 PY_HINT="Install Python 3.10+: https://www.python.org/downloads/"
-if [ -n "$PY_BIN" ]; then
-  PY_VER="$("$PY_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")"
-  PY_MAJOR="${PY_VER%%.*}"; PY_MINOR="${PY_VER##*.}"
-  if [ "${PY_MAJOR:-0}" -gt 3 ] 2>/dev/null || { [ "${PY_MAJOR:-0}" -eq 3 ] 2>/dev/null && [ "${PY_MINOR:-0}" -ge 10 ] 2>/dev/null; }; then
-    PY_DETAIL="python3 $(python3 --version 2>&1) ($PY_BIN)"
+_py_version_ok() {
+  _pv_major="${1%%.*}"; _pv_minor="${1##*.}"
+  if [ "${_pv_major:-0}" -gt 3 ] 2>/dev/null; then return 0; fi
+  if [ "${_pv_major:-0}" -eq 3 ] 2>/dev/null && [ "${_pv_minor:-0}" -ge 10 ] 2>/dev/null; then return 0; fi
+  return 1
+}
+_py_probe() {
+  # $1: candidate path; $2: optional extra arg (e.g. -3).
+  # Sets PY_VER to the probed "MAJOR.MINOR"; succeeds
+  # only when that version is >= 3.10.
+  if [ -n "${2:-}" ]; then
+    PY_VER="$("$1" "$2" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")"
   else
-    PY_HINT="Python 3.10+ required (pyproject floor), found $PY_VER. Install Python 3.10+: https://www.python.org/downloads/"
-    PY_BIN=""
+    PY_VER="$("$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")"
   fi
+  [ -n "$PY_VER" ] && _py_version_ok "$PY_VER"
+}
+_py_try() {
+  # $1: command name or path; $2: optional extra arg.
+  _cand=""
+  if [ -x "$1" ]; then _cand="$1"; else _cand="$(command -v "$1" || true)"; fi
+  [ -n "$_cand" ] || return 1
+  if _py_probe "$_cand" "${2:-}"; then
+    PY_BIN="$_cand"
+    PY_ARGS="${2:-}"
+    if [ -n "$PY_ARGS" ]; then PY_RESOLVED="$_cand $PY_ARGS"; else PY_RESOLVED="$_cand"; fi
+    return 0
+  fi
+  return 1
+}
+if [ -n "${NAR_PYTHON:-}" ]; then _py_try "$NAR_PYTHON" "" || true; fi
+if [ -z "$PY_BIN" ]; then _py_try "python3" "" || true; fi
+if [ -z "$PY_BIN" ]; then _py_try "python" "" || true; fi
+if [ -z "$PY_BIN" ]; then _py_try "py" "-3" || true; fi
+if [ -n "$PY_BIN" ]; then
+  if [ -n "$PY_ARGS" ]; then
+    PY_DETAIL="python3 $("$PY_BIN" $PY_ARGS --version 2>&1) ($PY_BIN)"
+  else
+    PY_DETAIL="python3 $("$PY_BIN" --version 2>&1) ($PY_BIN)"
+  fi
+elif [ -n "$PY_VER" ]; then
+  PY_HINT="Python 3.10+ required (pyproject floor), found $PY_VER. Install Python 3.10+: https://www.python.org/downloads/"
 fi
+# Invoke the resolved interpreter (adds the py
+# launcher's -3 argument when that candidate won).
+py_exec() {
+  if [ -n "$PY_ARGS" ]; then
+    "$PY_BIN" $PY_ARGS "$@"
+  else
+    "$PY_BIN" "$@"
+  fi
+}
 check "python3" "core" "$PY_BIN" "$PY_DETAIL" "$PY_HINT"
 
 # --- adb (optional) ---
@@ -329,7 +384,7 @@ if [ -n "$PY_BIN" ]; then
   # loop must actually cover all of them.
   # Compile into a throwaway dir: py_compile otherwise writes
   # __pycache__ next to every script in the tree.
-  PYC_DIR="$(mktemp -d 2>/dev/null || echo "")"
+  PYC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nar-doctor.XXXXXX" 2>/dev/null || echo "")"
   NAR_SCRIPTS_COUNT=0
   NARLIB_COUNT=0
   # The narlib package is compiled too (D-08): a broken
@@ -343,9 +398,9 @@ if [ -n "$PY_BIN" ]; then
       *) NAR_SCRIPTS_COUNT=$((NAR_SCRIPTS_COUNT + 1)); rel="scripts/$s" ;;
     esac
     if [ -n "$PYC_DIR" ]; then
-      COMPILE_OK="$("$PY_BIN" -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' "$script_path" "$PYC_DIR/$(echo "$rel" | tr / _).pyc" 2>/dev/null && echo 1)"
+      COMPILE_OK="$(py_exec -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' "$script_path" "$PYC_DIR/$(echo "$rel" | tr / _).pyc" 2>/dev/null && echo 1)"
     else
-      COMPILE_OK="$("$PY_BIN" -m py_compile "$script_path" 2>/dev/null && echo 1)"
+      COMPILE_OK="$(py_exec -m py_compile "$script_path" 2>/dev/null && echo 1)"
     fi
     if [ -z "$COMPILE_OK" ]; then
       NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="$rel does not compile"; break
@@ -364,7 +419,7 @@ check "nar-scripts" "core" "$NAR_SCRIPTS_OK" "$NAR_SCRIPTS_DETAIL" "The scripts 
 SIG_DB="$SCRIPT_DIR/protection-signatures.json"
 SIG_OK=""; SIG_DETAIL=""
 if [ -n "$PY_BIN" ] && [ -f "$SIG_DB" ]; then
-  SIG_DETAIL="$("$PY_BIN" -c 'import json,sys; d=json.load(open(sys.argv[1])); print("protection signatures DB v%s (%d packers, %d categories, schema %s)" % (d["database_version"], len(d.get("packers",[])), len(d.get("categories",[])), d.get("schema")))' "$SIG_DB" 2>/dev/null)"
+  SIG_DETAIL="$(py_exec -c 'import json,sys; d=json.load(open(sys.argv[1])); print("protection signatures DB v%s (%d packers, %d categories, schema %s)" % (d["database_version"], len(d.get("packers",[])), len(d.get("categories",[])), d.get("schema")))' "$SIG_DB" 2>/dev/null)"
   if [ -n "$SIG_DETAIL" ]; then SIG_OK="ok"; fi
 fi
 check "protection-signatures" "core" "$SIG_OK" "$SIG_DETAIL" "scripts/protection-signatures.json is missing or unreadable; nar-triage cannot run its protection scan without it — reinstall the skill"
@@ -377,8 +432,8 @@ check "protection-signatures" "core" "$SIG_OK" "$SIG_DETAIL" "scripts/protection
 # verdict (the verdict loop only fails core checks).
 SKILL_YAML_OK=""; SKILL_YAML_DETAIL=""; SKILL_YAML_FORCED=""
 SKILL_ROOT="$(dirname "$SCRIPT_DIR")"
-if [ -n "$PY_BIN" ] && "$PY_BIN" -c "import yaml" 2>/dev/null; then
-  YAML_OUT="$("$PY_BIN" -c 'import sys, yaml; root = sys.argv[1]; d = yaml.safe_load(open(root + "/skill.yaml", encoding="utf-8")); assert isinstance(d, dict), "skill.yaml is not a mapping"; t = open(root + "/SKILL.md", encoding="utf-8").read(); assert t.startswith("---\n"), "SKILL.md has no frontmatter fence"; f = yaml.safe_load(t.split("---\n", 2)[1]); assert isinstance(f, dict), "SKILL.md frontmatter is not a mapping"; print("skill.yaml + SKILL.md frontmatter parse as valid YAML")' "$SKILL_ROOT" 2>&1)"
+if [ -n "$PY_BIN" ] && py_exec -c "import yaml" 2>/dev/null; then
+  YAML_OUT="$(py_exec -c 'import sys, yaml; root = sys.argv[1]; d = yaml.safe_load(open(root + "/skill.yaml", encoding="utf-8")); assert isinstance(d, dict), "skill.yaml is not a mapping"; t = open(root + "/SKILL.md", encoding="utf-8").read(); assert t.startswith("---\n"), "SKILL.md has no frontmatter fence"; f = yaml.safe_load(t.split("---\n", 2)[1]); assert isinstance(f, dict), "SKILL.md frontmatter is not a mapping"; print("skill.yaml + SKILL.md frontmatter parse as valid YAML")' "$SKILL_ROOT" 2>&1)"
   if [ $? -eq 0 ]; then
     SKILL_YAML_OK="ok"
     SKILL_YAML_DETAIL="$YAML_OUT"
@@ -399,7 +454,7 @@ done
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'; }
 
 if [ "$JSON" -eq 1 ]; then
-  printf '{\n  "tool": "nar-doctor",\n  "core_ok": %s,\n  "checks": [\n' "$([ "$CORE_OK" -eq 1 ] && echo true || echo false)"
+  printf '{\n  "tool": "nar-doctor",\n  "core_ok": %s,\n  "python_resolved": "%s",\n  "checks": [\n' "$([ "$CORE_OK" -eq 1 ] && echo true || echo false)" "$(json_escape "$PY_RESOLVED")"
   for i in "${!NAMES[@]}"; do
     comma=","; [ "$i" -eq $((${#NAMES[@]} - 1)) ] && comma=""
     printf '    {"name": "%s", "status": "%s", "detail": "%s"}%s\n' \

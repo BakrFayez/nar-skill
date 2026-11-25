@@ -17,6 +17,12 @@
   "correlations_summary": {
    "type": "object"
   },
+  "decompile": {
+   "type": "object"
+  },
+  "decompile_summary": {
+   "type": "object"
+  },
   "dex_summary": {
    "type": "object"
   },
