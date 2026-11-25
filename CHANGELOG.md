@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Post-publication Windows CI hardening on `main` (the
-  v3.0.0 tag predates these fixes): two fix rounds driven
+## 3.0.1 — Windows platform fixes (2026-11-26)
+
+- The Windows CI hardening prepared on `main` after
+  3.0.0 (whose tag predates these fixes), shipped as this
+  patch release on the owner's decision: two fix rounds driven
   by hosted runs #39–#41 — Git Bash discovery instead of
   bare-`bash` dispatch (the WSL stub), raw hostile archive
   names in extraction reports, guarded `resource` import,

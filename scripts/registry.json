@@ -1,6 +1,6 @@
 {
   "comment": "NAR tool + capability registry. Every external tool NAR orchestrates is declared here: how to find it, how to probe its version, what it is for, and its known limitations. Tools that are not installed on a machine stay in the registry marked by their probe result, never by a hardcoded claim. kind=unavailable means the tool has no integration in this release; the entry documents why and what covers the gap.",
-  "registry_version": "3.0.0",
+  "registry_version": "3.0.1",
   "tools": [
     {
       "candidates": [

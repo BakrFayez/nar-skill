@@ -8,7 +8,7 @@ Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 
 FACT_CLASSES = ("observed", "derived", "inferred", "hypothesis",
                 "unknown")

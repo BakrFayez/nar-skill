@@ -480,7 +480,7 @@ class TestAbsentAndCli(unittest.TestCase):
             with self.subTest(tool=mod.__name__):
                 report = mod.inspect(apk)
                 self.assertEqual(report["verdict"], "absent")
-                self.assertEqual(report["version"], "3.0.0")
+                self.assertEqual(report["version"], "3.0.1")
                 self.assertIn("container", report)
 
     def test_nonexistent_target_exit_2(self):

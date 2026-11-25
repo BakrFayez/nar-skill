@@ -705,3 +705,7 @@ Physical-device runtime validation remains NOT RUN (the
 owner's device; the standing checklist applies). Local
 battery on the final tree: pytest 1007 passed / 1 skipped,
 e2e 68/68 private + 15/0/48 public, doctor READY.
+
+On the owner's decision (2026-11-26) these fixes shipped
+as the patch release **3.0.1** (tag v3.0.1); the
+3.0.1 tree is the final tree measured above.

@@ -41,7 +41,7 @@ from narlib import container as _container  # noqa: E402
 from narlib.elf import Elf, ElfError, SHT_DYNSYM  # noqa: E402
 
 TOOL = "nar-sdl"
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 MEMBER_CAP = 32 * 1024 * 1024        # per-member read cap
 NATIVE_CAP = 64 * 1024 * 1024        # native scan cap
 _MAIN_LIB_RE = re.compile(

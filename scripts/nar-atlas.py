@@ -42,7 +42,7 @@ from narlib import atlas as atlas_mod  # noqa: E402
 from narlib import composition as composition_mod  # noqa: E402
 from narlib import container as container_mod  # noqa: E402
 
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 
 MEMBER_CAP_BYTES = 32 * 1024 * 1024
 JSON_CAP_BYTES = 16 * 1024 * 1024

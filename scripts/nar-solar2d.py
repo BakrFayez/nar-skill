@@ -40,7 +40,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import container as container_mod  # noqa: E402
 
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 MEMBER_CAP_BYTES = 32 * 1024 * 1024
 TEXT_CAP_BYTES = 1024 * 1024
 LUA_MAGIC = b"\x1bLua"

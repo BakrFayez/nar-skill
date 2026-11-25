@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nar-skill"
-version = "3.0.0"
+version = "3.0.1"
 description = "NAR — NIROUS ANDROID INTELLIGENCE: AI-agent skill for Android APK reverse engineering (apps and games)"
 readme = "README.md"
 license = { text = "MIT" }

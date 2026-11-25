@@ -558,7 +558,7 @@ class EndToEndTest(unittest.TestCase):
                 capture_output=True, text=True, timeout=300)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             report = json.loads(proc.stdout)
-        self.assertEqual(report["version"], "3.0.0")
+        self.assertEqual(report["version"], "3.0.1")
         self.assertEqual(report["totals"]["atlas_count"], 2)
         self.assertEqual(report["totals"]["frame_count"], 5)
         self.assertEqual(report["totals"]["particle_count"], 1)

@@ -522,7 +522,7 @@ def _inventory_merged(target, resolved):
             by_category.get(a["category"], 0) + 1
         assets_by_split[a["source_split"]] = \
             assets_by_split.get(a["source_split"], 0) + 1
-    report = {"tool": "nar-assets", "version": "3.0.0",
+    report = {"tool": "nar-assets", "version": "3.0.1",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target),
               "assets": assets, "total_assets": len(assets),
@@ -615,7 +615,7 @@ def _inventory_single(target):
     for a in assets:
         by_category[a["category"]] = \
             by_category.get(a["category"], 0) + 1
-    return {"tool": "nar-assets", "version": "3.0.0",
+    return {"tool": "nar-assets", "version": "3.0.1",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "assets": assets, "total_assets": len(assets),

@@ -83,7 +83,7 @@ from narlib import container as _container  # noqa: E402
 from narlib import dex as _dexlib  # noqa: E402
 from narlib import formats_registry  # noqa: E402
 
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 
 BOUNDARY_LINE = (
     "the spec describes behaviour and architecture so you "

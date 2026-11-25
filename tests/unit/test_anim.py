@@ -796,7 +796,7 @@ def test_end_to_end_apk_validates_against_schema(tmp_path):
         (ROOT / "schemas" / "animation.schema.json")
         .read_text(encoding="utf-8"))
     assert evidence.validate(report, schema) == []
-    assert report["version"] == "3.0.0"
+    assert report["version"] == "3.0.1"
     systems = {rec["system"]: rec for rec in report["systems"]}
     assert set(systems) == {"spine", "lottie"}
     assert systems["spine"]["facts"]["bones_count"] == 3

@@ -40,7 +40,7 @@ import zipfile
 from . import container as _container
 from .elf import Elf, ElfError, SHT_DYNSYM
 
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 
 #: Per-member read cap for the target scan (bounded reads).
 MAX_MEMBER_BYTES = 32 * 1024 * 1024

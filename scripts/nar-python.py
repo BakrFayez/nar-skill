@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import container as _container  # noqa: E402
 
 TOOL = "nar-python"
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 MEMBER_CAP = 32 * 1024 * 1024        # per-member read cap
 MARSHAL_CAP = 16 * 1024 * 1024       # marshal payload cap
 PYC_LIST_CAP = 50
