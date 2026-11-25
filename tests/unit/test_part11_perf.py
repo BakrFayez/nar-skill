@@ -306,6 +306,108 @@ def test_memory_budget_win32_rss_source(monkeypatch):
         az.EXEC_LOG.clear()
 
 
+def test_memory_budget_win32_ctypes_prototypes(monkeypatch):
+    """Regression (win-fixes-2, failure 7): the plain fakes
+    in test_memory_budget_win32_rss_source cannot model
+    ctypes' conversion semantics — their GetCurrentProcess
+    returns the Python int -1 directly and their
+    GetProcessMemoryInfo accepts any handle. Real ctypes
+    without declared prototypes truncates twice: the
+    default restype (C int, 32-bit) truncates the 64-bit
+    pseudo-handle 0xFFFFFFFFFFFFFFFF coming back from
+    GetCurrentProcess, and without argtypes the handle
+    argument is passed as a 32-bit C int, so
+    GetProcessMemoryInfo never receives the valid
+    pseudo-handle, fails, and the RSS source looks
+    spuriously unavailable (the budget then records
+    budget-unavailable and never raises — the hosted
+    windows-latest failure of
+    test_memory_budget_check_raises_named_boundary).
+    These fakes model the conversions faithfully: the fake
+    GetCurrentProcess truncates its return per its CURRENT
+    restype attribute, and the fake GetProcessMemoryInfo
+    honours the handle only when it arrives as the full
+    64-bit pseudo-handle, which requires argtypes[0] to be
+    c_void_p. The product must declare both prototypes for
+    the planted PeakWorkingSetSize to come back."""
+    import ctypes
+
+    pseudo_handle = 0xFFFFFFFFFFFFFFFF
+    planted = 32 * 1024 * 1024
+
+    class _FakeGetCurrentProcess:
+        """Callable stand-in for the ctypes function
+        object: carries a restype attribute (default
+        c_int, ctypes' own default) and truncates the
+        64-bit pseudo-handle per its current restype."""
+
+        def __init__(self):
+            self.restype = ctypes.c_int
+
+        def __call__(self):
+            if self.restype is ctypes.c_void_p:
+                return pseudo_handle
+            return ctypes.c_int(pseudo_handle).value
+
+    class _FakeGetProcessMemoryInfo:
+        """Callable stand-in carrying an argtypes
+        attribute (default None, ctypes' own default).
+        Without argtypes the handle argument is passed as
+        a 32-bit C int, so the callee sees only its low
+        32 bits — never the full pseudo-handle — and the
+        call fails without touching the counters."""
+
+        def __init__(self):
+            self.argtypes = None
+            self.restype = ctypes.c_int
+
+        def __call__(self, handle, ref, size):
+            if (self.argtypes is not None
+                    and self.argtypes[0] is ctypes.c_void_p):
+                effective = handle & pseudo_handle
+            else:
+                effective = handle & 0xFFFFFFFF
+            if effective != pseudo_handle:
+                return 0
+            counters = ctypes.cast(
+                ref, ctypes.POINTER(
+                    az._ProcessMemoryCountersEx)).contents
+            counters.PeakWorkingSetSize = planted
+            return 1
+
+    class _FakeKernel32:
+        def __init__(self):
+            self.GetCurrentProcess = (
+                _FakeGetCurrentProcess())
+            self.K32GetProcessMemoryInfo = (
+                _FakeGetProcessMemoryInfo())
+
+    class _FakePsapi:
+        def __init__(self):
+            self.GetProcessMemoryInfo = (
+                _FakeGetProcessMemoryInfo())
+
+    fakes = {"kernel32": _FakeKernel32(), "psapi": _FakePsapi()}
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "WinDLL",
+                        lambda name, **kw: fakes[name],
+                        raising=False)
+    assert az._peak_rss_bytes() == planted
+    az.EXEC_LOG.clear()
+    az.set_budgets(budget_mb=0.001)
+    try:
+        with pytest.raises(az._MemoryBudgetExceeded) as ei:
+            az._check_memory_budget("dex")
+        assert ei.value.boundary == "memory-budget:dex"
+        entry = az.EXEC_LOG[-1]
+        assert entry["status"] == "budget-exceeded"
+        assert entry["boundary"] == "memory-budget:dex"
+        assert entry["peak_rss_bytes"] == planted
+    finally:
+        az.set_budgets()
+        az.EXEC_LOG.clear()
+
+
 @pytest.mark.skipif(not os.path.isfile(DEMO),
                     reason="demo fixture absent")
 def test_budget_abort_then_resume_and_verify(tmp_path):

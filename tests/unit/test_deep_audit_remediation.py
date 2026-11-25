@@ -64,11 +64,31 @@ def _schema(name):
         return json.load(fh)
 
 
+def _verbatim_info(name):
+    """ZipInfo that stores ``name`` byte-for-byte.
+
+    ZipInfo.__init__ sanitises the name at construction
+    (on Windows, _sanitize_filename replaces os.sep '\\'
+    with '/'), and writestr stores the sanitised filename
+    — so a fixture built from a plain string silently
+    stores a DIFFERENT name on Windows ('../win.apk')
+    than the test asserts ('..\\win.apk'). Assigning
+    ``filename`` after construction is what both the
+    local header and the central directory are written
+    from, so the archive stores the name verbatim on
+    every platform.
+    """
+    info = zipfile.ZipInfo(name)
+    info.filename = name
+    info.compress_type = zipfile.ZIP_STORED
+    return info
+
+
 def _zip_bytes(entries):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data in entries:
-            zf.writestr(name, data)
+            zf.writestr(_verbatim_info(name), data)
     return buf.getvalue()
 
 

@@ -206,6 +206,24 @@ def _peak_rss_bytes_win32():
     try:
         kernel32 = _ctypes.WinDLL("kernel32",
                                   use_last_error=True)
+        # Declare the prototypes before calling: ctypes'
+        # default restype is C int (32-bit) and, without
+        # argtypes, arguments are likewise passed as C int,
+        # so the 64-bit GetCurrentProcess pseudo-handle
+        # (0xFFFFFFFFFFFFFFFF) would be truncated on both
+        # legs of the round trip and GetProcessMemoryInfo
+        # would receive an invalid handle, fail, and make
+        # this source look spuriously unavailable. The
+        # assignments are defensive: a plain-Python stand-in
+        # for the DLL functions (a bound method, say) may
+        # refuse attribute assignment, and such a stand-in
+        # performs no ctypes conversion anyway, so a refused
+        # prototype must not fail the call.
+        try:
+            kernel32.GetCurrentProcess.restype = (
+                _ctypes.c_void_p)
+        except (AttributeError, TypeError):
+            pass
         handle = kernel32.GetCurrentProcess()
         try:
             psapi = _ctypes.WinDLL("psapi",
@@ -213,6 +231,13 @@ def _peak_rss_bytes_win32():
             get_info = psapi.GetProcessMemoryInfo
         except (AttributeError, OSError):
             get_info = kernel32.K32GetProcessMemoryInfo
+        try:
+            get_info.argtypes = [_ctypes.c_void_p,
+                                 _ctypes.c_void_p,
+                                 _ctypes.c_uint32]
+            get_info.restype = _ctypes.c_int
+        except (AttributeError, TypeError):
+            pass
         if not get_info(handle, _ctypes.byref(counters),
                         _ctypes.sizeof(counters)):
             return None

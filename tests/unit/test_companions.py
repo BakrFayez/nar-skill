@@ -276,11 +276,21 @@ class CompileSdkBadgingTest(unittest.TestCase):
         # go through cmd, a shebang script through sh, and a
         # native .exe runs directly. POSIX argv is the bare
         # candidate, unchanged.
+        # Deterministic on any host: sys.platform is pinned
+        # explicitly for BOTH the POSIX and the win32 cases
+        # (an unpinned POSIX call takes the win32 branch on
+        # a real Windows host and wraps via a genuinely
+        # discovered sh), and sh resolution is controlled at
+        # the product's actual seam — _aapt2_argv resolves
+        # sh via shutil.which("sh") or shutil.which("bash")
+        # in scripts/nar-triage.py, with no Git-relative
+        # discovery of its own.
         tmp, stub = self._plant_stub()
         mod = self._load_triage()
-        self.assertEqual(
-            mod._aapt2_argv(stub, "dump", "badging", "x.apk"),
-            [stub, "dump", "badging", "x.apk"])
+        with mock.patch.object(sys, "platform", "linux"):
+            self.assertEqual(
+                mod._aapt2_argv(stub, "dump", "badging", "x.apk"),
+                [stub, "dump", "badging", "x.apk"])
 
         def fake_which(name, path=None):
             return "/fake/sh" if name == "sh" else None
@@ -294,8 +304,26 @@ class CompileSdkBadgingTest(unittest.TestCase):
                 mod._aapt2_argv("C:\\sdk\\aapt2.bat", "dump"),
                 ["cmd", "/c", "C:\\sdk\\aapt2.bat", "dump"])
             self.assertEqual(
+                mod._aapt2_argv("C:\\sdk\\aapt2.cmd", "dump"),
+                ["cmd", "/c", "C:\\sdk\\aapt2.cmd", "dump"])
+            self.assertEqual(
                 mod._aapt2_argv(stub, "dump"),
                 ["/fake/sh", stub, "dump"])
+
+        def fake_which_none(name, path=None):
+            return None
+
+        # Shebang candidate with no sh (and no bash) on
+        # PATH: the documented fallback in _aapt2_argv is
+        # the bare candidate — the caller's OSError handling
+        # then reports the tool unreadable rather than
+        # pretending it ran.
+        with mock.patch.object(sys, "platform", "win32"), \
+                mock.patch.object(shutil, "which",
+                                  fake_which_none):
+            self.assertEqual(
+                mod._aapt2_argv(stub, "dump"),
+                [stub, "dump"])
 
     def test_compile_sdk_parsed_windows_simulated(self):
         # The hosted-Windows failure mode, simulated end to

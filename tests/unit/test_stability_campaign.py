@@ -42,6 +42,30 @@ def _load(name, filename):
     return module
 
 
+def _bash_or_skip():
+    """Resolve bash via nar.py's resolve_bash() — the
+    single source of truth for bash discovery (plain
+    "bash" off win32, a real Git Bash on win32, never the
+    System32 WSL stub). Skip, never silently pass, when
+    no usable bash exists."""
+    bash = _load("nar_cli_stability_campaign",
+                 "nar.py").resolve_bash()
+    if bash is None:
+        pytest.skip(
+            "no usable bash found: Git Bash is required "
+            "on Windows (the System32 WSL stub is not a "
+            "usable bash)")
+    return bash
+
+
+def _script_arg(path):
+    # Mirror nar.py run_entry: on win32 Git Bash takes
+    # the script path with forward slashes.
+    text = str(path)
+    return text.replace("\\", "/") \
+        if sys.platform == "win32" else text
+
+
 @pytest.fixture(scope="module")
 def az():
     return _load("nar_analyze_stab", "nar-analyze.py")
@@ -959,7 +983,8 @@ def test_exit2_duplicates_missing_dir(tmp_path):
 
 def test_doctor_help_is_usage_exit_zero():
     proc = subprocess.run(
-        ["bash", str(SCRIPTS / "nar-doctor.sh"), "--help"],
+        [_bash_or_skip(),
+         _script_arg(SCRIPTS / "nar-doctor.sh"), "--help"],
         capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0
     assert "usage" in proc.stdout.lower()

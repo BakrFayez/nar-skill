@@ -32,14 +32,45 @@ from narlib import safearchive  # noqa: E402
 from narlib.budget import BudgetError, ResourceBudget  # noqa: E402
 
 
+def _verbatim_info(name, compression=zipfile.ZIP_DEFLATED):
+    """ZipInfo that stores ``name`` byte-for-byte.
+
+    ZipInfo.__init__ sanitises the name at construction
+    (on Windows, _sanitize_filename replaces os.sep '\\'
+    with '/'), and writestr stores the sanitised filename
+    — so a fixture built from a plain string silently
+    stores a DIFFERENT name on Windows ('../evil.txt')
+    than the test asserts ('..\\evil.txt'). Assigning
+    ``filename`` after construction is what both the
+    local header and the central directory are written
+    from, so the archive stores the name verbatim on
+    every platform.
+    """
+    info = zipfile.ZipInfo(name)
+    info.filename = name
+    info.compress_type = compression
+    return info
+
+
 def _zip_bytes(entries, compression=zipfile.ZIP_DEFLATED):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression) as zf:
         for name, data in entries:
             if isinstance(data, zipfile.ZipInfo):
+                # Pre-built ZipInfo as the payload slot:
+                # restore its verbatim (pre-sanitisation)
+                # name, keep every other attribute.
+                data.filename = data.orig_filename
                 zf.writestr(data, b"payload")
-            else:
+            elif isinstance(name, zipfile.ZipInfo):
+                # Pre-built ZipInfo (e.g. _symlink_info):
+                # same verbatim restore; its attributes
+                # (external_attr, compress_type) are kept.
+                name.filename = name.orig_filename
                 zf.writestr(name, data)
+            else:
+                zf.writestr(_verbatim_info(name, compression),
+                            data)
     return buf.getvalue()
 
 
