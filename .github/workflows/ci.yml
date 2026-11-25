@@ -1,24 +1,48 @@
 # NAR CI — runs on GitHub Actions.
 #
-# Status: the unit-and-syntax job is EXECUTED AND PASSING
-# on GitHub Actions (runs #1–#12 through the 2.6.0 release,
-# all "success"). Two changes land with 2.6.1 (prepared in
-# the repo; applied through the web UI at publication
-# time, since the push channel cannot carry workflow
-# files):
-#   1. The install step adds pyyaml, so the YAML validity
-#      tests run in CI instead of skipping (they skip
-#      honestly when PyYAML is absent).
-#   2. A new e2e-public job: generates the public
-#      synthetic fixtures and runs the e2e harness in
-#      public mode (NAR_E2E_PUBLIC=1), which exercises
-#      every case that needs no private fixtures. Cases
-#      bound to the private fixture tree SKIP; the doctor
-#      case also SKIPs in public mode when the runner
-#      lacks the full core toolchain (apktool / jadx /
-#      Android build-tools are not preinstalled on the
-#      hosted runners) — the job goes red only on a real
-#      failure in the fixture-independent subset.
+# Status: the 2.6.1 workflow (unit-and-syntax + e2e-public)
+# is EXECUTED AND PASSING on GitHub Actions (nar-ci run
+# #14, both jobs success, including the first hosted
+# e2e-public run). This 2.6.2 expansion was prepared in
+# the repo and is applied through the web UI at
+# publication time, since the push channel cannot carry
+# workflow files; its first hosted run after publication
+# is the proof for the new jobs. Every job's commands
+# were verified locally from a clean extraction before
+# this file was finalized (see
+# NAR_2.6.2_VERIFICATION_REPORT.md), and re-verified in
+# the 2.6.2 stability campaign (see
+# NAR_FINAL_VERIFICATION_REPORT.md): on a hosted runner
+# the unit job's expected shape is 637 passed / 16
+# skipped with empty private fixtures (the local
+# 653-pass shape needs the private fixture tree), and
+# the schema job's is 2 passed / 5 skipped of 7.
+#
+# Job map (brief G1):
+#   unit                — the full unit suite (-ra prints
+#                         skip reasons; skips are never
+#                         silent)
+#   syntax              — py_compile over every script
+#   schema-validation   — every schema parses + the
+#                         schema test module
+#   cli-smoke           — unified CLI + every standalone
+#                         script answers --help
+#   security-regression — archive/DEX/ELF/parser
+#                         hardening suites only
+#   docs-consistency    — docs/version/YAML consistency
+#   e2e-public          — public synthetic-fixture E2E
+#                         (no private fixtures, ever)
+#   fuzz-smoke          — bounded deterministic DEX
+#                         mutation fuzz (fixed seed); a
+#                         distinct parser failure fails
+#                         the job — that is the point
+#   benchmark-smoke     — OPTIONAL/informational: runs
+#                         the regression-gate tool over
+#                         the committed baselines to
+#                         prove the tooling executes;
+#                         hosted-runner memory is not
+#                         comparable to the local
+#                         baseline, so it never gates
 name: nar-ci
 
 on:
@@ -27,7 +51,77 @@ on:
   pull_request:
 
 jobs:
-  unit-and-syntax:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Environment
+        run: |
+          python3 --version
+          echo "commit: $GITHUB_SHA"
+      - name: Install test runner
+        run: pip install pytest pyyaml
+      - name: Unit tests
+        run: python3 -m pytest tests/unit/ -q -ra
+
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax-check every script
+        run: |
+          for f in scripts/*.py; do
+            python3 -m py_compile "$f"
+          done
+          python3 -m py_compile scripts/narlib/*.py
+
+  schema-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install validators
+        run: pip install pytest pyyaml
+      - name: Every schema parses as JSON
+        run: |
+          python3 - <<'PYEOF'
+          import glob, json
+          files = sorted(glob.glob("schemas/*.json"))
+          assert files, "no schemas found"
+          for f in files:
+              with open(f, encoding="utf-8") as fh:
+                  json.load(fh)
+          print(f"{len(files)} schemas parse")
+          PYEOF
+      - name: Schema tests
+        run: python3 -m pytest tests/unit/test_schemas.py -q -ra
+
+  cli-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unified CLI smoke
+        run: |
+          python3 scripts/nar.py version
+          python3 scripts/nar.py --help > /dev/null
+      - name: Every standalone script answers --help
+        run: |
+          for f in scripts/nar-*.py; do
+            python3 "$f" --help > /dev/null
+          done
+
+  security-regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,18 +130,34 @@ jobs:
           python-version: "3.12"
       - name: Install test runner
         run: pip install pytest pyyaml
-      - name: Unit tests
-        run: python3 -m pytest tests/unit/ -q
-      - name: Syntax-check every script
+      - name: Security regression suites
         run: |
-          for f in scripts/*.py; do
-            python3 -m py_compile "$f"
-          done
-          python3 -m py_compile scripts/narlib/*.py
-      - name: Unified CLI smoke
+          python3 -m pytest \
+            tests/unit/test_archive_budget.py \
+            tests/unit/test_safearchive.py \
+            tests/unit/test_security_regression.py \
+            tests/unit/test_deep_audit_remediation.py \
+            tests/unit/test_phase10_hardening.py \
+            tests/unit/test_phase11_mutations.py \
+            tests/unit/test_dex_fuzz_regressions.py \
+            tests/unit/test_elf_robustness.py \
+            -q -ra
+
+  docs-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test runner
+        run: pip install pytest pyyaml
+      - name: Documentation and metadata consistency
         run: |
-          python3 scripts/nar.py version
-          python3 scripts/nar.py --help > /dev/null
+          python3 -m pytest \
+            tests/unit/test_docs_consistency.py \
+            tests/unit/test_yaml_validation.py \
+            -q -ra
 
   e2e-public:
     runs-on: ubuntu-latest
@@ -56,7 +166,46 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Generate the public synthetic fixtures
-        run: python3 tests/generate_fixtures.py --out "$RUNNER_TEMP/nar-public-fixtures"
+      # No fixture-generation step: in public mode the
+      # harness points its fixture root at an empty temp
+      # dir by design, so every fixture-bound case SKIPs
+      # via its need() guard and only the fixture-free
+      # cases run. (A generation step whose output the
+      # harness never read was removed in the 2.6.2
+      # stability campaign, E-08.)
       - name: E2E harness (public subset, no private fixtures)
         run: NAR_E2E_PUBLIC=1 bash tests/run_e2e.sh
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The fuzz harness reuses the unit tests' DEX
+      # builders (tests/fuzz/dex_fuzz.py loads
+      # test_deep_audit_remediation, which imports
+      # pytest), so the runner must be installed or the
+      # job dies with ModuleNotFoundError before the
+      # first iteration (stability campaign, CI-01).
+      - name: Install test runner
+        run: pip install pytest pyyaml
+      - name: Bounded deterministic DEX fuzz (fixed seed)
+        run: |
+          python3 tests/fuzz/dex_fuzz.py --seed 1 \
+            --iterations 500 --out "$RUNNER_TEMP/dex-fuzz-out"
+
+  benchmark-smoke:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Regression-gate tool over committed baselines (informational)
+        run: |
+          python3 tests/benchmarks/check_regression.py \
+            --reference tests/benchmarks/baseline-2.6.1.json \
+            --candidate tests/benchmarks/baseline-2.6.2.json
