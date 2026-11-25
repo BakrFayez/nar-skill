@@ -146,6 +146,13 @@ def test_doctor_reports_all_scripts_compile(tmp_path):
     leave no new __pycache__ in the tree."""
     scripts = sorted(SCRIPTS.glob("*.py"))
     assert len(scripts) >= 20
+    # Resolve bash BEFORE the snapshot: _bash_or_skip()
+    # imports nar.py, which writes nar.cpython-*.pyc into
+    # scripts/__pycache__ — the snapshot must measure only
+    # what the doctor itself adds, never the test's own
+    # import (subset runs reach this test with a cold
+    # cache; the full suite usually does not).
+    bash = _bash_or_skip()
     cache_dir = SCRIPTS / "__pycache__"
     before = {p.name for p in cache_dir.glob("*")} \
         if cache_dir.is_dir() else set()
@@ -154,7 +161,7 @@ def test_doctor_reports_all_scripts_compile(tmp_path):
     if jdk.is_dir():
         env.setdefault("JAVA_HOME", str(jdk))
     proc = subprocess.run(
-        [_bash_or_skip(),
+        [bash,
          _script_arg(SCRIPTS / "nar-doctor.sh"), "--json"],
         capture_output=True, text=True, timeout=300, env=env)
     doc = json.loads(proc.stdout)
