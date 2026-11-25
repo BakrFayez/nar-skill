@@ -3,7 +3,7 @@
 One test (or pair) per audit fix that shipped on the
 stability-certification branch, each built to fail on the
 pre-fix code and pass on the fixed tree. Finding ids refer
-to the campaign register (NAR_STABILITY_AUDIT.md). All
+to the campaign register (docs/NAR_STABILITY_AUDIT.md). All
 inputs are synthetic and generic; no fixture corpus is
 required, so these run identically in the clean-extraction
 CI shape.

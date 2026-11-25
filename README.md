@@ -56,7 +56,7 @@ Then open `SKILL.md` and follow the routing table for your question.
 
 ## Latest release
 
-**2.6.2** — a verification, security and integrity round, hardened by a full stability and certification campaign (3 critical and 21 high-priority audit defects fixed, each with regression tests; all 12 stability Definition-of-Done items pass). Unreal Zen relationships are verified on 2,644 real packages, and accuracy is measured on cross-labeled real corpora. Full record: [NAR_2.6.2_VERIFICATION_REPORT.md](NAR_2.6.2_VERIFICATION_REPORT.md) and [NAR_FINAL_VERIFICATION_REPORT.md](NAR_FINAL_VERIFICATION_REPORT.md).
+**2.6.2** — a verification, security and integrity round, hardened by a full stability and certification campaign (3 critical and 21 high-priority audit defects fixed, each with regression tests; all 12 stability Definition-of-Done items pass). Unreal Zen relationships are verified on 2,644 real packages, and accuracy is measured on cross-labeled real corpora. Full record: [NAR_2.6.2_VERIFICATION_REPORT.md](docs/NAR_2.6.2_VERIFICATION_REPORT.md) and [NAR_FINAL_VERIFICATION_REPORT.md](docs/NAR_FINAL_VERIFICATION_REPORT.md).
 
 Version history lives in [CHANGELOG.md](CHANGELOG.md); binaries and notes are on the [release page](https://github.com/BakrFayez/nar-skill/releases/tag/v2.6.2).
 
@@ -216,17 +216,17 @@ REA (reverse-engineer-anything) covers everything: native binaries, Electron app
 The guides in `references/` (25 guides, one per topic) carry the method in depth. The repository-level records:
 
 - [CHANGELOG.md](CHANGELOG.md) — release history (the only place version history lives)
-- [NAR_2.6.2_VERIFICATION_REPORT.md](NAR_2.6.2_VERIFICATION_REPORT.md) — 2.6.2 verification, security and integrity round: per-workstream record and final battery
-- [NAR_FINAL_VERIFICATION_REPORT.md](NAR_FINAL_VERIFICATION_REPORT.md) — stability & certification campaign: final verification report and Definition-of-Done verdict
-- [NAR_STABILITY_AUDIT.md](NAR_STABILITY_AUDIT.md) — stability audit: findings register by priority
-- [NAR_SECURITY_AUDIT.md](NAR_SECURITY_AUDIT.md) — security audit: archive, parser and redaction hardening evidence
-- [NAR_ACCURACY_REPORT.md](NAR_ACCURACY_REPORT.md) — labeled-corpus accuracy measurements (real and synthetic kept separate; NOT MEASURED where no ground truth exists)
-- [NAR_PERFORMANCE_REPORT.md](NAR_PERFORMANCE_REPORT.md) — benchmark matrix, baselines and regression gate
-- [NAR_COMPATIBILITY_REPORT.md](NAR_COMPATIBILITY_REPORT.md) — compatibility and regression record
-- [NAR_RUNTIME_VALIDATION_REPORT.md](NAR_RUNTIME_VALIDATION_REPORT.md) — runtime validation record (emulator-verified; physical device NOT RUN)
-- [NAR_CAPABILITY_MATRIX.md](NAR_CAPABILITY_MATRIX.md) — capability matrix: one row per capability area, with status and evidence
-- [NAR_ARCHITECTURE.md](NAR_ARCHITECTURE.md) — system architecture
-- [NAR_TEST_MATRIX.md](NAR_TEST_MATRIX.md) — executed test evidence matrix
+- [NAR_2.6.2_VERIFICATION_REPORT.md](docs/NAR_2.6.2_VERIFICATION_REPORT.md) — 2.6.2 verification, security and integrity round: per-workstream record and final battery
+- [NAR_FINAL_VERIFICATION_REPORT.md](docs/NAR_FINAL_VERIFICATION_REPORT.md) — stability & certification campaign: final verification report and Definition-of-Done verdict
+- [NAR_STABILITY_AUDIT.md](docs/NAR_STABILITY_AUDIT.md) — stability audit: findings register by priority
+- [NAR_SECURITY_AUDIT.md](docs/NAR_SECURITY_AUDIT.md) — security audit: archive, parser and redaction hardening evidence
+- [NAR_ACCURACY_REPORT.md](docs/NAR_ACCURACY_REPORT.md) — labeled-corpus accuracy measurements (real and synthetic kept separate; NOT MEASURED where no ground truth exists)
+- [NAR_PERFORMANCE_REPORT.md](docs/NAR_PERFORMANCE_REPORT.md) — benchmark matrix, baselines and regression gate
+- [NAR_COMPATIBILITY_REPORT.md](docs/NAR_COMPATIBILITY_REPORT.md) — compatibility and regression record
+- [NAR_RUNTIME_VALIDATION_REPORT.md](docs/NAR_RUNTIME_VALIDATION_REPORT.md) — runtime validation record (emulator-verified; physical device NOT RUN)
+- [NAR_CAPABILITY_MATRIX.md](docs/NAR_CAPABILITY_MATRIX.md) — capability matrix: one row per capability area, with status and evidence
+- [NAR_ARCHITECTURE.md](docs/NAR_ARCHITECTURE.md) — system architecture
+- [NAR_TEST_MATRIX.md](docs/NAR_TEST_MATRIX.md) — executed test evidence matrix
 - [SECURITY.md](SECURITY.md) — analysis boundary, untrusted-sample handling, responsible use
 
 ## Repo structure
@@ -241,13 +241,25 @@ nar-skill/
   CONTRIBUTING.md           How to contribute
   SECURITY.md               Analysis boundary, untrusted-sample handling, responsible use
   pyproject.toml            Package metadata + tool configuration
-  NAR_ARCHITECTURE.md       System architecture (2.0 program record)
-  NAR_CAPABILITY_MATRIX.md  Capability matrix: one row per capability area, with status + evidence
-  NAR_REPAIR_MATRIX.md      Repository-wide repair matrix (2.6.0 program): issue inventory, fixes, verification
-  NAR_AUDIT.md              Repository audit + reconciliation record
-  NAR_GAP_ANALYSIS.md       Capability baseline with per-area statuses
-  NAR_IMPLEMENTATION_PLAN.md  Phase plans and completion records
-  NAR_TEST_MATRIX.md        Executed test evidence matrix
+  docs/                     Engineering reports and records
+    NAR_2.5.2_UPDATE_REPORT.md      2.5.2 update report
+    NAR_2.6.0_UPDATE_REPORT.md      2.6.0 update report
+    NAR_2.6.1_VERIFICATION_REPORT.md  2.6.1 verification report
+    NAR_2.6.2_VERIFICATION_REPORT.md  2.6.2 verification, security and integrity record
+    NAR_ACCURACY_REPORT.md          Labeled-corpus accuracy measurements
+    NAR_ARCHITECTURE.md             System architecture (2.0 program record)
+    NAR_AUDIT.md                    Repository audit + reconciliation record
+    NAR_CAPABILITY_MATRIX.md        Capability matrix: one row per capability area, with status + evidence
+    NAR_COMPATIBILITY_REPORT.md     Compatibility and regression record
+    NAR_FINAL_VERIFICATION_REPORT.md  Stability & certification campaign: final verification report
+    NAR_GAP_ANALYSIS.md             Capability baseline with per-area statuses
+    NAR_IMPLEMENTATION_PLAN.md      Phase plans and completion records
+    NAR_PERFORMANCE_REPORT.md       Benchmark matrix, baselines and regression gate
+    NAR_REPAIR_MATRIX.md            Repository-wide repair matrix (2.6.0 program): issue inventory, fixes, verification
+    NAR_RUNTIME_VALIDATION_REPORT.md  Runtime validation record (emulator-verified; physical device NOT RUN)
+    NAR_SECURITY_AUDIT.md           Security audit: archive, parser and redaction hardening evidence
+    NAR_STABILITY_AUDIT.md          Stability audit: findings register by priority
+    NAR_TEST_MATRIX.md              Executed test evidence matrix
   .gitignore                Keeps APKs and decoded output out of git
   references/               One guide per topic (25 guides)
     app-bundles.md
@@ -395,7 +407,7 @@ python3 tests/generate_fixtures.py --out /tmp/nar-fixtures
 bash tests/run_e2e.sh   # needs the local fixture corpus via $NAR_FIXTURES
 ```
 
-See the "Test categories" section of `NAR_TEST_MATRIX.md` for what each category needs and what an absence produces.
+See the "Test categories" section of `docs/NAR_TEST_MATRIX.md` for what each category needs and what an absence produces.
 
 ## Legitimate use
 

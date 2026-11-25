@@ -2,7 +2,7 @@
 
 The Phase 0 audit deferred the full check; Phase 10 ran it
 once by hand (see the Phase 10 record in
-NAR_IMPLEMENTATION_PLAN.md) and this test keeps the durable
+docs/NAR_IMPLEMENTATION_PLAN.md) and this test keeps the durable
 parts enforced:
 
   * every (references/…)/(scripts/…) link target named in

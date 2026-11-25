@@ -133,6 +133,13 @@ class ReadmeStructureTest(unittest.TestCase):
     def test_schemas_all_named(self):
         self._assert_all_named("schemas", (".json",))
 
+    def test_docs_all_named(self):
+        # The engineering reports moved from the repo root
+        # into docs/ (owner-directed layout cleanup); every
+        # report the docs/ tree carries must be named in the
+        # structure block, like every other directory here.
+        self._assert_all_named("docs", (".md",))
+
     def test_tests_layout_named(self):
         for token in ("run_e2e.sh", "unit/", "benchmarks/",
                       "run_benchmarks.py"):

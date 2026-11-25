@@ -16,8 +16,8 @@ release-ready tree.
   - `python3 scripts/nar.py doctor` → Core toolchain:
     READY
   - CLI smoke: every `nar <verb> --help` exits 0.
-- The capability baseline (NAR_GAP_ANALYSIS.md) and the
-  test matrix (NAR_TEST_MATRIX.md) carry the release's
+- The capability baseline (docs/NAR_GAP_ANALYSIS.md) and the
+  test matrix (docs/NAR_TEST_MATRIX.md) carry the release's
   evidence addenda; the implementation plan carries the
   phase records.
 

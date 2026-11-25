@@ -1,8 +1,8 @@
 # NAR 2.0 architecture
 
 How the 2.0 system is put together, and where the full design
-record lives (`NAR_ARCHITECTURE.md` at the repo root, with the
-Phase Zero audit in `NAR_AUDIT.md`).
+record lives (`docs/NAR_ARCHITECTURE.md`, with the
+Phase Zero audit in `docs/NAR_AUDIT.md`).
 
 ## Layers
 

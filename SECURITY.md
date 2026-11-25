@@ -66,7 +66,7 @@ Samples are hostile input by assumption:
   regression tests per find (2.6.2).
 - **Shipped code is stdlib-only** and contains no
   `shell=True`, `os.system`, `eval`, or `pickle` (Phase 1
-  audit record, `NAR_REPAIR_MATRIX.md`).
+  audit record, `docs/NAR_REPAIR_MATRIX.md`).
 
 ## Report hygiene
 

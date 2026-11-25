@@ -68,12 +68,12 @@ tests/unit/test_stability_campaign.py). Headlines:
   0 unresolved, 13,911 Oodle refusals); Frida runtime
   suite 28/28 on the emulator. Physical-device
   validation: NOT RUN.
-- Full record: NAR_STABILITY_AUDIT.md,
-  NAR_SECURITY_AUDIT.md, NAR_ACCURACY_REPORT.md,
-  NAR_PERFORMANCE_REPORT.md,
-  NAR_COMPATIBILITY_REPORT.md,
-  NAR_RUNTIME_VALIDATION_REPORT.md,
-  NAR_FINAL_VERIFICATION_REPORT.md.
+- Full record: docs/NAR_STABILITY_AUDIT.md,
+  docs/NAR_SECURITY_AUDIT.md, docs/NAR_ACCURACY_REPORT.md,
+  docs/NAR_PERFORMANCE_REPORT.md,
+  docs/NAR_COMPATIBILITY_REPORT.md,
+  docs/NAR_RUNTIME_VALIDATION_REPORT.md,
+  docs/NAR_FINAL_VERIFICATION_REPORT.md.
 
 ## 2.6.2 (2026-11-24)
 
@@ -81,7 +81,7 @@ Verification, security and integrity round: no new
 feature surface beyond what the workstreams name.
 Every claim below is backed by an executed test or
 run; anything not executed is labeled NOT RUN.
-Full record: NAR_2.6.2_VERIFICATION_REPORT.md.
+Full record: docs/NAR_2.6.2_VERIFICATION_REPORT.md.
 
 - Security: one validated ResourceBudget abstraction
   (narlib/budget.py) now backs the archive limits;
@@ -160,7 +160,7 @@ external review and a code-level deep audit of 2.6.0
 were worked claim by claim; every confirmed finding is
 fixed with regression tests, and the whole round is
 verified end to end on real targets. Full record:
-NAR_2.6.1_VERIFICATION_REPORT.md.
+docs/NAR_2.6.1_VERIFICATION_REPORT.md.
 
 - Security (deep-audit remediation): a ZIP path
   traversal in nar-analyze's container extraction —
@@ -247,8 +247,8 @@ NAR_2.6.1_VERIFICATION_REPORT.md.
 
 Repository-wide repair and intelligence upgrade driven
 by a full audit (issue inventory R-001–R-020). Full
-record: NAR_2.6.0_UPDATE_REPORT.md and
-NAR_REPAIR_MATRIX.md.
+record: docs/NAR_2.6.0_UPDATE_REPORT.md and
+docs/NAR_REPAIR_MATRIX.md.
 
 - DEX intelligence: control-flow graph edges from the
   disassembler's block model (`nar-dex --cfg`,
@@ -335,7 +335,7 @@ NAR_REPAIR_MATRIX.md.
 
 Reliability, performance and consistency update driven
 by a repository audit. Full record:
-NAR_2.5.2_UPDATE_REPORT.md.
+docs/NAR_2.5.2_UPDATE_REPORT.md.
 
 - Skill YAML is valid YAML now. skill.yaml and the
   SKILL.md frontmatter both failed a real YAML parser
@@ -394,15 +394,15 @@ NAR_2.5.2_UPDATE_REPORT.md.
   classic/1011/1012 UAsset variants, Godot pack) with
   a committed expected-output manifest
   (tests/expected_outputs.json, builder intent);
-  NAR_TEST_MATRIX.md documents the five test
+  docs/NAR_TEST_MATRIX.md documents the five test
   categories. A clean clone runs the public suite:
   private-corpus tests SKIP, never fail or fake-pass
   (clean-extraction proof: 295 passed, 8 skipped,
   0 failed).
-- Consistency: NAR_CAPABILITY_MATRIX.md (new, 47
+- Consistency: docs/NAR_CAPABILITY_MATRIX.md (new, 47
   capabilities with status + evidence) and 14
   documentation corrections across
-  NAR_ARCHITECTURE.md, NAR_GAP_ANALYSIS.md,
+  docs/NAR_ARCHITECTURE.md, docs/NAR_GAP_ANALYSIS.md,
   references and README, reconciling docs with the
   code (module/schema inventories, registry facts,
   doctor checks).
@@ -646,7 +646,7 @@ game case, 26 JSON documents). No tool behavior changes.
   stored chunks parse in full (the sweep found one
   forward-export-reference defect, since fixed; an
   independent byte-walk oracle agrees 45/45 on one
-  real package — see NAR_TEST_MATRIX.md).
+  real package — see docs/NAR_TEST_MATRIX.md).
 - Runtime completion (emulator scope): the two Frida
   scripts that had never executed live (jni-trace,
   java-api-trace) have now run against a live process —
@@ -729,7 +729,7 @@ game case, 26 JSON documents). No tool behavior changes.
   versioning info — the hunt for a real
   classic-format UE5 package with a recorded
   FileVersionUE5 remains open (see
-  NAR_TEST_MATRIX.md).
+  docs/NAR_TEST_MATRIX.md).
 
 ## 2.3.0 (2026-11-23)
 
@@ -746,7 +746,7 @@ game case, 26 JSON documents). No tool behavior changes.
   stored packages of the test title parsed, cross-
   checked by an independent byte-walk oracle and an
   independent pak header-chaining walk. Full record in
-  NAR_TEST_MATRIX.md.
+  docs/NAR_TEST_MATRIX.md.
 
 ## 2.2.0 (2026-11-23)
 
@@ -758,7 +758,7 @@ gained an own DEX bytecode disassembler cross-checked
 against the Android SDK disassembler with full agreement,
 and nar-pak now diagnoses AES-sealed pak indexes
 explicitly. The full evidence is recorded in
-NAR_TEST_MATRIX.md (post-2.1.0 and unreleased addenda).
+docs/NAR_TEST_MATRIX.md (post-2.1.0 and unreleased addenda).
 
 - Runtime layer verified live: against an Android emulator
   (API 26 / Android 8.0.0, google_apis x86_64, QEMU TCG
@@ -771,7 +771,7 @@ NAR_TEST_MATRIX.md (post-2.1.0 and unreleased addenda).
   stage Frida spawn mode still failed repeatedly under
   TCG (closed by the follow-up directly below), and a
   physical device remains IMPLEMENTED_BUT_UNVERIFIED.
-  Full record in NAR_TEST_MATRIX.md (post-2.1.0 runtime
+  Full record in docs/NAR_TEST_MATRIX.md (post-2.1.0 runtime
   addendum) and references/troubleshooting.md.
 - Frida spawn mode verified live: the spawn failures above were
   root-caused (ActivityManager's ~10 s process-start
@@ -784,7 +784,7 @@ NAR_TEST_MATRIX.md (post-2.1.0 and unreleased addenda).
   scope with that recipe; the one-command gated form
   remains unusable under TCG, and a physical device
   remains IMPLEMENTED_BUT_UNVERIFIED. Full record in
-  NAR_TEST_MATRIX.md (spawn-mode addendum) and
+  docs/NAR_TEST_MATRIX.md (spawn-mode addendum) and
   references/frida-scripts.md.
 - DEX bytecode disassembler (new narlib/dexdis): nar-dex
   gains a targeted disassembly mode (`--disassemble` with
@@ -846,7 +846,7 @@ NAR_TEST_MATRIX.md (post-2.1.0 and unreleased addenda).
 
 Gap-closure release. Every item below was verified by
 execution in the reference environment; the full evidence
-is recorded in NAR_TEST_MATRIX.md (2.1.0 addendum).
+is recorded in docs/NAR_TEST_MATRIX.md (2.1.0 addendum).
 
 - CI truth: the nar-ci workflow has executed on GitHub
   Actions (3 runs, all successful). Documentation that
@@ -964,7 +964,7 @@ doctor hint, and the tool registry.
   tests/benchmarks/; pyproject.toml; CI workflow for
   GitHub Actions (executed there since the 2.0.0 release —
   runs #1–#3 all passed; see the 2.1.0 addendum in
-  NAR_TEST_MATRIX.md).
+  docs/NAR_TEST_MATRIX.md).
 - Fix carried from the audit: nar-analyze Markdown no longer
   renders structured string hits as raw JSON blobs.
 - The five 1.1.1 wide-sweep fixes are included (they landed
