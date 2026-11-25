@@ -574,9 +574,12 @@ upgraded).
 ## NOT RUN / limits
 
 - Windows and macOS real execution (doctor + CI legs):
-  NOT RUN — no such hosts; PATH simulations cover the
-  Windows defect class, and the hosted CI run at publication
-  is the proof.
+  NOT RUN at the time of writing — no such hosts; PATH
+  simulations cover the Windows defect class, and the
+  hosted CI run at publication is the proof.
+  **Superseded by the post-publication addendum at the end
+  of this report: hosted runs #39–#42 executed the full
+  matrix for real; run #42 is fully green.**
 - Physical-device runtime validation: NOT RUN — no device
   attached (standing label since 2.6.2; the owner's checklist
   stands).
@@ -660,3 +663,45 @@ in-cycle acceptance fixes):
 
 The branch is left clean at the close-out commit. Nothing
 has been pushed, merged, tagged or released.
+
+
+## Post-publication addendum (2026-11-26) — hosted CI proof
+
+At publication the Windows/macOS legs were NOT RUN locally
+(DoD item 4 PARTIAL). The hosted runs then executed the
+full matrix for real, and every failure they exposed was
+fixed on `main` in the same cycle (stability rules; the
+v3.0.0 tag itself is unchanged and predates these fixes):
+
+- Run #39 (the 3.0.0 tree): Linux and macOS legs all PASS;
+  three Windows legs failed (doctor, unit, e2e-public) —
+  bare-`bash` dispatch hitting the WSL stub, normalised
+  instead of raw hostile archive names in reports, an
+  import-time `resource` crash, Windows RSS and probe gaps.
+- Fix round 1 (7 commits): Git Bash discovery in the CLI
+  dispatcher, raw-name report keying, guarded imports,
+  ctypes RSS, PATHEXT probing, explicit directory checks.
+  Run #40: doctor and e2e-public Windows legs PASS; unit
+  (Windows) down to 9 failures.
+- Fix round 2 (3 commits): the remaining 9 were five
+  fixture-truthfulness defects (Python's zipfile sanitises
+  hostile names at write time on Windows, so the stored
+  names were never the asserted ones), three tests invoking
+  bare `bash`, one environment-dependent expectation, and
+  one real product bug — the win32 RSS ctypes prototypes
+  truncated the 64-bit process handle, so the memory budget
+  never engaged on Windows. Run #41: unit (Windows) PASS;
+  one new failure in security-regression (Ubuntu) — the
+  doctor-compile test's own bash-resolution import polluted
+  its pycache snapshot on cold-cache subset runs.
+- Snapshot fix (1 commit): resolve bash before the
+  snapshot. **Run #42: FULLY GREEN — all 17 jobs PASS
+  (syntax, schema, fuzz, benchmark and docs smokes,
+  security-regression, and cli-smoke / doctor / e2e-public
+  / unit on Linux, macOS and Windows).**
+
+DoD item 4 therefore closes as PASS by hosted execution.
+Physical-device runtime validation remains NOT RUN (the
+owner's device; the standing checklist applies). Local
+battery on the final tree: pytest 1007 passed / 1 skipped,
+e2e 68/68 private + 15/0/48 public, doctor READY.

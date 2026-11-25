@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Post-publication Windows CI hardening on `main` (the
+  v3.0.0 tag predates these fixes): two fix rounds driven
+  by hosted runs #39–#41 — Git Bash discovery instead of
+  bare-`bash` dispatch (the WSL stub), raw hostile archive
+  names in extraction reports, guarded `resource` import,
+  a working Windows peak-RSS source for the analyze memory
+  budget (ctypes prototypes), PATHEXT executable probing,
+  and test-layer fixture/resolution corrections — closed by
+  a pycache-snapshot fix in the doctor compile test. Hosted
+  run #42 is fully green: all 17 jobs pass on Linux, macOS
+  and Windows. Details in the post-publication addendum of
+  docs/NAR_3.0.0_UPDATE_REPORT.md.
+
 ## 3.0.0 — the answer release (2026-11-25; prepared on the `3.0.0` branch; final acceptance group complete — publication is the owner's decision)
 
 The release whose goal is that any question about any app or
