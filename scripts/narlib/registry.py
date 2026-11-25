@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 REGISTRY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "..", "registry.json")
@@ -41,11 +42,13 @@ def _find_sdk_tool(name):
         if os.path.isdir(bt):
             for ver in sorted(os.listdir(bt), reverse=True):
                 cand = os.path.join(bt, ver, name)
-                if os.path.isfile(cand) and os.access(cand, os.X_OK):
-                    return cand
+                resolved = _resolve_executable(cand)
+                if resolved:
+                    return resolved
         cand = os.path.join(root, "platform-tools", name)
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            return cand
+        resolved = _resolve_executable(cand)
+        if resolved:
+            return resolved
     return None
 
 
@@ -84,16 +87,89 @@ def _find_java():
     home_var = os.environ.get("JAVA_HOME")
     if home_var:
         cand = os.path.join(home_var, "bin", "java")
-        if _executable_file(cand):
-            return cand
+        resolved = _resolve_executable(cand)
+        if resolved:
+            return resolved
     home = os.path.expanduser("~")
     for pattern in _JAVA_HOME_GLOBS:
         full = pattern if os.path.isabs(pattern) \
             else os.path.join(home, pattern)
         for cand in sorted(glob.glob(full)):
-            if _executable_file(cand):
-                return cand
+            resolved = _resolve_executable(cand)
+            if resolved:
+                return resolved
     return None
+
+
+def _is_win32():
+    # Read sys.platform at call time (not a cached constant)
+    # so the platform branch is the one actually taken on
+    # the running host — and so tests can simulate it.
+    return sys.platform == "win32"
+
+
+def _resolve_executable(path):
+    """Resolve *path* to the file the platform would really
+    execute, or None when the platform cannot execute it.
+
+    POSIX: unchanged semantics — the path itself, iff it is
+    a regular file with the execute bit (os.access X_OK).
+
+    Windows: os.access(X_OK) is meaningless there (it only
+    reflects the read-only flag, never executability), so
+    resolution goes through shutil.which, which implements
+    the platform's real rule: a path (or bare name) is
+    executable only when it resolves — as given, or with a
+    PATHEXT extension appended — to a real file. An
+    extensionless shell script, a .txt file, or any other
+    non-PATHEXT file therefore resolves to None, exactly as
+    Windows itself would refuse to start it, while tool.exe
+    / tool.bat / tool.cmd resolve to their real path (the
+    .exe-suffixed path when the probe named it bare)."""
+    if not path:
+        return None
+    if _is_win32():
+        return shutil.which(path)
+    return path if _executable_file(path) else None
+
+
+def _executable_file(path):
+    if _is_win32():
+        return _resolve_executable(path) is not None
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _found_file(path):
+    """Existence test for env_var tool locations (a tool
+    file under a pointed-at tree, e.g. support/<tool>).
+
+    POSIX: unchanged — a plain regular file counts.
+    Windows: the candidate names a tool, so it must be a
+    genuinely executable file under PATHEXT resolution,
+    not merely a file that exists."""
+    if _is_win32():
+        return _resolve_executable(path)
+    return path if os.path.isfile(path) else None
+
+
+def _invocation_argv(argv):
+    """The argv a version probe must actually spawn.
+
+    POSIX: argv unchanged. Windows: .bat/.cmd shims cannot
+    be started by CreateProcess directly — Windows runs
+    them through the command interpreter — so they are
+    invoked as [COMSPEC, /c, <shim>, <args...>], which is
+    also how the real .bat tool launchers this registry
+    probes (e.g. jadx/apktool launchers) are started.
+    Native executables (.exe/.com, the resolved form of
+    every other candidate) run directly, unchanged."""
+    argv = list(argv)
+    if _is_win32() and argv:
+        ext = os.path.splitext(str(argv[0]))[1].lower()
+        if ext in (".bat", ".cmd"):
+            comspec = os.environ.get("COMSPEC") or "cmd.exe"
+            return [comspec, "/c"] + argv
+    return argv
 
 
 def _run_version(argv, timeout=20):
@@ -104,7 +180,8 @@ def _run_version(argv, timeout=20):
     recorded as the tool's version and the tool probed
     available (stability audit D-03)."""
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True,
+        proc = subprocess.run(_invocation_argv(argv),
+                              capture_output=True, text=True,
                               timeout=timeout, env=_child_env())
         if proc.returncode != 0:
             return None
@@ -113,10 +190,6 @@ def _run_version(argv, timeout=20):
         return lines[0] if lines else None
     except (OSError, subprocess.TimeoutExpired):
         return None
-
-
-def _executable_file(path):
-    return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
 def probe(entry):
@@ -150,17 +223,24 @@ def probe(entry):
     path = None
     env_override = os.environ.get(
         "NAR_" + entry["name"].upper().replace("-", "_") + "_PATH")
-    if env_override and _executable_file(env_override):
-        path = env_override
-    elif entry.get("env_var") and os.environ.get(entry["env_var"]):
+    if env_override:
+        # On Windows this stores the PATHEXT-resolved path
+        # (e.g. ...\tool.exe for a bare ...\tool override),
+        # which is the path the version run below spawns.
+        resolved = _resolve_executable(env_override)
+        if resolved:
+            path = resolved
+    if not path and entry.get("env_var") \
+            and os.environ.get(entry["env_var"]):
         base = os.environ[entry["env_var"]]
         for cand_name in entry.get("candidates", []):
             cand = os.path.join(base, "support", cand_name)
-            if os.path.isfile(cand):
-                path = cand
+            found = _found_file(cand)
+            if found:
+                path = found
                 break
-        if not path and os.path.isfile(base):
-            path = base
+        if not path:
+            path = _found_file(base)
     if not path:
         for cand_name in entry.get("candidates", []):
             found = shutil.which(cand_name)
@@ -174,8 +254,9 @@ def probe(entry):
         if home_var:
             for rel in entry.get("env_home_candidates", []):
                 cand = os.path.join(home_var, rel)
-                if _executable_file(cand):
-                    path = cand
+                resolved = _resolve_executable(cand)
+                if resolved:
+                    path = resolved
                     break
     if not path and entry.get("home_globs"):
         home = os.path.expanduser("~")
@@ -183,8 +264,9 @@ def probe(entry):
             full = pattern if os.path.isabs(pattern) \
                 else os.path.join(home, pattern)
             for cand in sorted(glob.glob(full)):
-                if _executable_file(cand):
-                    path = cand
+                resolved = _resolve_executable(cand)
+                if resolved:
+                    path = resolved
                     break
             if path:
                 break
@@ -199,8 +281,9 @@ def probe(entry):
             base = os.path.join(home, "workspace", sub)
             for cand_name in entry.get("candidates", []):
                 cand = os.path.join(base, cand_name)
-                if _executable_file(cand):
-                    path = cand
+                resolved = _resolve_executable(cand)
+                if resolved:
+                    path = resolved
                     break
             if path:
                 break

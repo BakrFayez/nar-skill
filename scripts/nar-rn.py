@@ -428,6 +428,16 @@ def inspect(apk_path, work_dir):
         report["source_maps"] = sorted(
             n for n in zf.namelist() if n.endswith(".map"))
         contract, fallbacks = find_bundle_candidates(zf.namelist())
+
+        def _raw(cand):
+            # Rejection records cite the RAW stored name
+            # (orig_filename); candidate discovery above
+            # keeps using the normalised namelist, unchanged.
+            try:
+                return zf.getinfo(cand).orig_filename or cand
+            except (KeyError, AttributeError):
+                return cand
+
         entry = None
         data = None
         rejected = []
@@ -450,7 +460,7 @@ def inspect(apk_path, work_dir):
                         zf, cand, MAX_BUNDLE_READ_BYTES)
                     if data is None:
                         rejected.append({
-                            "entry": cand,
+                            "entry": _raw(cand),
                             "kind": "bundle declares over "
                                     "the read cap; not read"})
                         continue
@@ -459,7 +469,7 @@ def inspect(apk_path, work_dir):
                                               " fallback asset")
                     break
                 rejected.append({
-                    "entry": cand,
+                    "entry": _raw(cand),
                     "kind": ("Unity asset bundle (UnityFS)"
                              if kind == "unityfs" else
                              "binary, not Hermes or JavaScript text"),

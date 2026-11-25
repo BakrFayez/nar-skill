@@ -103,7 +103,12 @@ def _crc_check_budgeted(zf):
                             "budget (declared sizes lied)")
         except (zipfile.BadZipFile, RuntimeError, EOFError,
                 OSError):
-            return info.filename, None
+            # Cite the RAW stored name (orig_filename):
+            # this failure entry lands in verdicts and
+            # validation notes as evidence, and zipfile
+            # normalises filename on Windows.
+            return (getattr(info, "orig_filename", None)
+                    or info.filename), None
     return None, None
 
 

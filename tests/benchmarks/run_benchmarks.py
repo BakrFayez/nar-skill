@@ -30,12 +30,17 @@ MIT License. See LICENSE in the repo root.
 import argparse
 import json
 import os
-import resource
+import platform
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+
+try:
+    import resource
+except ImportError:  # Windows: no POSIX resource module
+    resource = None
 
 ROOT = os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))
@@ -89,6 +94,18 @@ FORMAT_LABELS_SYNTHETIC = {
     "synthetic.pak": "unreal-pak",
     "synthetic.utoc": "unreal-iostore",
 }
+
+
+def _machine_label():
+    """``<sysname> <machine>`` for the report header. POSIX
+    keeps the historic os.uname() values verbatim; Windows
+    has no os.uname(), so platform (which reads the native
+    OS APIs there) supplies the equivalent label."""
+    uname = getattr(os, "uname", None)
+    if uname is not None:
+        info = uname()
+        return info.sysname + " " + info.machine
+    return platform.system() + " " + platform.machine()
 
 
 def manifest_env():
@@ -148,6 +165,12 @@ def measure_peak_memory(env):
     process's own peak; its stage subprocesses are
     grandchildren and are not included (see
     references/benchmarks.md)."""
+    if resource is None:
+        return {"status": "not_run",
+                "reason": "peak memory measurement requires "
+                          "the POSIX resource module "
+                          "(RUSAGE_CHILDREN), which is not "
+                          "available on this platform"}
     candidates = {}
     demo = os.path.join(FIXTURES, "demo", "NarDemo.apk")
     if os.path.isfile(demo):
@@ -365,18 +388,24 @@ MATRIX_ROLES = [
 ]
 
 _MATRIX_DRIVER = r"""
-import json, os, resource, subprocess, sys, time
+import json, os, subprocess, sys, time
+try:
+    import resource
+except ImportError:  # Windows: peak RSS not measured
+    resource = None
 target, out, work, scripts = sys.argv[1:5]
 started = time.time()
 proc = subprocess.run(
     [sys.executable, os.path.join(scripts, "nar-analyze.py"),
      target, "--out", out, "--work", work],
     capture_output=True, text=True, timeout=3600)
-peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+peak = (resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+        if resource is not None else None)
 print(json.dumps({
     "exit_code": proc.returncode,
     "wall_seconds": round(time.time() - started, 2),
-    "peak_rss_bytes": int(peak) * 1024}))
+    "peak_rss_bytes": int(peak) * 1024
+    if peak is not None else None}))
 """
 
 
@@ -544,8 +573,7 @@ def main(argv=None):
                         "(full analyze runs by role/size class)")
     args = p.parse_args(argv)
     env = manifest_env()
-    results = {"machine": os.uname().sysname + " " +
-               os.uname().machine,
+    results = {"machine": _machine_label(),
                "python": sys.version.split()[0], "runs": []}
     # Memory first: RUSAGE_CHILDREN attribution (see the
     # measure_peak_memory docstring).

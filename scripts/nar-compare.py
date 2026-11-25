@@ -90,10 +90,78 @@ def sha256_stream(fp):
     return h.hexdigest()
 
 
+def _aapt2_file_names():
+    """Candidate aapt2 file names, in preference order.
+
+    The Windows build-tools binary is aapt2.exe (batch
+    wrappers also exist in the wild); everywhere else the
+    binary is the extensionless ``aapt2``. On Windows the
+    extensionless name is still a candidate: a tool planted
+    on PATH in script form carries no extension, and
+    shutil.which cannot find it there (which() only tries
+    the PATHEXT extensions), so find_aapt2 scans PATH
+    itself for the names below."""
+    if sys.platform == "win32":
+        return ("aapt2.exe", "aapt2.bat", "aapt2.cmd", "aapt2")
+    return ("aapt2",)
+
+
+def _aapt2_candidate_ok(cand):
+    if not os.path.isfile(cand):
+        return False
+    if sys.platform == "win32":
+        # os.access(X_OK) is not meaningful on Windows;
+        # existence is the honest check there.
+        return True
+    return os.access(cand, os.X_OK)
+
+
+def _aapt2_argv(aapt2, *args):
+    """Command line that runs an aapt2 candidate.
+
+    On POSIX every candidate executes directly, exactly as
+    before. Windows cannot CreateProcess anything but a
+    native binary: a .bat/.cmd wrapper must go through
+    cmd, and an extensionless candidate with a shebang
+    (the form a PATH-planted tool takes) must go through
+    sh when one is available — with no sh, the bare
+    candidate is returned and the caller's OSError handling
+    reports the tool unreadable rather than pretending it
+    ran."""
+    if sys.platform != "win32":
+        return [aapt2, *args]
+    lower = aapt2.lower()
+    if lower.endswith((".bat", ".cmd")):
+        return ["cmd", "/c", aapt2, *args]
+    if lower.endswith(".exe"):
+        return [aapt2, *args]
+    try:
+        with open(aapt2, "rb") as fh:
+            head = fh.read(2)
+    except OSError:
+        head = b""
+    if head == b"#!":
+        sh = shutil.which("sh") or shutil.which("bash")
+        if sh:
+            return [sh, aapt2, *args]
+    return [aapt2, *args]
+
+
 def find_aapt2():
     aapt2 = shutil.which("aapt2")
     if aapt2:
         return aapt2
+    # Manual PATH scan: on Windows which() misses candidates
+    # whose names carry no PATHEXT extension (see
+    # _aapt2_file_names); on POSIX this is only a fallback
+    # for the same names which() would have tried.
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        for name in _aapt2_file_names():
+            cand = os.path.join(entry, name)
+            if _aapt2_candidate_ok(cand):
+                return cand
     for root in filter(None, [
         os.environ.get("ANDROID_HOME"),
         os.environ.get("ANDROID_SDK_ROOT"),
@@ -108,9 +176,10 @@ def find_aapt2():
                 except ValueError:
                     return (0,)
             for ver in sorted(os.listdir(bt), key=_ver_key, reverse=True):
-                cand = os.path.join(bt, ver, "aapt2")
-                if os.path.isfile(cand) and os.access(cand, os.X_OK):
-                    return cand
+                for name in _aapt2_file_names():
+                    cand = os.path.join(bt, ver, name)
+                    if _aapt2_candidate_ok(cand):
+                        return cand
     return None
 
 
@@ -125,7 +194,7 @@ def aapt2_badging(apk_path):
         return {}, "not-found"
     try:
         out = subprocess.run(
-            [aapt2, "dump", "badging", apk_path],
+            _aapt2_argv(aapt2, "dump", "badging", apk_path),
             capture_output=True, text=True, timeout=120,
         )
     except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):

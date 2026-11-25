@@ -309,64 +309,186 @@ def test_d02_wrappers_honor_exit_codes(monkeypatch, nar_network,
 # an error banner is not a version.
 # ----------------------------------------------------------
 
-def _fake_tool(tmp_path, body, name="faketool-bin"):
+def _fake_tool(tmp_path, text, exit_code=0, name="faketool-bin"):
+    """A fake tool the host platform can genuinely execute.
+
+    POSIX: an extensionless #!/bin/sh script, chmod 755 —
+    the platform's real execution mechanism, unchanged.
+
+    Windows: Windows cannot execute an extensionless shell
+    script at all (no shebang, no execute bit), so the old
+    fixture encoded Unix semantics and could never run
+    there. The genuinely-executable script form on Windows
+    is a .bat shim: .bat is in PATHEXT (so shutil.which
+    resolves it, exactly as the probe now requires) and the
+    registry's version run invokes .bat/.cmd through
+    COMSPEC /c, which is how Windows itself starts the real
+    .bat tool launchers in the registry (jadx, apktool).
+    A .py fixture was rejected: .py is not in the default
+    PATHEXT and subprocess does not start files through
+    shell file-associations, so the probe could not
+    genuinely run it. The echoed text is plain
+    [A-Za-z0-9 .:;-], safe unquoted in both shells."""
+    if sys.platform == "win32":
+        path = tmp_path / (name + ".bat")
+        body = "@echo off\necho " + text + "\n"
+        if exit_code:
+            body += "exit /b %d\n" % exit_code
+        path.write_text(body)
+        return path
     path = tmp_path / name
+    body = "#!/bin/sh\necho '" + text + "'\n"
+    if exit_code:
+        body += "exit %d\n" % exit_code
     path.write_text(body)
     path.chmod(0o755)
     return path
 
 
+def _d03_entry():
+    return {"name": "faketoolx", "kind": "executable",
+            "required": "optional",
+            "candidates": ["faketoolx-not-on-path"],
+            "version_argv": ["--version"]}
+
+
 def test_d03_run_version_requires_exit_zero(tmp_path):
     banner = _fake_tool(
-        tmp_path,
-        "#!/bin/sh\necho 'ERROR: fake banner not a version'\n"
-        "exit 3\n")
+        tmp_path, "ERROR: fake banner not a version",
+        exit_code=3)
     assert registry._run_version([str(banner)]) is None
-    good = _fake_tool(tmp_path,
-                      "#!/bin/sh\necho 'faketool 1.2.3'\n",
+    good = _fake_tool(tmp_path, "faketool 1.2.3",
                       name="goodtool-bin")
     assert registry._run_version([str(good)]) == "faketool 1.2.3"
 
 
 def test_d03_probe_rejects_failing_tool(tmp_path, monkeypatch):
-    banner = _fake_tool(
-        tmp_path, "#!/bin/sh\necho 'ERROR: banner'\nexit 3\n")
+    banner = _fake_tool(tmp_path, "ERROR: banner", exit_code=3)
     monkeypatch.setenv("NAR_FAKETOOLX_PATH", str(banner))
-    entry = {"name": "faketoolx", "kind": "executable",
-             "required": "optional",
-             "candidates": ["faketoolx-not-on-path"],
-             "version_argv": ["--version"]}
-    result = registry.probe(entry)
+    result = registry.probe(_d03_entry())
     assert result["available"] is False
     assert result["version"] is None
 
 
 def test_d03_probe_accepts_working_tool(tmp_path, monkeypatch):
-    good = _fake_tool(tmp_path,
-                      "#!/bin/sh\necho 'faketool 2.0'\n")
+    good = _fake_tool(tmp_path, "faketool 2.0")
     monkeypatch.setenv("NAR_FAKETOOLX_PATH", str(good))
-    entry = {"name": "faketoolx", "kind": "executable",
-             "required": "optional",
-             "candidates": ["faketoolx-not-on-path"],
-             "version_argv": ["--version"]}
-    result = registry.probe(entry)
+    result = registry.probe(_d03_entry())
     assert result["available"] is True
     assert result["version"] == "faketool 2.0"
 
 
 def test_d03_probe_ignores_non_executable_override(
         tmp_path, monkeypatch):
-    plain = tmp_path / "not-executable"
-    plain.write_text("just text")
-    plain.chmod(0o644)
+    if sys.platform == "win32":
+        # A file Windows genuinely cannot execute: a plain
+        # text file whose extension is not in PATHEXT, so
+        # PATHEXT resolution refuses it no matter its name
+        # or contents.
+        plain = tmp_path / "not-executable.txt"
+        plain.write_text("just text")
+    else:
+        plain = tmp_path / "not-executable"
+        plain.write_text("just text")
+        plain.chmod(0o644)
     monkeypatch.setenv("NAR_FAKETOOLX_PATH", str(plain))
-    entry = {"name": "faketoolx", "kind": "executable",
-             "required": "optional",
-             "candidates": ["faketoolx-not-on-path"],
-             "version_argv": ["--version"]}
-    result = registry.probe(entry)
+    result = registry.probe(_d03_entry())
     assert result["available"] is False
     assert result["path"] is None
+
+
+def test_d03_win32_probe_uses_which_not_access_xok(
+        tmp_path, monkeypatch):
+    """Simulated win32 branch, runnable on any host: with
+    sys.platform patched to win32 and shutil.which faked to
+    PATHEXT-resolve a .bat candidate, the probe must accept
+    that candidate even though os.access(X_OK) — patched to
+    record-and-deny — says no, and must never consult it.
+    On the pre-fix code this fails: the override was gated
+    on os.access(X_OK) alone."""
+    good = tmp_path / "faketool.bat"
+    good.write_text("@echo off\necho faketool 9.9\n")
+    good.chmod(0o644)  # not executable by POSIX semantics
+    access_calls = []
+
+    def fake_access(path, mode, *args, **kwargs):
+        access_calls.append((str(path), mode))
+        return False
+
+    def fake_which(cmd, mode=0, path=None):
+        return str(good) if str(cmd) == str(good) else None
+
+    def fake_run_version(argv, timeout=20):
+        assert argv[0] == str(good)  # the resolved path runs
+        return "faketool 9.9"
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(registry.shutil, "which", fake_which)
+    monkeypatch.setattr(registry.os, "access", fake_access)
+    monkeypatch.setattr(registry, "_run_version",
+                        fake_run_version)
+    monkeypatch.setenv("NAR_FAKETOOLX_PATH", str(good))
+    result = registry.probe(_d03_entry())
+    assert result["available"] is True
+    assert result["path"] == str(good)
+    assert result["version"] == "faketool 9.9"
+    assert access_calls == []
+
+
+def test_d03_win32_probe_rejects_file_which_cannot_resolve(
+        tmp_path, monkeypatch):
+    """Simulated win32, the other direction: a file that
+    POSIX os.access(X_OK) calls executable (chmod 755) but
+    that PATHEXT resolution (faked which) refuses — a .txt
+    file — must be ignored as an override. Executability
+    on win32 is which's verdict, never the X_OK bit."""
+    plain = tmp_path / "not-executable.txt"
+    plain.write_text("just text")
+    plain.chmod(0o755)
+    assert os.access(str(plain), os.X_OK)  # POSIX says yes
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(registry.shutil, "which",
+                        lambda cmd, mode=0, path=None: None)
+    monkeypatch.setenv("NAR_FAKETOOLX_PATH", str(plain))
+    result = registry.probe(_d03_entry())
+    assert result["available"] is False
+    assert result["path"] is None
+
+
+def test_d03_win32_run_version_invokes_batch_via_comspec(
+        monkeypatch):
+    """Simulated win32 invocation: a .bat candidate is run
+    through COMSPEC /c (the only way Windows starts batch
+    shims), a native .exe candidate runs directly, and a
+    non-zero exit still yields no version on either form."""
+    calls = []
+
+    class _Proc:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        if any("fail" in str(a) for a in argv):
+            return _Proc(3, "ERROR: banner\n")
+        return _Proc(0, "faketool 3.0\n")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("COMSPEC", "cmd.exe")
+    monkeypatch.setattr(registry.subprocess, "run", fake_run)
+    bat = r"C:\tools\faketool.bat"
+    assert registry._run_version([bat, "--version"]) == \
+        "faketool 3.0"
+    assert calls[-1] == ["cmd.exe", "/c", bat, "--version"]
+    exe = r"C:\tools\faketool.exe"
+    assert registry._run_version([exe, "--version"]) == \
+        "faketool 3.0"
+    assert calls[-1] == [exe, "--version"]
+    fail = r"C:\tools\failtool.bat"
+    assert registry._run_version([fail, "--version"]) is None
+    assert calls[-1] == ["cmd.exe", "/c", fail, "--version"]
 
 
 # ----------------------------------------------------------

@@ -69,8 +69,41 @@ except Exception:  # narlib missing: keep the tool usable
 
 try:
     import resource as _resource
-except Exception:  # non-Unix: memory budget checks no-op
+except Exception:  # non-Unix (Windows has no resource
+    # module): peak RSS comes from the ctypes psapi source
+    # in _peak_rss_bytes_win32 instead
     _resource = None
+
+try:
+    import ctypes as _ctypes
+except Exception:  # no ctypes: the win32 RSS source is
+    # unavailable and reports None (see _peak_rss_bytes)
+    _ctypes = None
+
+
+if _ctypes is not None:
+    class _ProcessMemoryCountersEx(_ctypes.Structure):
+        """PROCESS_MEMORY_COUNTERS_EX (psapi.h), the struct
+        GetProcessMemoryInfo fills. PeakWorkingSetSize is
+        the process's peak RSS in bytes. The two leading
+        fields are DWORDs (fixed 32-bit here, not c_ulong,
+        whose width differs between Windows and POSIX)."""
+
+        _fields_ = [
+            ("cb", _ctypes.c_uint32),
+            ("PageFaultCount", _ctypes.c_uint32),
+            ("PeakWorkingSetSize", _ctypes.c_size_t),
+            ("WorkingSetSize", _ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", _ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", _ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", _ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", _ctypes.c_size_t),
+            ("PagefileUsage", _ctypes.c_size_t),
+            ("PeakPagefileUsage", _ctypes.c_size_t),
+            ("PrivateUsage", _ctypes.c_size_t),
+        ]
+else:
+    _ProcessMemoryCountersEx = None
 
 # Optional layers (2.6.0 Phases 7/8): graph + investigation
 # companions, on by default, disabled by --no-graph /
@@ -128,6 +161,14 @@ def set_budgets(stage_timeout_s=None, total_budget_s=None,
     BUDGET["total_budget_s"] = total_budget_s
     BUDGET["budget_mb"] = budget_mb
     BUDGET["t0"] = time.time()
+    _RSS_UNAVAILABLE_NOTED.clear()
+
+
+# Stage names whose memory-budget check already recorded a
+# "budget-unavailable" entry this run (one per stage, so a
+# platform with no RSS source is named in the log once per
+# boundary instead of at every entry/exit check).
+_RSS_UNAVAILABLE_NOTED = set()
 
 
 class _MemoryBudgetExceeded(Exception):
@@ -146,11 +187,51 @@ class _MemoryBudgetExceeded(Exception):
             f"{peak_rss_bytes} bytes)")
 
 
+def _peak_rss_bytes_win32():
+    """Peak RSS in bytes on Windows, via stdlib ctypes:
+    GetProcessMemoryInfo (psapi, falling back to kernel32's
+    K32GetProcessMemoryInfo) fills PROCESS_MEMORY_COUNTERS_EX
+    and PeakWorkingSetSize is this process's peak working
+    set. Windows exposes no per-children peak through this
+    API, so unlike the POSIX source this is the self peak
+    only. Returns None when the source is genuinely
+    unavailable (no ctypes, DLL or entry point missing, or
+    the call fails) — a failed lookup is reported as None,
+    never as an AttributeError/OSError leak and never as
+    a fabricated value."""
+    if _ctypes is None or _ProcessMemoryCountersEx is None:
+        return None
+    counters = _ProcessMemoryCountersEx()
+    counters.cb = _ctypes.sizeof(counters)
+    try:
+        kernel32 = _ctypes.WinDLL("kernel32",
+                                  use_last_error=True)
+        handle = kernel32.GetCurrentProcess()
+        try:
+            psapi = _ctypes.WinDLL("psapi",
+                                   use_last_error=True)
+            get_info = psapi.GetProcessMemoryInfo
+        except (AttributeError, OSError):
+            get_info = kernel32.K32GetProcessMemoryInfo
+        if not get_info(handle, _ctypes.byref(counters),
+                        _ctypes.sizeof(counters)):
+            return None
+    except (AttributeError, OSError, ValueError):
+        return None
+    peak = int(counters.PeakWorkingSetSize)
+    return peak if peak > 0 else None
+
+
 def _peak_rss_bytes():
     """Peak RSS in bytes: the max of this process's peak
     and the peak of its terminated children (the stage
     subprocesses), or None when the platform cannot
-    report it (the memory budget then does not engage)."""
+    report it (the memory budget then does not engage).
+    On Windows the source is _peak_rss_bytes_win32 (the
+    resource module does not exist there); the POSIX
+    getrusage path below is unchanged."""
+    if sys.platform == "win32":
+        return _peak_rss_bytes_win32()
     if _resource is None:
         return None
     try:
@@ -171,11 +252,33 @@ def _check_memory_budget(stage):
     Records the budget-exceeded execution-log entry with
     the named boundary, then raises _MemoryBudgetExceeded;
     analyze()/main() convert it into the recorded,
-    resumable abort."""
+    resumable abort. When the platform has no RSS source
+    the budget cannot be enforced: a budget-unavailable
+    entry is recorded under the same named boundary
+    instead of silently passing."""
     if not BUDGET.get("budget_mb"):
         return
     peak = _peak_rss_bytes()
     if peak is None:
+        # No RSS source on this platform: the budget cannot
+        # be enforced at this boundary. That is an honest
+        # named failure, not a silent pass — record it once
+        # per stage in the execution log under the same
+        # named boundary, and let the run continue (the
+        # budget is unenforceable here, not exceeded).
+        if stage not in _RSS_UNAVAILABLE_NOTED:
+            _RSS_UNAVAILABLE_NOTED.add(stage)
+            EXEC_LOG.append({
+                "stage": stage, "module": "nar-analyze",
+                "tool": "nar-analyze",
+                "tool_version": NAR_VERSION,
+                "status": "budget-unavailable",
+                "duration_s": 0.0,
+                "boundary": f"memory-budget:{stage}",
+                "reason": "peak RSS source unavailable on "
+                          "this platform; memory budget "
+                          "not enforced at this boundary",
+                "budget": _budget_snapshot()})
         return
     if peak > BUDGET["budget_mb"] * 1024 * 1024:
         EXEC_LOG.append({
@@ -592,11 +695,29 @@ def extract_entry_record(zf, name, root, *rel_parts):
     for a refusal. Returns (dest, None) on success or
     (None, {"entry": name, "reason": str}) on refusal -- the
     same {entry, reason} record shape narlib.safearchive
-    produces, so callers can accumulate rejections uniformly."""
+    produces, so callers can accumulate rejections uniformly.
+    The record's ``entry`` cites the RAW name as stored in
+    the archive (ZipInfo.orig_filename) when the member can
+    be looked up: zipfile normalises ``filename`` on
+    Windows, and a rejection report is evidence of what the
+    archive actually carries."""
     try:
         return extract_entry(zf, name, root, *rel_parts), None
     except ValueError as e:
-        return None, {"entry": name, "reason": str(e)}
+        return None, {"entry": _raw_entry_name(zf, name),
+                      "reason": str(e)}
+
+
+def _raw_entry_name(zf, name):
+    """The member name as stored in the archive
+    (ZipInfo.orig_filename), falling back to ``name`` when
+    the member cannot be looked up. Report citations use
+    the raw name; lookups and extraction keep using the
+    normalised name, unchanged."""
+    try:
+        return zf.getinfo(name).orig_filename or name
+    except (KeyError, AttributeError, TypeError):
+        return name
 
 
 def _registry_lib_markers(engine_id):
@@ -2219,13 +2340,17 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
         pak_reports = []
         for src_zip, entry in pak_sources[:3]:
             with zipfile.ZipFile(src_zip) as zf:
+                # Citation form of the member name (raw, as
+                # stored); extraction keeps the normalised
+                # ``entry`` lookup name.
+                cited = _raw_entry_name(zf, entry)
                 try:
                     pak_path = extract_entry(
                         zf, entry, work_dir, "pak",
                         os.path.basename(entry))
                 except ValueError as e:
                     pak_reports.append(
-                        {"error": str(e), "entry": entry})
+                        {"error": str(e), "entry": cited})
                     continue
             data, err = run_json_tool("nar-pak.py", [pak_path])
             if data:
@@ -2234,8 +2359,8 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
                 # full listing is one nar-pak run away and would bloat
                 # this report
                 data["contained_in"] = os.path.basename(src_zip)
-                data["entry"] = entry
-            pak_reports.append(data or {"error": err, "entry": entry})
+                data["entry"] = cited
+            pak_reports.append(data or {"error": err, "entry": cited})
         if len(pak_sources) > 3:
             report["limitations"].append(
                 f"{len(pak_sources)} .pak files found; only the first"
@@ -2248,13 +2373,14 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
                         .get("utocs", [])]
         for src_zip, entry in utoc_sources[:3]:
             with zipfile.ZipFile(src_zip) as zf:
+                cited = _raw_entry_name(zf, entry)
                 try:
                     utoc_path = extract_entry(
                         zf, entry, work_dir, "utoc",
                         os.path.basename(entry))
                 except ValueError as e:
                     utoc_reports.append(
-                        {"error": str(e), "entry": entry})
+                        {"error": str(e), "entry": cited})
                     continue
             data, err = run_json_tool("nar-unreal.py", [utoc_path])
             containers = (data or {}).get("iostore_containers") or []
@@ -2263,11 +2389,11 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
                 summary.pop("entries", None)  # per-chunk detail is
                 # one nar-unreal run away; counts/totals stay here
                 summary["contained_in"] = os.path.basename(src_zip)
-                summary["entry"] = entry
+                summary["entry"] = cited
                 utoc_reports.append(summary)
             else:
                 utoc_reports.append({"error": err or "no container"
-                                     " parsed", "entry": entry})
+                                     " parsed", "entry": cited})
         if len(utoc_sources) > 3:
             report["limitations"].append(
                 f"{len(utoc_sources)} .utoc containers found; only"

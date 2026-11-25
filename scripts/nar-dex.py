@@ -916,6 +916,16 @@ def main(argv=None):
                         "defined methods whose label contains "
                         "TEXT in the call-graph section")
     args = p.parse_args(argv)
+    if os.path.isdir(args.target):
+        # Directory targets are an input error (exit 2) on
+        # every platform. This cannot be left to the open()
+        # below: POSIX raises IsADirectoryError for a
+        # directory open (caught under the try), but Windows
+        # raises PermissionError instead, which would escape
+        # as a traceback and the wrong exit code.
+        print(f"nar-dex: is a directory: {args.target}",
+              file=sys.stderr)
+        return 2
     disasm = None
     if args.disassemble:
         if not (args.disasm_class or args.disasm_method

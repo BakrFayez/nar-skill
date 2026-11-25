@@ -54,6 +54,8 @@ Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import os
+import posixpath
+import shutil
 import subprocess
 import sys
 
@@ -128,6 +130,90 @@ Understand Every Layer. Follow Every Evidence.
 MIT License."""
 
 
+def _is_wsl_stub(path):
+    """True when *path* points at the WSL launcher stub.
+
+    The stub is the bash.exe that ships inside the Windows
+    System32 directory (C:\\Windows\\System32\\bash.exe):
+    invoking it prints "Windows Subsystem for Linux has no
+    installed distributions" instead of running a shell.
+    Git Bash never installs under System32, so any bash
+    whose path carries a System32 component is the stub,
+    never a real bash. The check is pure string work on
+    both separator spellings (case-insensitive), so it
+    behaves identically on every host.
+    """
+    if not path:
+        return False
+    parts = [p for p in
+             path.replace("/", "\\").lower().split("\\") if p]
+    return "system32" in parts
+
+
+def _win_bash_candidates():
+    """Ordered Git Bash candidates on Windows.
+
+    Git-relative layouts come first (derived from the git
+    executable's own location), then the standard Git for
+    Windows install locations, then bash on PATH — the
+    last only when it is not the System32 WSL stub. The
+    stub is filtered out of every source, so a real Git
+    Bash always wins over it. Candidate strings are built
+    with forward slashes (accepted by every Windows API
+    and by Git Bash itself) via posixpath, so the result
+    does not depend on the host's path flavour.
+    """
+    candidates = []
+
+    def _add(candidate):
+        if candidate and candidate not in candidates \
+                and not _is_wsl_stub(candidate):
+            candidates.append(candidate)
+
+    git = shutil.which("git")
+    if git:
+        git_dir = git.replace("\\", "/").rstrip("/")
+        git_dir = git_dir.rsplit("/", 1)[0] \
+            if "/" in git_dir else ""
+        if git_dir:
+            # git in cmd/ or bin/: ../bin is Git's bin;
+            # git in mingw64/bin/: ../../bin is Git's bin;
+            # ../usr/bin is Git's usr/bin (also ships bash).
+            for rel in ("../bin/bash.exe",
+                        "../../bin/bash.exe",
+                        "../usr/bin/bash.exe"):
+                _add(posixpath.normpath(git_dir + "/" + rel))
+    for env_name, suffix in (
+            ("ProgramFiles", "Git/bin/bash.exe"),
+            ("ProgramFiles(x86)", "Git/bin/bash.exe"),
+            ("LOCALAPPDATA", "Programs/Git/bin/bash.exe")):
+        base = os.environ.get(env_name)
+        if base:
+            _add(posixpath.normpath(
+                base.replace("\\", "/").rstrip("/")
+                + "/" + suffix))
+    for name in ("bash", "bash.exe"):
+        _add(shutil.which(name))
+    return candidates
+
+
+def resolve_bash():
+    """The bash executable for the doctor dispatch.
+
+    Non-Windows: plain "bash" from PATH, exactly as the
+    dispatch has always done. Windows: the first Git Bash
+    candidate that exists as a file, or None when no
+    usable bash exists (the caller then fails honestly
+    instead of invoking the WSL stub).
+    """
+    if sys.platform != "win32":
+        return "bash"
+    for candidate in _win_bash_candidates():
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def run_entry(entry, rest):
     kind, script, prefix = entry
     path = os.path.join(HERE, script)
@@ -135,9 +221,27 @@ def run_entry(entry, rest):
         print(f"nar: {script} is missing from this install",
               file=sys.stderr)
         return 2
-    argv_full = (["bash", path] if kind == "bash"
-                 else [sys.executable, path]) \
-        + list(prefix) + list(rest)
+    if kind == "bash":
+        bash = resolve_bash()
+        if bash is None:
+            print(
+                "nar: the doctor requires Git Bash on Windows, "
+                "but no usable bash was found (the bash.exe in "
+                "the Windows System32 directory is the Windows "
+                "Subsystem for Linux launcher stub, not a real "
+                "bash, and is never used). Install Git for "
+                "Windows, which provides Git Bash: "
+                "https://git-scm.com/download/win",
+                file=sys.stderr)
+            return 2
+        # Git Bash accepts forward-slash Windows paths
+        # unconditionally; the native path uses backslashes.
+        script_arg = path.replace("\\", "/") \
+            if sys.platform == "win32" else path
+        argv_full = [bash, script_arg]
+    else:
+        argv_full = [sys.executable, path]
+    argv_full += list(prefix) + list(rest)
     try:
         proc = subprocess.run(argv_full)
     except OSError as e:

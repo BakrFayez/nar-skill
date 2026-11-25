@@ -243,6 +243,69 @@ def test_memory_budget_check_raises_named_boundary():
         az.EXEC_LOG.clear()
 
 
+def test_memory_budget_win32_rss_source(monkeypatch):
+    """Windows RSS source (win-fixes B7): the resource
+    module does not exist on Windows, so _peak_rss_bytes
+    must read PeakWorkingSetSize through ctypes
+    GetProcessMemoryInfo there, and the named boundary
+    must raise identically. Simulated on a POSIX host by
+    patching sys.platform and injecting a fake psapi /
+    kernel32 pair into ctypes.WinDLL; a failing DLL load
+    must surface as an honest named budget-unavailable
+    log entry, never a silent pass and never an
+    AttributeError/OSError leak."""
+    import ctypes
+
+    class _FakeKernel32:
+        def GetCurrentProcess(self):
+            return -1  # the real pseudo-handle value
+
+    class _FakePsapi:
+        def GetProcessMemoryInfo(self, handle, ref, size):
+            counters = ctypes.cast(
+                ref, ctypes.POINTER(
+                    az._ProcessMemoryCountersEx)).contents
+            counters.PeakWorkingSetSize = 64 * 1024 * 1024
+            return 1
+
+    fakes = {"kernel32": _FakeKernel32(), "psapi": _FakePsapi()}
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(ctypes, "WinDLL",
+                        lambda name, **kw: fakes[name],
+                        raising=False)
+    assert az._peak_rss_bytes() == 64 * 1024 * 1024
+    az.EXEC_LOG.clear()
+    az.set_budgets(budget_mb=0.001)
+    try:
+        with pytest.raises(az._MemoryBudgetExceeded) as ei:
+            az._check_memory_budget("dex")
+        assert ei.value.boundary == "memory-budget:dex"
+        entry = az.EXEC_LOG[-1]
+        assert entry["status"] == "budget-exceeded"
+        assert entry["boundary"] == "memory-budget:dex"
+        assert entry["peak_rss_bytes"] == 64 * 1024 * 1024
+    finally:
+        az.set_budgets()
+        az.EXEC_LOG.clear()
+
+    def _failing_windll(name, **kw):
+        raise OSError("DLL load failed (simulated)")
+
+    monkeypatch.setattr(ctypes, "WinDLL", _failing_windll,
+                        raising=False)
+    assert az._peak_rss_bytes() is None
+    az.EXEC_LOG.clear()
+    az.set_budgets(budget_mb=0.001)
+    try:
+        az._check_memory_budget("dex")  # must not raise
+        entry = az.EXEC_LOG[-1]
+        assert entry["status"] == "budget-unavailable"
+        assert entry["boundary"] == "memory-budget:dex"
+    finally:
+        az.set_budgets()
+        az.EXEC_LOG.clear()
+
+
 @pytest.mark.skipif(not os.path.isfile(DEMO),
                     reason="demo fixture absent")
 def test_budget_abort_then_resume_and_verify(tmp_path):

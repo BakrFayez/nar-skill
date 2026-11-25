@@ -44,7 +44,7 @@ import tempfile
 import zipfile
 
 from .budget import ResourceBudget
-from .safearchive import safe_extract
+from .safearchive import raw_entry_name, safe_extract
 
 #: Kinds that are containers of APKs (a resolution extracts a
 #: base APK out of them). "aab" is a bundle, not an APK
@@ -354,24 +354,33 @@ def resolve_target(path, merge_splits=True, budget=None,
 
     resolved.is_container = True
     # --- inventory the container (no extraction yet) -------
+    # Inventory names are the RAW names as stored in the
+    # archive (raw_entry_name): every record derived from
+    # them (contained, refused/split_skipped, base_entry) is
+    # evidence and must cite the stored name, and the raw
+    # keys are what safearchive's extracted/rejected maps
+    # are keyed by, so lookups below match on every
+    # platform. Decisions (suffix, traversal) are made on
+    # the normalised info.filename, unchanged.
     with zipfile.ZipFile(path) as zf:
-        infos = {i.filename: i for i in zf.infolist()}
+        infos = {raw_entry_name(i): i for i in zf.infolist()}
         names = list(infos)
         manifest = container_manifest_of(zf)
     package = (manifest or {}).get("package")
     resolved.package = package
     contained, refused = [], []
     for n in names:
-        if not n.lower().endswith(".apk"):
+        info = infos[n]
+        if not info.filename.lower().endswith(".apk"):
             continue
-        if _traversal_name(n):
+        if _traversal_name(info.filename):
             refused.append({"name": n,
                             "reason": "entry name is absolute "
                                       "or traverses outside "
                                       "the extraction root"})
         else:
             contained.append({"name": n,
-                              "size_bytes": infos[n].file_size})
+                              "size_bytes": info.file_size})
     contained.sort(key=lambda c: c["name"])
     stem = os.path.splitext(os.path.basename(path))[0]
     base_entry = pick_base_apk(contained, package=package,
@@ -386,9 +395,9 @@ def resolve_target(path, merge_splits=True, budget=None,
         # level's records ride along.
         nested = [{"name": n, "size_bytes": infos[n].file_size}
                   for n in names
-                  if n.lower().endswith(
+                  if infos[n].filename.lower().endswith(
                       (".xapk", ".apkm", ".apks", ".zip"))
-                  and not _traversal_name(n)]
+                  and not _traversal_name(infos[n].filename)]
         if nested:
             nested.sort(key=lambda c: c["name"])
             inner_entry = max(
@@ -485,7 +494,12 @@ def resolve_target(path, merge_splits=True, budget=None,
     # skipped with a named reason, never silently.
     declared = {s["file"] for s in
                 (manifest or {}).get("split_apks") or []}
-    for missing in sorted(declared - set(names)):
+    # A declared split is present when either its raw stored
+    # name or its normalised form is in the inventory (the
+    # manifest spells names with '/', a stored name may
+    # carry '\\').
+    present = set(names) | {infos[n].filename for n in names}
+    for missing in sorted(declared - present):
         resolved.split_skipped.append({
             "name": missing,
             "reason": "declared in container manifest but "
@@ -568,14 +582,15 @@ def resolution_block(path):
         return None
     try:
         with zipfile.ZipFile(path) as zf:
-            infos = {i.filename: i for i in zf.infolist()}
+            infos = {raw_entry_name(i): i
+                     for i in zf.infolist()}
             manifest = container_manifest_of(zf)
     except (zipfile.BadZipFile, OSError):
         return None
     contained = [{"name": n, "size_bytes": i.file_size}
                  for n, i in infos.items()
-                 if n.lower().endswith(".apk")
-                 and not _traversal_name(n)]
+                 if i.filename.lower().endswith(".apk")
+                 and not _traversal_name(i.filename)]
     contained.sort(key=lambda c: c["name"])
     stem = os.path.splitext(os.path.basename(path))[0]
     base = pick_base_apk(contained,
@@ -616,14 +631,19 @@ def inventory_duplicates(roots, cap_bytes=DUPLICATE_MEMBER_CAP_BYTES,
             continue
         with zf:
             for info in zf.infolist():
+                # Decisions (directory, predicate) use the
+                # normalised name; every cited member name
+                # (skipped records, duplicate locations) is
+                # the raw stored name.
                 name = info.filename
+                raw = raw_entry_name(info)
                 if name.endswith("/"):
                     continue
                 if predicate is not None and not predicate(name):
                     continue
                 if info.file_size > cap_bytes:
                     skipped.append({
-                        "archive": archive, "member": name,
+                        "archive": archive, "member": raw,
                         "size_bytes": info.file_size,
                         "reason": f"member exceeds the "
                                   f"{cap_bytes}-byte duplicate-"
@@ -647,7 +667,7 @@ def inventory_duplicates(roots, cap_bytes=DUPLICATE_MEMBER_CAP_BYTES,
                      "size_bytes": info.file_size,
                      "locations": []})
                 slot["locations"].append(
-                    {"archive": archive, "member": name})
+                    {"archive": archive, "member": raw})
     groups = [g for g in by_hash.values()
               if len(g["locations"]) > 1]
     for g in groups:

@@ -36,6 +36,24 @@ _ARCHIVE_EXTS = (".zip", ".apk", ".aab", ".xapk", ".apkm", ".apks",
                  ".aar", ".jar", ".obb")
 
 
+def raw_entry_name(info):
+    """The entry name exactly as stored in the archive.
+
+    CPython's zipfile normalises ``ZipInfo.filename`` on
+    Windows (os.sep and os.altsep become '/') both when
+    writing and when reading the central directory, while
+    ``ZipInfo.orig_filename`` preserves the stored name.
+    Reports are evidence: they must cite the name as it
+    appears in the archive, so every report key in this
+    module (and in consumers keying maps by entry name)
+    uses this raw name. The containment/traversal
+    DECISIONS keep using the normalised ``info.filename``
+    exactly as before -- normalisation is for the decision,
+    never for the citation. On platforms where no
+    normalisation happens the two are identical."""
+    return getattr(info, "orig_filename", None) or info.filename
+
+
 def _entry_problems(info, limits, totals):
     """Return a rejection reason for a ZipInfo, or None."""
     name = info.filename
@@ -126,6 +144,9 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
 
     Returns {extracted: [{entry, path, size_bytes}], rejected:
     [{entry, reason}], nested_archives: [names], totals}.
+    Every ``entry``/nested name cites the RAW name as stored
+    in the archive (see :func:`raw_entry_name`); ``path`` is
+    the real contained on-disk path.
     Nested archives are listed, and extracted as plain files;
     recursion into them happens only when the caller drives it
     (depth is tracked and reported, never automatic).
@@ -164,7 +185,12 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
             return report
         totals = {"bytes": 0}
         for info in infos:
+            # ``name`` is the normalised name: every decision
+            # (traversal, containment, on-disk path) uses it,
+            # unchanged. ``raw`` is the name as stored in the
+            # archive: every report citation uses it.
             name = info.filename
+            raw = raw_entry_name(info)
             if name.endswith("/"):
                 # Directory entries write nothing, but a
                 # symlink-mode directory entry is a
@@ -172,19 +198,19 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
                 reason = _entry_problems(info, limits, totals)
                 if reason:
                     report["rejected"].append(
-                        {"entry": name, "reason": reason})
+                        {"entry": raw, "reason": reason})
                 continue
             if budget.max_elapsed_seconds is not None and \
                     time.monotonic() - started > \
                     budget.max_elapsed_seconds:
                 report["rejected"].append({
-                    "entry": name,
+                    "entry": raw,
                     "reason": "elapsed time budget exceeded "
                               f"({budget.max_elapsed_seconds}s)"})
                 continue
             reason = _entry_problems(info, limits, totals)
             if reason:
-                report["rejected"].append({"entry": name,
+                report["rejected"].append({"entry": raw,
                                            "reason": reason})
                 continue
             rel = name.replace("\\", "/")
@@ -196,7 +222,7 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
             if not (target_real == dest_real or
                     target_real.startswith(dest_real + os.sep)):
                 report["rejected"].append(
-                    {"entry": name, "reason": "escapes destination"})
+                    {"entry": raw, "reason": "escapes destination"})
                 continue
             if os.path.islink(target):
                 # A pre-existing symlink FILE at the target
@@ -207,7 +233,7 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
                 # audit C-15). Refuse to write through any
                 # link at the final component.
                 report["rejected"].append(
-                    {"entry": name,
+                    {"entry": raw,
                      "reason": "target path is a pre-existing "
                                "symlink"})
                 continue
@@ -252,14 +278,14 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
                 except OSError:
                     pass
                 report["rejected"].append(
-                    {"entry": name, "reason": overflow})
+                    {"entry": raw, "reason": overflow})
                 continue
             totals["bytes"] += written
             report["extracted"].append(
-                {"entry": name, "path": target,
+                {"entry": raw, "path": target,
                  "size_bytes": written})
             if _is_archive_name(name):
-                report["nested_archives"].append(name)
+                report["nested_archives"].append(raw)
         report["totals"]["bytes"] = totals["bytes"]
     if report["nested_archives"] and _depth >= limits["max_nesting"]:
         report["nesting_limit_reached"] = True
