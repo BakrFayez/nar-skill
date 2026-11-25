@@ -10,9 +10,9 @@
 # is the proof for the new jobs. Every job's commands
 # were verified locally from a clean extraction before
 # this file was finalized (see
-# NAR_2.6.2_VERIFICATION_REPORT.md), and re-verified in
+# docs/NAR_2.6.2_VERIFICATION_REPORT.md), and re-verified in
 # the 2.6.2 stability campaign (see
-# NAR_FINAL_VERIFICATION_REPORT.md): on a hosted runner
+# docs/NAR_FINAL_VERIFICATION_REPORT.md): on a hosted runner
 # the unit job's expected shape is 637 passed / 16
 # skipped with empty private fixtures (the local
 # 653-pass shape needs the private fixture tree), and
