@@ -3,35 +3,52 @@
 # Status: the 2.6.1 workflow (unit-and-syntax + e2e-public)
 # is EXECUTED AND PASSING on GitHub Actions (nar-ci run
 # #14, both jobs success, including the first hosted
-# e2e-public run). This 2.6.2 expansion was prepared in
-# the repo and is applied through the web UI at
-# publication time, since the push channel cannot carry
-# workflow files; its first hosted run after publication
-# is the proof for the new jobs. Every job's commands
-# were verified locally from a clean extraction before
-# this file was finalized (see
-# docs/NAR_2.6.2_VERIFICATION_REPORT.md), and re-verified in
-# the 2.6.2 stability campaign (see
-# docs/NAR_FINAL_VERIFICATION_REPORT.md): on a hosted runner
-# the unit job's expected shape is 637 passed / 16
-# skipped with empty private fixtures (the local
-# 653-pass shape needs the private fixture tree), and
-# the schema job's is 2 passed / 5 skipped of 7.
+# e2e-public run). The 2.6.2 expansion (nine jobs) was
+# applied through the web UI at 2.6.2 publication time,
+# since the push channel cannot carry workflow files,
+# and its hosted runs passed (nar-ci runs #16 and #19).
+# This 3.0.0 revision adds the cross-platform matrix
+# described below; it is likewise applied through the
+# web UI at publication. Every job's Linux commands were
+# verified locally from a clean extraction (see
+# docs/NAR_3.0.0_UPDATE_REPORT.md): on a hosted runner
+# the fixture-bound unit tests skip with stated reasons
+# when the private fixture tree is absent, so the hosted
+# pass/skip shape differs from the local one by design.
+#
+# Part 10 (3.0 build) adds the cross-platform matrix:
+# the doctor, unit, cli-smoke and e2e-public jobs now
+# run on ubuntu-latest, windows-latest and macos-latest.
+# Matrix jobs invoke `python` (actions/setup-python
+# provides it on every OS; Windows has no python3) and
+# run under `shell: bash` (Git Bash on Windows) wherever
+# the harness is bash. The Linux legs of every matrix
+# job were verified locally from a clean extraction;
+# the Windows and macOS legs are NOT RUN locally — their
+# first hosted run after publication is the proof. The
+# remaining jobs stay on ubuntu-latest as before.
 #
 # Job map (brief G1):
-#   unit                — the full unit suite (-ra prints
-#                         skip reasons; skips are never
-#                         silent)
+#   doctor              — cross-platform matrix: the
+#                         doctor resolves a Python >= 3.10
+#                         ($NAR_PYTHON / python3 / python /
+#                         py -3) and its interpreter-gated
+#                         core self-checks pass, on every OS
+#   unit                — cross-platform matrix: the full
+#                         unit suite (-ra prints skip
+#                         reasons; skips are never silent)
 #   syntax              — py_compile over every script
 #   schema-validation   — every schema parses + the
 #                         schema test module
-#   cli-smoke           — unified CLI + every standalone
-#                         script answers --help
+#   cli-smoke           — cross-platform matrix: unified
+#                         CLI + every standalone script
+#                         answers --help
 #   security-regression — archive/DEX/ELF/parser
 #                         hardening suites only
 #   docs-consistency    — docs/version/YAML consistency
-#   e2e-public          — public synthetic-fixture E2E
-#                         (no private fixtures, ever)
+#   e2e-public          — cross-platform matrix: public
+#                         synthetic-fixture E2E (no private
+#                         fixtures, ever)
 #   fuzz-smoke          — bounded deterministic DEX
 #                         mutation fuzz (fixed seed); a
 #                         distinct parser failure fails
@@ -51,8 +68,55 @@ on:
   pull_request:
 
 jobs:
+  doctor:
+    name: doctor (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Hosted runners do not preinstall apktool / jadx /
+      # the Android build-tools, so the doctor's full core
+      # verdict may be INCOMPLETE there and is not gated
+      # on. This job gates on the Part 10 contract: the
+      # doctor must resolve a working Python >= 3.10 on
+      # every OS (python on Windows, python3 elsewhere,
+      # py -3 as fallback) and every interpreter-gated
+      # core self-check must report ok.
+      - name: Doctor resolves the interpreter; self-checks pass
+        run: |
+          bash scripts/nar-doctor.sh --json > doctor.json || true
+          cat doctor.json
+          python - <<'PYEOF'
+          import json
+          d = json.load(open("doctor.json", encoding="utf-8"))
+          checks = {c["name"]: c["status"] for c in d["checks"]}
+          assert d.get("python_resolved"), "doctor resolved no interpreter"
+          for name in ("python3", "nar-scripts", "protection-signatures"):
+              assert checks.get(name) == "ok", (name, checks.get(name))
+          print("doctor matrix check: python_resolved =", d["python_resolved"])
+          PYEOF
+      - name: Doctor through the unified CLI
+        run: python scripts/nar.py doctor --help
+
   unit:
-    runs-on: ubuntu-latest
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -60,12 +124,12 @@ jobs:
           python-version: "3.12"
       - name: Environment
         run: |
-          python3 --version
+          python --version
           echo "commit: $GITHUB_SHA"
       - name: Install test runner
         run: pip install pytest pyyaml
       - name: Unit tests
-        run: python3 -m pytest tests/unit/ -q -ra
+        run: python -m pytest tests/unit/ -q -ra
 
   syntax:
     runs-on: ubuntu-latest
@@ -105,7 +169,15 @@ jobs:
         run: python3 -m pytest tests/unit/test_schemas.py -q -ra
 
   cli-smoke:
-    runs-on: ubuntu-latest
+    name: cli-smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -113,12 +185,12 @@ jobs:
           python-version: "3.12"
       - name: Unified CLI smoke
         run: |
-          python3 scripts/nar.py version
-          python3 scripts/nar.py --help > /dev/null
+          python scripts/nar.py version
+          python scripts/nar.py --help > /dev/null
       - name: Every standalone script answers --help
         run: |
           for f in scripts/nar-*.py; do
-            python3 "$f" --help > /dev/null
+            python "$f" --help > /dev/null
           done
 
   security-regression:
@@ -160,7 +232,15 @@ jobs:
             -q -ra
 
   e2e-public:
-    runs-on: ubuntu-latest
+    name: e2e-public (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
