@@ -9,7 +9,10 @@
 # and its hosted runs passed (nar-ci runs #16 and #19).
 # This 3.0.0 revision adds the cross-platform matrix
 # described below; it is likewise applied through the
-# web UI at publication. Every job's Linux commands were
+# web UI at publication. The 3.0.1 patch release carries
+# the matrix unchanged; its hosted proof is nar-ci run
+# #42 (all 17 jobs green on Linux, macOS and Windows).
+# Every job's Linux commands were
 # verified locally from a clean extraction (see
 # docs/NAR_3.0.0_UPDATE_REPORT.md): on a hosted runner
 # the fixture-bound unit tests skip with stated reasons
