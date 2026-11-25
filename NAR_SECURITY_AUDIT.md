@@ -155,4 +155,4 @@ Also regression-tested.
   are operator-supplied local paths in NAR's threat
   model; no change made under the freeze.
 
-Research by Bakr Fayez. MIT License.
+MIT License.

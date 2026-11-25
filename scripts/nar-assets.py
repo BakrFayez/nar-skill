@@ -22,7 +22,7 @@ Usage:
     python3 nar-assets.py app.apk [--json] [--top N]
     python3 nar-assets.py expansion.obb [--json]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

@@ -78,4 +78,4 @@ bound through the standard manifest roles. The corpora
 are small and local; results are reported as measured on
 them and are not generalized beyond them.
 
-Research by Bakr Fayez. MIT License.
+MIT License.

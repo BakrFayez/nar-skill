@@ -25,7 +25,7 @@ Usage:
 Exit status is 0 when no distinct failure was found, 1 when at
 least one was (the artifacts carry the details).
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 """
 import argparse
 import hashlib

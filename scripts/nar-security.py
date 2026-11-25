@@ -30,7 +30,7 @@ Usage:
     python3 nar-security.py app.apk [--json] [--deep]
                             [--work DIR]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

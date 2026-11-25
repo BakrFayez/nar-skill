@@ -261,6 +261,3 @@ to build something from the findings, use normal coding tools, write
 original code, and separate observed behavior from design choices. Never
 copy decompiled code verbatim into a shipping product.
 
----
-
-Research by Bakr Fayez.

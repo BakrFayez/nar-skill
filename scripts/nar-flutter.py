@@ -25,7 +25,7 @@ executed and no behavior is claimed. Stdlib only.
 Usage:
     python3 nar-flutter.py app.apk [--json]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

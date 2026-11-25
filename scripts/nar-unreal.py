@@ -47,7 +47,7 @@ Usage:
     python3 nar-unreal.py content.utoc [--json]
     python3 nar-unreal.py asset.uasset [--json]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

@@ -43,7 +43,7 @@ working standalone, exactly as in 1.x):
                                plan / timeline-template)
     nar version                product identity + version
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import os
@@ -111,7 +111,7 @@ summary as JSON."""
 
 IDENTITY = f"""NAR {VERSION} — NIROUS ANDROID INTELLIGENCE
 Understand Every Layer. Follow Every Evidence.
-Research by Bakr Fayez. MIT License."""
+MIT License."""
 
 
 def run_entry(entry, rest):

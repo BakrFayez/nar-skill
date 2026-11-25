@@ -41,7 +41,7 @@ persist a credential.
 Usage:
     python3 nar-network.py app.apk [--json] [--work DIR]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

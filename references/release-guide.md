@@ -54,7 +54,7 @@ Re-run the docs-consistency tests after the bump.
   Never name a tested app, package, file, or hash —
   findings are described by class, not by target.
 - The only credit line anywhere in the project is
-  "Research by Bakr Fayez".
+  the one in README.md's Author section.
 
 ## 4. Pre-push greps (zero hits required)
 

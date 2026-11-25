@@ -4,7 +4,7 @@
 // Observation only: the script logs what the app registers and calls.
 // It never modifies native code, arguments, or return values.
 //
-// Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+// Part of NAR (Nirous Android Reversing).
 // Licensed under the MIT License. See LICENSE in the repository root.
 //
 // Usage:

@@ -1,7 +1,5 @@
 # Accuracy corpus and methodology (2.6.2 WS-E)
 
-Research by Bakr Fayez
-
 ## What lives here
 
 - `corpus.py` — corpus construction and the labeling file

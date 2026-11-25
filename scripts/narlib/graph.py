@@ -35,8 +35,8 @@ rebuilds this document from whatever stage documents are
 current. There is deliberately no separate incremental
 engine; the document records contributing_stages.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr
-Fayez. MIT License. See LICENSE in the repo root.
+Part of NAR (Nirous Android Reversing). MIT License.
+See LICENSE in the repo root.
 """
 
 NODE_KINDS = (

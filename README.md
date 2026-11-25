@@ -1,19 +1,17 @@
-# NAR Skill: Nirous Android Reversing
-
 # NAR — NIROUS ANDROID INTELLIGENCE
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.6.2
-Research by Bakr Fayez
+[![CI](https://github.com/BakrFayez/nar-skill/actions/workflows/ci.yml/badge.svg)](https://github.com/BakrFayez/nar-skill/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-NAR is an AI agent skill for Android APK reverse engineering. It covers all Android apps and games, old and new: regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
+An AI agent skill for Android APK reverse engineering — all apps and games, old and new.
+
+Version 2.6.2
+
+NAR covers regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
 
 Clone this repo and you have a working skill. Drop it into your agent's skills folder and start triaging APKs.
-
-## NAR vs REA
-
-REA (reverse-engineer-anything) covers everything: native binaries, Electron apps, firmware, browsers, and more. NAR covers one thing in depth: Android APKs. If your target is an APK, an AAB, a split APK set, or an OBB file, NAR goes deeper than REA on that target. If your target is anything else, use REA.
 
 ## What it does
 
@@ -54,183 +52,13 @@ Every module also runs through the unified CLI
 (`python3 scripts/nar.py dex|native|network|security|engines …`)
 or standalone, exactly as in 1.x.
 
-## What's new in 2.6.2
-
-A verification, security and integrity round (see
-CHANGELOG.md and NAR_2.6.2_VERIFICATION_REPORT.md).
-Archive handling now sits on one validated
-ResourceBudget abstraction; the DEX parsers are
-hardened by a deterministic mutation-fuzz campaign
-(30,000 cases, zero failures after fixes); the
-evidence checks that 2.6.1 ran externally are now
-enforced inside `nar case verify` itself. Unreal Zen
-relationships are verified on real IoStore titles for
-the first time — 2,644 real Zen packages across three
-real container sets, every total reconciled against
-independent oracles — and a confidence overstatement
-in endpoint classification (`confirmed` for mere
-string presence) is corrected to `dex-string`. The
-DEX stage document is now read through a bounded
-window instead of a memory map, with byte-identical
-case outputs; accuracy is measured on cross-labeled
-real corpora (real engine-identification precision
-measured for the first time). Runtime validation
-gains a status vocabulary, a `validate` surface and
-a Frida validation suite — verified live on the
-emulator; physical-device validation remains
-NOT RUN (no device is attached to the development
-machine).
-
-## What's new in 2.6.1
-
-A verification and security-remediation round (see
-CHANGELOG.md and NAR_2.6.1_VERIFICATION_REPORT.md). A
-code-level audit's confirmed findings are fixed: the
-container-extraction ZIP path traversal is closed,
-the DEX LEB128 readers are bounded, archive reads sit
-under one resource budget, graph evidence cites only
-documents that exist in the case (cases now include
-permissions.json), and investigation output keeps
-UNVERIFIED findings out of verified_facts. Unreal
-package relationships join the unified graph.
-nar-analyze's peak memory on the 273 MB fixture drops
-from 1,887,891,456 to 1,532,669,952 bytes with
-byte-identical case outputs. Graph and investigation
-output was validated programmatically on six real
-cases; accuracy was re-measured on every labeled
-corpus that exists locally (endpoint classification
-is recorded as NOT RUN — no labeled corpus, no
-invented figure).
-
-## What's new in 2.6.0
-
-A repository-wide repair and intelligence upgrade (see
-CHANGELOG.md, NAR_2.6.0_UPDATE_REPORT.md and
-NAR_REPAIR_MATRIX.md): DEX gains control-flow graphs
-(`nar-dex --cfg`), a resolved call graph with
-cross-references (`nar-dex --xref`), a compact-DEX
-(CDEX) header parser and confidence-labeled
-obfuscation indicators; native analysis gains a
-library dependency graph and symbol-cluster behavior
-indicators; Unity, Unreal and Godot analyzers extract
-relationships (bundle/serialized-file headers,
-package import/export relationships, text scene
-references); Flutter and React Native gain plugin /
-bridge inventories; every case now carries a unified
-application graph (graph.json, queryable via
-`nar case graph`) and a deterministic, offline
-investigation plan (investigation.json) that keeps
-verified facts, ranked paths, hypotheses and unknowns
-strictly separate; the runtime module gains device
-capability detection, emulator-vs-physical
-identification and Frida compatibility diagnostics
-(`nar-runtime diagnose`, verified live on a local
-emulator); case-bundle import and the archive/parser
-layer were hardened (symlink-safe extraction, parser
-read caps); the dashboard renders the graph and
-investigation companions; and the benchmark system
-gained a 2.6.0 baseline on identical inputs plus the
-first measured line coverage of the shipped code.
-
-## What's new in 2.5.2
-
-A reliability, performance and consistency update (see
-CHANGELOG.md and NAR_2.5.2_UPDATE_REPORT.md): the skill
-YAML now parses under a real YAML parser with
-parser-based validation; Unreal capability reporting is
-generated from the parsers' own capability facts and
-its analysis limits are configurable with full
-total/processed/skipped/failed accounting; the Unreal,
-native and pak tools read large files through memory
-mapping (peak memory down ~77–85% on the local
-reference corpora, outputs byte-identical); three
-parser/orchestrator defects found by the new
-security-regression tests are fixed; and the test
-system is reproducible from a clean clone with public
-synthetic fixtures, documented categories, and a
-capability matrix (NAR_CAPABILITY_MATRIX.md).
-
-## What's new in 2.5.1
-
-A schema-layer patch (see CHANGELOG.md): the report,
-engine, and timeline schemas were repaired to match the
-documents the tools actually write, and new schemas for
-the DEX and native case documents brought the schema set
-to 24, guarded by parse-all and generated-case regression
-tests. No tool behavior changed.
-
-## What's new in 2.5.0
-
-The TOTAL INTELLIGENCE EVOLUTION release: every audited
-gap in the 2.4.0 baseline closed or honestly re-labeled,
-each verified by executed tests (see CHANGELOG.md for
-the per-phase record). Highlights: the offline dashboard
-renders the native dependency graph; the unified CLI
-gains `tools`, `identify`, `validate`, `benchmark`, and
-`case` verbs; protection signatures ship as a versioned
-database; network output redacts credentials at the
-source; cases carry cross-module correlations,
-verification statuses, execution budgets, and
-export/import/verify bundles; benchmarks report labeled-
-corpus accuracy metrics and measured peak memory
-alongside timings.
-
-## What's new in 2.0
-
-- **Universal input layer**: magic + structure identification
-  for every container NAR meets, and guarded extraction
-  (zip-slip, symlink, and archive-bomb entries rejected and
-  reported).
-- **Fingerprint with provenance**: every identity property
-  carries the tool that produced it, a confidence, and a
-  fact class (observed / derived / inferred).
-- **Engine verdicts with confidence**: multi-indicator fusion
-  across 18 engine/framework families, with optional deep-dive
-  confirmation (`nar-engines.py --deep`), plus dedicated
-  Unity (`nar-unity.py`, optional UnityPy census) and Unreal
-  (`nar-unreal.py`, generation evidence, pak inventory and
-  IoStore inventory) deep dives. (IoStore entry-level
-  parsing arrived in 2.1.0 and UAsset-level package
-  inspection in 2.2.0 — see CHANGELOG.md.)
-- **DEX and native intelligence**: a built-in DEX parser
-  (classes, methods, fields, call edges, reflection and
-  dynamic-loading evidence, Kotlin inventory, jadx/baksmali
-  adapters) and a built-in ELF parser (dependencies, JNI
-  exports, hardening, dependency graph, readelf cross-check).
-- **Static network intelligence**: classified endpoint
-  inventory (dex-string / potential / third-party /
-  unused-candidate / sensitive / unverified), backend
-  services, and network-security-config parsing. (The
-  dex-string class was named "confirmed" before 2.6.2;
-  the rename is a calibration correction — a string
-  reference was never confirmation of traffic — and
-  `nar case verify` maps the old label in pre-2.6.2
-  cases.)
-- **Structured security findings**: the NAR-SEC schema —
-  severity, confidence, evidence, impact, remediation, and
-  false-positive notes for every finding.
-- **Asset inventory**: types, categories, image dimensions,
-  duplicate detection, engine-container cross-reference.
-- **Orchestrated cases**: `nar-analyze` is now a case
-  workspace (case.json, execution-log.json, stage caching
-  and resume) with standardized companion documents
-  (schemas in `schemas/`) and a single-file offline HTML
-  dashboard (dark/light, filterable, zero external requests).
-- **Runtime subsystem**: adb/Frida adapters, session plans,
-  and a timeline schema — device paths verified live on an
-  emulator (API 26, QEMU TCG) on 2026-11-23: adb, install/
-  launch, and Frida observation in both attach mode and
-  spawn mode (hybrid resume-first recipe; see
-  references/frida-scripts.md) all ran against a real
-  target; a physical device is still unverified.
-- **Capability registry**: every orchestrated tool declared
-  in `scripts/registry.json` with availability probing and
-  honest limitations; unavailable tools are registered as
-  unavailable, never faked.
-
-`nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-analyze.py` runs the whole static workup in one command and writes a single evidence report (`report.md` + `report.json`). `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists and extracts Unreal `.pak` archives. `nar-il2cpp.py` (Il2CppDumper by default, Cpp2IL as an optional second backend), `nar-flutter.py`, `nar-godot.py`, and `nar-rn.py` handle the Unity IL2CPP, Flutter/Dart, Godot, and React Native deep dives.
-
 Then open `SKILL.md` and follow the routing table for your question.
+
+## Latest release
+
+**2.6.2** — a verification, security and integrity round, hardened by a full stability and certification campaign (3 critical and 21 high-priority audit defects fixed, each with regression tests; all 12 stability Definition-of-Done items pass). Unreal Zen relationships are verified on 2,644 real packages, and accuracy is measured on cross-labeled real corpora. Full record: [NAR_2.6.2_VERIFICATION_REPORT.md](NAR_2.6.2_VERIFICATION_REPORT.md) and [NAR_FINAL_VERIFICATION_REPORT.md](NAR_FINAL_VERIFICATION_REPORT.md).
+
+Version history lives in [CHANGELOG.md](CHANGELOG.md); binaries and notes are on the [release page](https://github.com/BakrFayez/nar-skill/releases/tag/v2.6.2).
 
 ## Example prompts
 
@@ -378,6 +206,28 @@ python3 scripts/nar-rn.py app.apk          # React Native bundle (Hermes vs JSC)
 ```
 
 A full example session is in `examples/quick-triage.md`. A filled report is in `examples/sample-report.md`. A Unity IL2CPP session is in `examples/unity-il2cpp-triage.md`. A Godot session is in `examples/godot-triage.md`.
+
+## NAR vs REA
+
+REA (reverse-engineer-anything) covers everything: native binaries, Electron apps, firmware, browsers, and more. NAR covers one thing in depth: Android APKs. If your target is an APK, an AAB, a split APK set, or an OBB file, NAR goes deeper than REA on that target. If your target is anything else, use REA.
+
+## Documentation
+
+The guides in `references/` (25 guides, one per topic) carry the method in depth. The repository-level records:
+
+- [CHANGELOG.md](CHANGELOG.md) — release history (the only place version history lives)
+- [NAR_2.6.2_VERIFICATION_REPORT.md](NAR_2.6.2_VERIFICATION_REPORT.md) — 2.6.2 verification, security and integrity round: per-workstream record and final battery
+- [NAR_FINAL_VERIFICATION_REPORT.md](NAR_FINAL_VERIFICATION_REPORT.md) — stability & certification campaign: final verification report and Definition-of-Done verdict
+- [NAR_STABILITY_AUDIT.md](NAR_STABILITY_AUDIT.md) — stability audit: findings register by priority
+- [NAR_SECURITY_AUDIT.md](NAR_SECURITY_AUDIT.md) — security audit: archive, parser and redaction hardening evidence
+- [NAR_ACCURACY_REPORT.md](NAR_ACCURACY_REPORT.md) — labeled-corpus accuracy measurements (real and synthetic kept separate; NOT MEASURED where no ground truth exists)
+- [NAR_PERFORMANCE_REPORT.md](NAR_PERFORMANCE_REPORT.md) — benchmark matrix, baselines and regression gate
+- [NAR_COMPATIBILITY_REPORT.md](NAR_COMPATIBILITY_REPORT.md) — compatibility and regression record
+- [NAR_RUNTIME_VALIDATION_REPORT.md](NAR_RUNTIME_VALIDATION_REPORT.md) — runtime validation record (emulator-verified; physical device NOT RUN)
+- [NAR_CAPABILITY_MATRIX.md](NAR_CAPABILITY_MATRIX.md) — capability matrix: one row per capability area, with status and evidence
+- [NAR_ARCHITECTURE.md](NAR_ARCHITECTURE.md) — system architecture
+- [NAR_TEST_MATRIX.md](NAR_TEST_MATRIX.md) — executed test evidence matrix
+- [SECURITY.md](SECURITY.md) — analysis boundary, untrusted-sample handling, responsible use
 
 ## Repo structure
 
@@ -573,6 +423,8 @@ NAR stands on open source tools built by others:
 
 ## Author
 
-Bakr Fayez
+Research by Bakr Fayez
 
-NAR Skill is MIT licensed. See LICENSE.
+## License
+
+NAR Skill is MIT licensed. See [LICENSE](LICENSE).

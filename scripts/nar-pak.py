@@ -37,7 +37,7 @@ v10+ entries the extracted bytes are additionally verified
 against the SHA-1 of the uncompressed data recorded in the
 entry's header.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

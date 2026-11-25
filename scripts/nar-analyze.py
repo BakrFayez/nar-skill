@@ -26,7 +26,7 @@ Usage:
 The report lands in --out (default ./nar-analyze-<target name>) as
 report.md and report.json. Stdlib only.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

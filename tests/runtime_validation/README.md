@@ -39,4 +39,3 @@ each script session runs (default 15).
   not release documentation; keep them with the run's local
   evidence, not in this repository's docs.
 
-Research by Bakr Fayez.

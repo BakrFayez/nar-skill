@@ -82,7 +82,6 @@ feature surface beyond what the workstreams name.
 Every claim below is backed by an executed test or
 run; anything not executed is labeled NOT RUN.
 Full record: NAR_2.6.2_VERIFICATION_REPORT.md.
-Research by Bakr Fayez.
 
 - Security: one validated ResourceBudget abstraction
   (narlib/budget.py) now backs the archive limits;
@@ -161,8 +160,7 @@ external review and a code-level deep audit of 2.6.0
 were worked claim by claim; every confirmed finding is
 fixed with regression tests, and the whole round is
 verified end to end on real targets. Full record:
-NAR_2.6.1_VERIFICATION_REPORT.md. Research by Bakr
-Fayez.
+NAR_2.6.1_VERIFICATION_REPORT.md.
 
 - Security (deep-audit remediation): a ZIP path
   traversal in nar-analyze's container extraction —
@@ -250,7 +248,7 @@ Fayez.
 Repository-wide repair and intelligence upgrade driven
 by a full audit (issue inventory R-001–R-020). Full
 record: NAR_2.6.0_UPDATE_REPORT.md and
-NAR_REPAIR_MATRIX.md. Research by Bakr Fayez.
+NAR_REPAIR_MATRIX.md.
 
 - DEX intelligence: control-flow graph edges from the
   disassembler's block model (`nar-dex --cfg`,
@@ -337,7 +335,7 @@ NAR_REPAIR_MATRIX.md. Research by Bakr Fayez.
 
 Reliability, performance and consistency update driven
 by a repository audit. Full record:
-NAR_2.5.2_UPDATE_REPORT.md. Research by Bakr Fayez.
+NAR_2.5.2_UPDATE_REPORT.md.
 
 - Skill YAML is valid YAML now. skill.yaml and the
   SKILL.md frontmatter both failed a real YAML parser

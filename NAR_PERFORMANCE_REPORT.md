@@ -107,4 +107,4 @@ python tests/benchmarks/check_regression.py \
   --candidate candidate.json   # gate: PASS expected
 ```
 
-Research by Bakr Fayez. MIT License.
+MIT License.

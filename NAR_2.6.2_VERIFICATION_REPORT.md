@@ -1,6 +1,6 @@
 # NAR 2.6.2 — Verification Report
 
-Research by Bakr Fayez. This report records what was
+This report records what was
 executed for the 2.6.2 verification, security and
 integrity round, with the status of every workstream
 in the round's vocabulary: IMPLEMENTED / TESTED /
@@ -360,8 +360,8 @@ is the round's record.
 Hygiene: banned-identifier grep over the tree —
 zero real hits (two substring false positives in a
 historical report: "measuring"); forbidden credit
-lines — zero (the only credit is "Research by
-Bakr Fayez").
+lines — zero (the only credit is the project
+credit line).
 
 ## 11. §12 deliverables
 

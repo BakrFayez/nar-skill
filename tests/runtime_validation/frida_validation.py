@@ -40,7 +40,7 @@ report about the bundled scripts rather than analyzing a
 target. All device interaction goes through injectable
 runners so the logic is unit-testable with recorded outputs.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import json

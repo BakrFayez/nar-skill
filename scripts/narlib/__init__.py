@@ -4,7 +4,7 @@ The 1.x scripts stay standalone by design (they are the
 compatibility surface). New 2.0 modules import from here
 instead of growing another copy of each helper.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 

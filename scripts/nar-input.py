@@ -15,7 +15,7 @@ traversal, symlink, and bomb entries are refused and listed,
 never silently skipped. Inputs are untrusted and are never
 executed.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

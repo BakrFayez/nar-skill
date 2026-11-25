@@ -354,4 +354,4 @@ No P0/P1 is carried as "justified open". The full
 battery on the final tree is in
 NAR_FINAL_VERIFICATION_REPORT.md.
 
-Research by Bakr Fayez. MIT License.
+MIT License.

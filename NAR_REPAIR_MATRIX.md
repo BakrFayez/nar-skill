@@ -1,7 +1,5 @@
 # NAR Repository-Wide Repair Matrix
 
-Research by Bakr Fayez
-
 This matrix is the record of the 2.6.0 repository-wide
 repair and upgrade program (branch `upgrade-2.6.0`). It was
 seeded by the Phase 1 audit (2026-11-24) and is completed

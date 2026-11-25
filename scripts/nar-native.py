@@ -16,7 +16,7 @@ Usage:
     python3 nar-native.py app.apk [--json] [--lib NAME]
     python3 nar-native.py libfoo.so [--json]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

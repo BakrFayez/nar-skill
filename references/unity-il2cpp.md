@@ -618,8 +618,6 @@ behavior. Keep these limits in mind when writing a report:
 - Obfuscated builds rename methods and types. The dump still works, but
   the names no longer describe what the code does.
 
-Research by Bakr Fayez.
-
 ## Addressables catalogs
 
 When a build ships Addressables, `nar-unity` parses the

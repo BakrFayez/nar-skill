@@ -26,7 +26,7 @@ its own code-item and string encodings, and no payload
 decoding is claimed here or in the capability records.
 
 Part of NAR (Nirous Android Reversing).
-Research by Bakr Fayez. MIT License. See LICENSE in the repo root.
+MIT License. See LICENSE in the repo root.
 """
 import struct
 

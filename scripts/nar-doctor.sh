@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # nar-doctor.sh: check that the NAR toolchain is installed and usable.
-# NAR Skill (Nirous Android Reversing). Research by Bakr Fayez.
+# NAR Skill (Nirous Android Reversing).
 # MIT License. See LICENSE in the repo root.
 # Usage: bash nar-doctor.sh [--json]
 # Exit 0 when all CORE tools are present, 1 otherwise.

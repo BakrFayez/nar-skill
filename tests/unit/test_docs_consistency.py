@@ -10,7 +10,11 @@ tests make that class of drift fail loudly:
 - every references/ or scripts/ link target in SKILL.md
   exists on disk;
 - every version-bearing file agrees on a single version,
-  and a planted mismatch in a temp copy is detected.
+  and a planted mismatch in a temp copy is detected;
+- the project credit line appears exactly once in the
+  whole tree, in the README Author section (owner-directed
+  placement: tool outputs and document headers carry no
+  credit stamp).
 """
 import json
 import os
@@ -207,6 +211,41 @@ class VersionConsistencyTest(unittest.TestCase):
         self.assertIn("NAR — NIROUS ANDROID INTELLIGENCE", pyproject)
         self.assertNotIn("NAR 2.0 —", readme)
         self.assertNotIn("NAR 2.0 —", pyproject)
+
+
+class CreditLinePlacementTest(unittest.TestCase):
+    """The credit line lives in exactly one place: the
+    README Author section. Built from parts so this test
+    file never contains the phrase itself."""
+
+    PHRASE = "Research by " + "Bakr Fayez"
+
+    def _occurrences(self):
+        found = {}
+        for dirpath, dirnames, filenames in os.walk(ROOT):
+            dirnames[:] = [d for d in dirnames
+                           if d not in (".git", "__pycache__")]
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                try:
+                    with open(path, encoding="utf-8",
+                              errors="ignore") as fh:
+                        text = fh.read()
+                except OSError:
+                    continue
+                count = re.sub(r"\s+", " ", text).count(self.PHRASE)
+                if count:
+                    found[os.path.relpath(path, ROOT)] = count
+        return found
+
+    def test_credit_line_exactly_once_in_readme(self):
+        self.assertEqual(self._occurrences(), {"README.md": 1})
+
+    def test_credit_line_inside_author_section(self):
+        readme = _read(ROOT, "README.md")
+        at = readme.index(self.PHRASE)
+        self.assertGreater(at, readme.index("## Author"))
+        self.assertLess(at, readme.index("## License"))
 
 
 @unittest.skipIf(yaml is None,

@@ -26,7 +26,7 @@ Exit code: 0 = gate passes (warnings allowed),
 1 = gate fails (memory regression beyond threshold),
 2 = inputs unreadable.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

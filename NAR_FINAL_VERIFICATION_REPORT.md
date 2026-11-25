@@ -137,4 +137,4 @@ owner-requested Example prompts section),
 references/example-prompts.md, NAR_CAPABILITY_MATRIX.md,
 NAR_TEST_MATRIX.md.
 
-Research by Bakr Fayez. MIT License.
+MIT License.

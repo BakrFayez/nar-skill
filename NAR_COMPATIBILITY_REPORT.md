@@ -123,4 +123,4 @@ root (the hosted-CI shape): unit suite 637 passed /
 -gated tests skip, they never silently pass. See
 NAR_FINAL_VERIFICATION_REPORT.md for the full CI table.
 
-Research by Bakr Fayez. MIT License.
+MIT License.

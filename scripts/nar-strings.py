@@ -25,7 +25,7 @@ Usage:
 Human output shows ranked groups with counts and the most interesting hits
 first (longest first within a group); --json prints the full classification.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

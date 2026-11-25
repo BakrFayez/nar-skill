@@ -17,8 +17,8 @@ way. Endpoint URLs reach the projection already redacted
 by nar-network; the architecture projection additionally
 drops query strings entirely, keeping paths only.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr
-Fayez. MIT License. See LICENSE in the repo root.
+Part of NAR (Nirous Android Reversing). MIT License.
+See LICENSE in the repo root.
 """
 import urllib.parse
 

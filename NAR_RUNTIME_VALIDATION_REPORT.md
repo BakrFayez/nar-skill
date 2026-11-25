@@ -67,4 +67,4 @@ the outstanding item, as it has been since 2.6.0.
   suite on the emulator; neither is claimed for any
   physical device.
 
-Research by Bakr Fayez. MIT License.
+MIT License.

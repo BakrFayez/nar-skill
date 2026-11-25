@@ -20,8 +20,8 @@ says nothing about whether a check passed at runtime, and
 NAR never uses this to bypass anything (see the
 legitimate-use boundary in SKILL.md).
 
-Part of NAR (Nirous Android Reversing). Research by Bakr
-Fayez. MIT License. See LICENSE in the repo root.
+Part of NAR (Nirous Android Reversing). MIT License.
+See LICENSE in the repo root.
 """
 import hashlib
 import json

@@ -1,7 +1,5 @@
 # NAR Capability Matrix
 
-Research by Bakr Fayez
-
 One row per capability area. The skeleton is the area list
 of `NAR_GAP_ANALYSIS.md` (Phase-Zero baseline §§3–22, as
 reconciled by its dated addenda through the 2.5.2 W6

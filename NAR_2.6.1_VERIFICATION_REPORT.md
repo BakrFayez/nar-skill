@@ -1,7 +1,5 @@
 # NAR 2.6.1 — Verification Report
 
-Research by Bakr Fayez
-
 Round type: **verification and security remediation**.
 No new features, beyond the two integration items the
 owner named (Unreal relationships into the unified
@@ -416,7 +414,7 @@ excluded from push manifests, as before).
   investigation builder defaults.
 - Hygiene greps: no fixture-identifying names,
   packages or hashes anywhere in the tree; the only
-  credit line is "Research by Bakr Fayez".
+  credit line is the project credit line.
 
 ## 10. NOT RUN — and the owner's device checklist
 

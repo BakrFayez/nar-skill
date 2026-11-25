@@ -31,7 +31,7 @@ nar-il2cpp-<name> directory in the system temp dir); the paths are
 printed either way. Stdlib only; Il2CppDumper and dotnet are external
 tools located the same way nar-doctor locates them.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

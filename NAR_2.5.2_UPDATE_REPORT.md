@@ -1,7 +1,5 @@
 # NAR 2.5.2 Update Report
 
-Research by Bakr Fayez.
-
 This report records the 2.5.2 update program (branch
 `update-2.5.2`): the issues fixed, the files changed, the
 tests executed, and the before/after performance
@@ -1113,7 +1111,7 @@ workstream)
   including `skill-yaml` OK).
 - Banned-identifier / forbidden-credit grep over the
   W6 diff: zero hits (the only credit line used is
-  "Research by Bakr Fayez").
+  the project credit line).
 
 ## W7 — Regression and security testing (2026-11-24)
 
@@ -1348,7 +1346,7 @@ nar-security redaction chain).
   banned identifiers **0 real hits** (one regex
   false positive on the word "measuring"), forbidden
   credits **0**; the only credit anywhere is
-  "Research by Bakr Fayez".
+  the project credit line.
 - Branch totals (W0–W8): 9 commits on
   `update-2.5.2`; W0–W7 changed 32 files
   (+5,386/−234); the W8 commit changes 20 files

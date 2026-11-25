@@ -6,7 +6,7 @@
 // requests, responses, or TLS behavior, and it performs no interception
 // or bypass of any kind.
 //
-// Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+// Part of NAR (Nirous Android Reversing).
 // Licensed under the MIT License. See LICENSE in the repository root.
 //
 // Usage:

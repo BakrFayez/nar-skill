@@ -40,7 +40,7 @@ Exit codes: 0 = compared OK (differences are the point, not an error),
 1 = one of the files is not a valid ZIP/APK container, 2 = missing or
 unreadable file.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

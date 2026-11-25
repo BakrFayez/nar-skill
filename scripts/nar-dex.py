@@ -54,7 +54,7 @@ Usage:
                        [--disassemble --disasm-class TEXT
                         [--disasm-method TEXT] | --disasm-all]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

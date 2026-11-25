@@ -1,7 +1,5 @@
 # Security — NAR's analysis boundary and sample handling
 
-Research by Bakr Fayez
-
 This file states, for this repository specifically, what
 NAR will and will not do, and how it treats the untrusted
 samples it analyzes. Every mechanism named here exists in

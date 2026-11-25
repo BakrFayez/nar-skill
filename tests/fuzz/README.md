@@ -1,7 +1,7 @@
 # DEX mutation fuzzing (tests/fuzz)
 
 Deterministic, stdlib-only mutation fuzzing for the DEX parsers
-(`narlib/dex.py` and `narlib/dexdis.py`). Research by Bakr Fayez.
+(`narlib/dex.py` and `narlib/dexdis.py`).
 
 ## Invariant under test
 

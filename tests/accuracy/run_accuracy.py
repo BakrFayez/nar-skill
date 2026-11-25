@@ -22,7 +22,7 @@ never fixture file names, paths, or hashes.
 Usage:
     python3 tests/accuracy/run_accuracy.py [--out FILE]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

@@ -254,4 +254,3 @@ RVA 0x2129BA4.
 - Runtime behavior. Nothing in this session ran the game. The dump
   shows what methods exist and where they sit, not which ones run.
 
-Research by Bakr Fayez.

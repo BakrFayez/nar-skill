@@ -28,7 +28,7 @@ quickening-info section), and a Dalvik ODEX's embedded DEX
 still carries quickened opcodes, which callers must label.
 Nothing here executes, decrypts, or de-optimizes anything.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import re

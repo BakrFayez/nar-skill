@@ -38,7 +38,7 @@ fixtures (e.g. $NAR_FIXTURES/labeling.json). The runner
 samples whose role is not bound locally are skipped and
 counted, never guessed.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import os

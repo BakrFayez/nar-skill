@@ -39,8 +39,8 @@ width desynchronizes everything after it):
 Observed vs inferred: a listing is observed — it is what the
 bytes say. What the code *means* remains the reader's work.
 
-Part of NAR (Nirous Android Reversing). Research by
-Bakr Fayez. MIT License. See LICENSE in the repo root.
+Part of NAR (Nirous Android Reversing). MIT License.
+See LICENSE in the repo root.
 """
 import json
 import struct

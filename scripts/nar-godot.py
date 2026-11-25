@@ -27,7 +27,7 @@ Usage:
     python3 nar-godot.py game.apk [--json] [--limit N]
     python3 nar-godot.py scene.tscn [--json]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

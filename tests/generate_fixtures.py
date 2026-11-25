@@ -15,7 +15,7 @@ drift apart.
 
 Runs on a bare python3 (stdlib only), from a clean clone,
 with no private fixture corpus. Part of NAR (Nirous
-Android Reversing). Research by Bakr Fayez.
+Android Reversing).
 """
 import argparse
 import sys

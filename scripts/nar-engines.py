@@ -24,7 +24,7 @@ assets/www, IL2CPP+Mono doubles) are stated as ambiguities.
 Usage:
     python3 nar-engines.py app.apk [--json] [--deep]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

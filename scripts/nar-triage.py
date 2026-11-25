@@ -37,7 +37,7 @@ When aapt2 is available, package name / version / SDK levels from
 and platform-implied permissions are reported, not hidden); otherwise
 those fields report why badging is unavailable.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

@@ -10,7 +10,7 @@ unavailable are listed as such, never faked.
 
     python3 nar-tools.py [--json] [--available]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

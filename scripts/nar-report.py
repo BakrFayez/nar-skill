@@ -22,7 +22,7 @@ Sections are absent when their companion is missing.
 Usage:
     python3 nar-report.py CASE_DIR [--out FILE]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse
@@ -413,7 +413,7 @@ padding:6px 12px;cursor:pointer}
 <body>
 <main>
 <h1>NAR 2.0 — NIROUS ANDROID INTELLIGENCE</h1>
-<p class="sub">Case report · Research by Bakr Fayez ·
+<p class="sub">Case report ·
 <button onclick="toggleTheme()">Toggle theme</button></p>
 <!--BODY-->
 </main>

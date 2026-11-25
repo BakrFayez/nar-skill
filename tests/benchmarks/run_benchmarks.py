@@ -24,7 +24,7 @@ Usage:
     python3 tests/benchmarks/run_benchmarks.py [--out FILE]
         [--no-metrics] [--no-memory]
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 MIT License. See LICENSE in the repo root.
 """
 import argparse

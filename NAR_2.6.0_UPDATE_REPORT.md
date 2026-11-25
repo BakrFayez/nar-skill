@@ -1,7 +1,5 @@
 # NAR 2.6.0 Update Report
 
-Research by Bakr Fayez
-
 Repository-wide repair and intelligence upgrade,
 executed 2026-11-24 on branch `upgrade-2.6.0` from
 the shipped 2.5.2 (42516f7). This tree is
@@ -198,7 +196,7 @@ phases were then executed under that approval.
   green; `nar version` → NAR 2.6.0
 - Greps over the full program diff: banned
   identifiers 0, forbidden credits 0 — the only
-  credit anywhere is "Research by Bakr Fayez"
+  credit anywhere is the project credit line
 
 ## Benchmarks (identical inputs, 2.5.2 → 2.6.0)
 

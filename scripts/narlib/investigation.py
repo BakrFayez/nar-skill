@@ -35,8 +35,8 @@ NAR_DISABLE_INVESTIGATION) and works identically without
 it. A builder failure is recorded by the caller as a stage
 error and never fails the whole analysis.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr
-Fayez. MIT License. See LICENSE in the repo root.
+Part of NAR (Nirous Android Reversing). MIT License.
+See LICENSE in the repo root.
 """
 import os
 

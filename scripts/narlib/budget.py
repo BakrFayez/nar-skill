@@ -27,7 +27,7 @@ generous (far above any real input NAR handles); they exist to
 catch unit mistakes such as bytes-vs-gigabytes slips, not to
 tighten policy.
 
-Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
+Part of NAR (Nirous Android Reversing).
 """
 import math
 from dataclasses import dataclass, field
