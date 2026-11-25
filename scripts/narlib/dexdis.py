@@ -288,7 +288,14 @@ class _Resolver:
                 f"method index {idx} out of range "
                 f"(method_ids_size={self.dex.method_ids_size})",
                 addr)
-        cls, name, ret, params = self.dex.method_full(idx)
+        try:
+            cls, name, ret, params = self.dex.method_full(idx)
+        except DexError as e:
+            # A corrupt referenced table (e.g. a prototype
+            # whose parameters_off is out of bounds) fails
+            # THIS method's listing, never the whole file
+            # (stability audit A-01).
+            raise _Fail(str(e), addr) from e
         return f"{cls}->{name}({''.join(params)}){ret}"
 
     def proto(self, idx, addr):
@@ -297,7 +304,10 @@ class _Resolver:
                 f"proto index {idx} out of range "
                 f"(proto_ids_size={self.dex.proto_ids_size})",
                 addr)
-        ret, params = self.dex.proto_info(idx)
+        try:
+            ret, params = self.dex.proto_info(idx)
+        except DexError as e:
+            raise _Fail(str(e), addr) from e
         return f"({''.join(params)}){ret}"
 
     # -- map-located tables -------------------------------------
@@ -356,8 +366,16 @@ class _Resolver:
         return f"{kind}@{target}"
 
     # -- encoded values (call sites) ----------------------------
-    def _enc_value(self, data, off):
+    # Same nesting discipline as narlib.dex: call-site arrays
+    # nest recursively, and an uncapped recursion leaks a
+    # RecursionError out of the disassembler (2.6.2).
+    _ENC_MAX_DEPTH = 64
+
+    def _enc_value(self, data, off, _depth=0):
         """Decode one encoded_value. Returns (summary, off)."""
+        if _depth > self._ENC_MAX_DEPTH:
+            raise _Fail("call-site encoded value nesting "
+                        "too deep", 0)
         if off >= len(data):
             raise _Fail("call-site encoded value runs past "
                         "end of file", 0)
@@ -372,11 +390,14 @@ class _Resolver:
             size, off = _uleb128(data, off)
             parts = []
             for _ in range(size):
-                part, off = self._enc_value(data, off)
+                part, off = self._enc_value(data, off, _depth + 1)
                 parts.append(part)
             return "[" + ", ".join(parts) + "]", off
         width = varg + 1
         if vtype in (0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B):
+            if off + width > len(data):
+                raise _Fail("call-site encoded value truncated "
+                            "at end of file", 0)
             raw = int.from_bytes(data[off:off + width], "little")
             off += width
             if vtype == 0x15:
@@ -405,9 +426,28 @@ class _Resolver:
                 return f"enum@{raw}", off
         if vtype in (0x00, 0x02, 0x03, 0x04, 0x06,
                      0x10, 0x11):
+            if off + width > len(data):
+                raise _Fail("call-site encoded value truncated "
+                            "at end of file", 0)
             raw = data[off:off + width]
             off += width
-            val = int.from_bytes(raw, "little", signed=True)
+            # Mirror narlib.dex._encoded_value exactly
+            # (stability audit A-07): float/double are
+            # IEEE bit patterns, right-extended; char is
+            # unsigned; the integer types are signed only
+            # when the high bit of the last byte is set.
+            if vtype == 0x10:  # float
+                fval = struct.unpack(
+                    "<f", raw.rjust(4, b"\x00"))[0]
+                return repr(fval), off
+            if vtype == 0x11:  # double
+                dval = struct.unpack(
+                    "<d", raw.rjust(8, b"\x00"))[0]
+                return repr(dval), off
+            val = int.from_bytes(raw, "little")
+            if vtype in (0x00, 0x02, 0x04, 0x06) and raw \
+                    and raw[-1] & 0x80:
+                val -= 1 << (len(raw) * 8)
             if vtype == 0x03:
                 return f"'{chr(val)}'" if 0 <= val < 128 else \
                     f"char#{val}", off
@@ -432,6 +472,10 @@ class _Resolver:
                 f"call-site index {idx} out of range "
                 f"(call_site_ids_size={size})", addr)
         data = self.dex.data
+        if off + idx * 4 + 4 > len(data):
+            raise _Fail(
+                f"call-site {idx} offset-table entry past "
+                "end of file", addr)
         item_off = struct.unpack_from(
             "<I", data, off + idx * 4)[0]
         if item_off >= len(data):
@@ -1267,6 +1311,7 @@ def disassemble(dex, class_pattern=None, method_pattern=None,
         "methods_failed": failed,
         "failures": failures,
         "failures_truncated": failed > len(failures),
-        "listings_truncated": len(selected) > len(listings),
+        "listings_truncated": len(selected) - failed
+                              > len(listings),
         "methods": listings,
     }

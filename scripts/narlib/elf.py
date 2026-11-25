@@ -62,6 +62,10 @@ class Elf:
             raise ElfError(
                 f"{name}: invalid EI_CLASS {data[4]} "
                 "(expected 1=32-bit or 2=64-bit)")
+        if data[5] not in (1, 2):
+            raise ElfError(
+                f"{name}: invalid EI_DATA {data[5]} "
+                "(expected 1=little-endian or 2=big-endian)")
         self.name = name
         self.data = data
         self.is_64 = data[4] == 2
@@ -92,6 +96,16 @@ class Elf:
         if self._program_headers is None:
             out = []
             e = self.endian
+            # An entry size smaller than the fixed struct
+            # would let the unpack read past the checked
+            # extent and leak a bare struct.error at EOF
+            # (2.6.2 robustness round).
+            want = 56 if self.is_64 else 32
+            if self.phnum and self.phentsize < want:
+                raise ElfError(
+                    f"{self.name}: program header entry size "
+                    f"{self.phentsize} smaller than the "
+                    f"{want}-byte entry struct")
             for i in range(self.phnum):
                 off = self.phoff + i * self.phentsize
                 if off + self.phentsize > len(self.data):
@@ -121,6 +135,13 @@ class Elf:
             # (with shnum == 0, or extended numbering this
             # parser does not decode); never read headers
             # from offset 0, which is the ELF header itself.
+            want = 64 if self.is_64 else 40
+            if self.shoff and self.shnum and \
+                    self.shentsize < want:
+                raise ElfError(
+                    f"{self.name}: section header entry size "
+                    f"{self.shentsize} smaller than the "
+                    f"{want}-byte entry struct")
             for i in range(self.shnum if self.shoff else 0):
                 off = self.shoff + i * self.shentsize
                 if off + self.shentsize > len(self.data):
@@ -149,6 +170,11 @@ class Elf:
             strtab = b""
             if 0 <= self.shstrndx < len(raw):
                 s = raw[self.shstrndx]
+                if s["offset"] + s["size"] > len(self.data):
+                    raise ElfError(
+                        f"{self.name}: section name string "
+                        "table declares bytes past the end "
+                        "of the file")
                 strtab = self.data[s["offset"]:s["offset"] + s["size"]]
             for s in raw:
                 s["name"] = _str_at(strtab, s["name_off"])
@@ -157,8 +183,23 @@ class Elf:
         return self._sections
 
     def _section_data(self, section):
-        return self.data[section["offset"]:
-                         section["offset"] + section["size"]]
+        # Section HEADERS are extent-checked at parse time,
+        # but the declared content extent was not: a section
+        # claiming more bytes than the file holds silently
+        # returned whatever follows it in the file, which
+        # the symbol reader then decoded into fabricated
+        # symbols (stability audit A-04). NOBITS sections
+        # occupy no file bytes by definition.
+        if section["type"] == 8:  # SHT_NOBITS
+            return b""
+        end = section["offset"] + section["size"]
+        if end > len(self.data):
+            raise ElfError(
+                f"{self.name}: section {section.get('name') or '?'} "
+                f"declares bytes [{section['offset']}, {end}) "
+                f"past the end of the file ({len(self.data)} "
+                "bytes)")
+        return self.data[section["offset"]:end]
 
     def _vaddr_to_off(self, vaddr):
         """Map a virtual address to a file offset via PT_LOAD."""
@@ -205,6 +246,21 @@ class Elf:
             return self._section_data(sections[link])
         return b""
 
+    def _checked_entsize(self, section, minimum, what):
+        """The section's entry size, or ElfError when a
+        nonzero size is smaller than the fixed entry struct:
+        stepping by it would let an unpack read past the
+        entry and leak a bare struct.error (2.6.2). A zero
+        size means "use the struct size" (the historical
+        fallback at every call site)."""
+        entsize = section["entsize"]
+        if entsize and entsize < minimum:
+            raise ElfError(
+                f"{self.name}: {what} entry size {entsize} "
+                f"smaller than the {minimum}-byte entry "
+                f"struct in section {section['name']!r}")
+        return entsize or minimum
+
     def symbols(self, section_type):
         """Symbols from one symbol table (SHT_DYNSYM/SHT_SYMTAB).
 
@@ -216,7 +272,8 @@ class Elf:
                 continue
             strtab = self._strtab_for(s)
             blob = self._section_data(s)
-            entsize = s["entsize"] or (24 if self.is_64 else 16)
+            entsize = self._checked_entsize(
+                s, 24 if self.is_64 else 16, "symbol")
             for off in range(0, len(blob) - entsize + 1, entsize):
                 if self.is_64:
                     name_off, info, _other, shndx, value, size = \
@@ -237,8 +294,8 @@ class Elf:
         strtab = self._strtab_for(symtab_section)
         blob = self._section_data(symtab_section)
         e = self.endian
-        entsize = symtab_section["entsize"] or \
-            (24 if self.is_64 else 16)
+        entsize = self._checked_entsize(
+            symtab_section, 24 if self.is_64 else 16, "symbol")
         names = []
         for off in range(0, len(blob) - entsize + 1, entsize):
             if self.is_64:
@@ -275,13 +332,11 @@ class Elf:
             has_addend = s["type"] == SHT_RELA
             blob = self._section_data(s)
             if self.is_64:
-                entsize = s["entsize"] or (24 if has_addend
-                                           else 16)
+                minimum = 24 if has_addend else 16
             else:
-                entsize = s["entsize"] or (12 if has_addend
-                                           else 8)
-            if not entsize:
-                continue
+                minimum = 12 if has_addend else 8
+            entsize = self._checked_entsize(s, minimum,
+                                            "relocation")
             sym_names = []
             link = s["link"]
             if 0 <= link < len(sections):
@@ -403,11 +458,21 @@ class Elf:
         for s in sections:
             if s["name"] == ".note.gnu.build-id":
                 blob = self._section_data(s)
-                # Note: namesz(4) descsz(4) type(4) name(4) desc…
-                if len(blob) >= 20:
-                    descsz = struct.unpack_from("<I", blob, 4)[0]
-                    desc = blob[16:16 + descsz]
-                    build_id = desc.hex()
+                # Note layout: namesz(4) descsz(4) type(4),
+                # then the name padded to 4, then the desc
+                # padded to 4 — all in the FILE's endianness.
+                # The old parse hard-coded little-endian and
+                # a 4-byte name, so big-endian files (and any
+                # other name size) produced a wrong build id
+                # (stability audit A-05).
+                if len(blob) >= 12:
+                    e = self.endian
+                    namesz, descsz = struct.unpack_from(
+                        e + "II", blob, 0)
+                    desc_off = 12 + ((namesz + 3) & ~3)
+                    if desc_off + descsz <= len(blob):
+                        build_id = blob[
+                            desc_off:desc_off + descsz].hex()
         dynsyms = self.symbols(SHT_DYNSYM)
         imports = sorted({s["name"] for s in dynsyms
                           if not s["defined"] and s["name"]})

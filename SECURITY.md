@@ -44,7 +44,10 @@ Samples are hostile input by assumption:
   the user's own device, on apps the user is authorized to
   instrument — `references/dynamic-analysis.md`.)
 - **Extraction is guarded.** Archive extraction goes
-  through `narlib/safearchive.py`: zip-slip / path
+  through `narlib/safearchive.py`, whose limits are
+  one validated ResourceBudget (narlib/budget.py —
+  invalid overrides are refused with a named error):
+  zip-slip / path
   traversal, symlink, per-file size (1 GiB), total size
   (2 GiB), entry count (20,000), compression-ratio
   (200 per entry / 100 whole-archive) and nesting-depth
@@ -58,7 +61,11 @@ Samples are hostile input by assumption:
   and malformed inputs fail with named errors rather than
   unbounded work — the mutation corpus
   (`tests/unit/test_phase11_mutations.py`) pins clean
-  failure for the DEX / ELF / PAK / IoStore / Zen parsers.
+  failure for the DEX / ELF / PAK / IoStore / Zen
+  parsers; a deterministic mutation-fuzz harness
+  (tests/fuzz/) extends that discipline to the DEX
+  parsers with preserved crash artifacts and
+  regression tests per find (2.6.2).
 - **Shipped code is stdlib-only** and contains no
   `shell=True`, `os.system`, `eval`, or `pickle` (Phase 1
   audit record, `NAR_REPAIR_MATRIX.md`).

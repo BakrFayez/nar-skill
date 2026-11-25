@@ -81,6 +81,7 @@ VERSION_FILES = [
     os.path.join("scripts", "nar-analyze.py"),
     os.path.join("scripts", "registry.json"),
     os.path.join("scripts", "nar-assets.py"),
+    os.path.join("scripts", "nar-compare.py"),
     os.path.join("scripts", "nar-dex.py"),
     os.path.join("scripts", "nar-engines.py"),
     os.path.join("scripts", "nar-native.py"),
@@ -132,6 +133,28 @@ class ReadmeStructureTest(unittest.TestCase):
         for token in ("run_e2e.sh", "unit/", "benchmarks/",
                       "run_benchmarks.py"):
             self.assertIn(token, self.block)
+        # Enumerate the real tests/ tree (E-10): every
+        # entry the tree carries must be named in the
+        # README structure block, not just four tokens.
+        tests_dir = os.path.join(ROOT, "tests")
+        for name in sorted(os.listdir(tests_dir)):
+            if name == "__pycache__":
+                continue
+            full = os.path.join(tests_dir, name)
+            token = name + "/" if os.path.isdir(full) else name
+            self.assertIn(
+                token, self.block,
+                f"tests/{name} missing from README "
+                "structure block")
+        bench_dir = os.path.join(tests_dir, "benchmarks")
+        for name in sorted(os.listdir(bench_dir)):
+            if name == "__pycache__" or \
+                    not name.endswith((".py", ".json")):
+                continue
+            self.assertIn(
+                name, self.block,
+                f"tests/benchmarks/{name} missing from "
+                "README structure block")
 
 
 class SkillRoutingTest(unittest.TestCase):

@@ -5,7 +5,13 @@ section 7).
 Builds the endpoint inventory from string evidence and
 classifies every endpoint with static-analysis honesty:
 
-- confirmed: referenced from DEX code,
+- dex-string: the URL string is present in DEX string
+  data. (This label was "confirmed" before the 2.6.2
+  calibration audit: presence in a DEX string table is
+  not proof that code references the string — the
+  correlations builder treats the same evidence as
+  STRONGLY_INDICATED for exactly that reason — so the
+  stronger word overstated the evidence.)
 - potential: seen in native-library strings only,
 - unused-candidate: seen only in assets/resources,
 - third-party: a known SDK/service domain,
@@ -50,6 +56,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import registry as reg_mod  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
+from narlib.safearchive import read_member_capped  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 THIRD_PARTY_SUFFIXES = (
@@ -69,39 +76,117 @@ THIRD_PARTY_SUFFIXES = (
 SENSITIVE_QUERY = re.compile(
     r"(api[_-]?key|apikey|token|secret|password|passwd|auth)="
     r"[^&]{4,}", re.I)
-# Redaction: query parameters whose NAME marks the value as
-# credential material. Broader than SENSITIVE_QUERY (which
-# drives classification) because redaction is about never
-# persisting a value, not about judging the endpoint.
-REDACT_PARAM_RE = re.compile(
-    r"([?&](?:api[_-]?key|apikey|access[_-]?token|token|secret|"
-    r"password|passwd|auth|session|signature|sig|key)=)"
-    r"[^&#\s]+", re.I)
 USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)[^/@\s]+@",
                          re.I)
 REDACTED = "REDACTED"
+# Redaction: parameter NAME tokens that mark the value as
+# credential material. Broader than SENSITIVE_QUERY (which
+# drives classification) because redaction is about never
+# persisting a value, not about judging the endpoint. The
+# pre-audit redactor was a fixed alternation of whole
+# names, so standard credential shapes sailed through it
+# untouched — ?client_secret=, ?refresh_token=,
+# #access_token= fragment parameters, ;jsessionid= path
+# parameters, and prefixed names all leaked into reports
+# and into nar-security finding evidence (stability audit
+# D-01, P0). The name test below is structural: a name is
+# sensitive when any of its alphanumeric tokens is a
+# credential token, which covers prefixed/suffixed forms
+# (aws_secret_access_key, x_api_key, private_key,
+# credential, bearer) without enumerating them.
+_CREDENTIAL_NAME_TOKENS = frozenset({
+    "key", "token", "secret", "password", "passwd", "pwd",
+    "auth", "session", "signature", "sig", "credential",
+    "credentials", "bearer", "private", "jsessionid",
+})
+_NAME_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _name_is_credential(name):
+    tokens = [t for t in _NAME_TOKEN_SPLIT.split(
+        name.lower()) if t]
+    return any(t in _CREDENTIAL_NAME_TOKENS for t in tokens)
+
+
+def _redact_params(text, count):
+    """Redact sensitive name=value pairs in a parameter
+    string (query or fragment), preserving separators
+    (& and ;) and every benign pair byte for byte."""
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        # One pair: up to the next separator.
+        j = i
+        while j < n and text[j] not in "&;":
+            j += 1
+        pair = text[i:j]
+        eq = pair.find("=")
+        if eq > 0:
+            name, value = pair[:eq], pair[eq + 1:]
+            if value and _name_is_credential(name):
+                pair = name + "=" + REDACTED
+                count += 1
+        out.append(pair)
+        if j < n:
+            out.append(text[j])
+            j += 1
+        i = j
+    return "".join(out), count
 
 
 def redact_url(url):
     """Replace credential material in one URL with REDACTED.
 
     Returns (redacted_url, values_redacted). Covers URL
-    userinfo (user:password@) as one value and each
-    sensitive-named query parameter value. Anything else in
-    the URL — scheme, host, path, benign parameters — is
-    preserved byte for byte."""
+    userinfo (user:password@) as one value, sensitive
+    parameters in the query AND the fragment (OAuth
+    implicit-flow credentials ride the fragment), and
+    ;-parameters in the path (jsessionid and kin).
+    Anything else — scheme, host, path, benign parameters
+    — is preserved byte for byte."""
     count = 0
     m = USERINFO_RE.match(url)
     if m:
         url = m.group(1) + REDACTED + "@" + url[m.end():]
         count += 1
-
-    def _sub(match):
-        nonlocal count
-        count += 1
-        return match.group(1) + REDACTED
-
-    url = REDACT_PARAM_RE.sub(_sub, url)
+    # Split the URL into head (scheme/authority/path),
+    # query and fragment so each parameter surface is
+    # redacted exactly once, in its own grammar.
+    frag = None
+    if "#" in url:
+        url, frag = url.split("#", 1)
+    query = None
+    if "?" in url:
+        url, query = url.split("?", 1)
+    # Path ;-parameters (matrix parameters) in the head.
+    if ";" in url:
+        segments = url.split(";")
+        rebuilt = [segments[0]]
+        for seg in segments[1:]:
+            eq = seg.find("=")
+            if eq > 0:
+                name, rest = seg[:eq], seg[eq + 1:]
+                # A matrix parameter's value ends at the
+                # next path separator: /a;jsessionid=X/b
+                # carries the value X and then the path
+                # continues. Redact the value only; the
+                # tail is path, preserved byte for byte
+                # (a raw / cannot be part of the value in
+                # path grammar — it would be %2F).
+                slash = rest.find("/")
+                value = rest if slash < 0 else rest[:slash]
+                tail = "" if slash < 0 else rest[slash:]
+                if value and _name_is_credential(name):
+                    seg = name + "=" + REDACTED + tail
+                    count += 1
+            rebuilt.append(seg)
+        url = ";".join(rebuilt)
+    if query is not None:
+        query, count = _redact_params(query, count)
+        url = url + "?" + query
+    if frag is not None:
+        frag, count = _redact_params(frag, count)
+        url = url + "#" + frag
     return url, count
 NETWORK_LIB_PREFIXES = {
     "okhttp3/": "OkHttp", "retrofit2/": "Retrofit",
@@ -119,6 +204,12 @@ def run_json_tool(script, args, timeout=1800):
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout)
+        if proc.returncode != 0:
+            # A failed tool's stdout is an error document,
+            # not a result: returning it let a bad target
+            # produce an empty-but-successful report
+            # downstream (stability audit D-02).
+            return None
         return json.loads(proc.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
@@ -147,7 +238,7 @@ def classify(url, sources):
         return "third-party", host, kind
     src_text = " ".join(sources or [])
     if ".dex" in src_text:
-        return "confirmed", host, kind
+        return "dex-string", host, kind
     if ".so" in src_text:
         return "potential", host, kind
     if "assets/" in src_text or "res/" in src_text:
@@ -160,7 +251,8 @@ def parse_google_services(apk_path):
         with zipfile.ZipFile(apk_path) as zf:
             for name in zf.namelist():
                 if name.endswith("google-services.json"):
-                    data = json.loads(zf.read(name))
+                    data = json.loads(
+                        read_member_capped(zf, name))
                     project = data.get("project_info") or {}
                     clients = data.get("client") or []
                     api_key_present = any(
@@ -312,7 +404,7 @@ def analyze(target, work_dir=None):
     for e in endpoints:
         by_class[e["classification"]] = \
             by_class.get(e["classification"], 0) + 1
-    return {"tool": "nar-network", "version": "2.6.1",
+    return {"tool": "nar-network", "version": "2.6.2",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "endpoints": endpoints, "hosts": sorted(hosts),

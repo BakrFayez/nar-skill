@@ -1292,7 +1292,9 @@ def triage(apk_path):
         for n in names:
             if n.startswith("META-INF/") and n.endswith(".version"):
                 try:
-                    raw = zf.read(n)[:256].decode("utf-8", "replace").strip()
+                    with zf.open(n) as _fh:
+                        raw = _fh.read(256).decode(
+                            "utf-8", "replace").strip()
                 except (KeyError, OSError, zipfile.BadZipFile):
                     continue
                 ver = raw.splitlines()[0].strip() if raw else ""

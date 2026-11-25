@@ -612,6 +612,108 @@ if [ -f "$TMP/analyze-app/case.json" ]; then
   else bad "analyze-case-bundle" "export/import/verify round-trip failed (ok=$BUNDLE_OK tamper=$TAMPER_OK)"; fi
 else skip "analyze-case-bundle" "app case absent"; fi
 
+# Evidence integrity enforcement (2.6.2 WS-F): a synthetic
+# case built through the real graph/investigation
+# builders verifies clean and carries the structured
+# evidence_integrity section; a hypothesis stripped of
+# its refute criterion and a dangling evidence reference
+# each fail verify with the expected reason. Synthetic
+# only — runs in public mode too.
+cat > "$TMP/build_verify_case.py" <<'PYEOF'
+"""Build the synthetic verify case (shared body)."""
+import json, os, sys
+scripts, case = sys.argv[1], sys.argv[2]
+sys.path.insert(0, scripts)
+from narlib import correlations, graph, investigation
+os.makedirs(case, exist_ok=True)
+dex = {"dex_files": [{"name": "classes.dex",
+        "classes": [{"class": "Lcom/example/App;"}],
+        "native_methods": [{"class": "Lcom/example/App;",
+                            "name": "planted"}],
+        "entry_points": [], "string_references": []}]}
+native = {"jni_map": {}, "dependency_graph": {},
+          "libraries": []}
+perms = {"file": "role-target.apk",
+         "path": "/nonexistent/role-target.apk",
+         "parser_requested": "auto",
+         "package": "com.example.demo", "permissions": [],
+         "components": {"activity": [
+             {"name": "com.example.App", "exported": True,
+              "permission": None}]}}
+network = {"endpoints": [], "hosts": [], "api_hosts": [],
+           "services": [], "network_security_config": {},
+           "network_libraries": []}
+corr = correlations.build_correlations(
+    dex, native, perms, network, "2.6.1")
+docs = {
+  "case.json": {"case_id": "nar-synthetic",
+    "nar_version": "2.6.1",
+    "input": {"path": "/nonexistent/role-target.apk",
+              "sha256": "a" * 64, "size_bytes": 3},
+    "stages": {}},
+  "report.json": {"tool": "nar-analyze", "version": "2.6.1",
+    "companions": {
+      "graph": {"file": "graph.json", "projected": True},
+      "investigation": {"file": "investigation.json",
+                        "projected": True},
+      "correlations": {"file": "correlations.json",
+                       "projected": True},
+      "permissions": {"file": "permissions.json",
+                      "cached": False}}},
+  "dex.json": dex, "native.json": native,
+  "permissions.json": perms, "endpoints.json": network,
+  "correlations.json": corr,
+  "graph.json": graph.build_graph(
+      dex_data=dex, native_data=native, perms_data=perms,
+      network_data=network, correlations_data=corr,
+      version="2.6.1"),
+  "investigation.json": investigation.build_investigation(
+      dex_data=dex, native_data=native, perms_data=perms,
+      network_data=network, correlations_data=corr,
+      version="2.6.1")}
+assert docs["investigation.json"]["hypotheses"], \
+    "complete hypothesis expected"
+for name, doc in docs.items():
+    with open(os.path.join(case, name), "w") as fh:
+        json.dump(doc, fh, indent=1)
+PYEOF
+rm -rf "$TMP/verify-case"
+VERIFY_OK=0; HYPO_OK=0; EVID_OK=0
+if $PY "$TMP/build_verify_case.py" "$SCRIPTS" "$TMP/verify-case" \
+   && $PY "$SCRIPTS/nar-analyze.py" --verify "$TMP/verify-case" --json > "$TMP/verify-clean.json" 2>/dev/null \
+   && grep -q "evidence_integrity" "$TMP/verify-clean.json"; then
+  VERIFY_OK=1
+fi
+if [ "$VERIFY_OK" = "1" ]; then
+  $PY - "$TMP/verify-case" <<'PYEOF'
+import json, os, sys
+p = os.path.join(sys.argv[1], "investigation.json")
+d = json.load(open(p))
+del d["hypotheses"][0]["refute"]
+json.dump(d, open(p, "w"), indent=1)
+PYEOF
+  if ! $PY "$SCRIPTS/nar-analyze.py" --verify "$TMP/verify-case" --json > "$TMP/verify-hypo.json" 2>/dev/null \
+     && grep -q "refute" "$TMP/verify-hypo.json"; then
+    HYPO_OK=1
+  fi
+  rm -rf "$TMP/verify-case"
+  $PY "$TMP/build_verify_case.py" "$SCRIPTS" "$TMP/verify-case"
+  $PY - "$TMP/verify-case" <<'PYEOF'
+import json, os, sys
+p = os.path.join(sys.argv[1], "graph.json")
+d = json.load(open(p))
+d["nodes"][0]["evidence"]["document"] = "missing-doc.json"
+json.dump(d, open(p, "w"), indent=1)
+PYEOF
+  if ! $PY "$SCRIPTS/nar-analyze.py" --verify "$TMP/verify-case" --json > "$TMP/verify-evid.json" 2>/dev/null \
+     && grep -q "missing-doc.json" "$TMP/verify-evid.json"; then
+    EVID_OK=1
+  fi
+fi
+if [ "$VERIFY_OK" = "1" ] && [ "$HYPO_OK" = "1" ] && [ "$EVID_OK" = "1" ]; then
+  ok "analyze: case verify enforces evidence integrity (clean passes; missing refute and dangling evidence fail)"
+else bad "analyze-verify-evidence" "evidence-integrity verify behavior wrong (clean=$VERIFY_OK hypo=$HYPO_OK evid=$EVID_OK)"; fi
+
 # ------------------------------------------------- phase 9: reporting + CLI verbs
 # The unified CLI gains tools / identify / validate /
 # benchmark / case without touching the existing verbs.

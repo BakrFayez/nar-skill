@@ -506,9 +506,12 @@ class _ZenPackage:
         if count < 0 or count > MAX_TABLE_ENTRIES:
             raise ZenError(
                 f"implausible Zen name count {count}")
-        if count == 0:
-            self.names = []
-            return r.pos
+        # No early return for count == 0 (stability audit
+        # B-06): the batch header still carries the string
+        # byte count and the hash version, and the exact
+        # byte-count check below validates them — returning
+        # after the count alone misaligned every following
+        # section and rejected valid zero-name packages.
         string_bytes = r.u32()
         if string_bytes > MAX_NAME_BATCH_BYTES:
             raise ZenError(
@@ -912,6 +915,17 @@ def _parse_with_layout(data, layout, cells):
             "cell_export_map_offset": r.i32(),
         }
         pos = r.pos
+        # The cell offsets address the header region; a
+        # negative or out-of-header value is corrupt and
+        # must fail as ZenError here, not as a bare
+        # struct.error from a negatively-based reader
+        # downstream (stability audit B-07).
+        for key, off in cell_offsets.items():
+            if off < 0 or off > summary["header_size"]:
+                raise ZenError(
+                    f"Verse {key} {off} outside the "
+                    f"header (size "
+                    f"{summary['header_size']})")
     summary["name_map_offset"] = pos
     pos = pkg.parse_name_batch(pos)
     bulk, pos = pkg.parse_bulk_data_map(pos)
@@ -929,7 +943,21 @@ def _parse_with_layout(data, layout, cells):
             "through these offsets; their contents are "
             "not decoded by this build")
         summary["cell_offsets"] = cell_offsets
-    bundle_entries, _ = pkg.parse_bundle_entries(bundle_start)
+    bundle_entries, bundle_end = pkg.parse_bundle_entries(
+        bundle_start)
+    # The bundle-entry table must not run past the header
+    # (stability audit B-07's safety half). It is NOT
+    # required to land exactly on the header size: real
+    # packages carry further header content after the
+    # entries, so an exact-landing rule here would reject
+    # valid packages — the audit's exactness expectation
+    # was checked against the corpus and does not hold
+    # for this section.
+    if bundle_end > summary["header_size"]:
+        raise ZenError(
+            f"export bundle entries end at {bundle_end}, "
+            f"past the header size "
+            f"{summary['header_size']}")
     sections = pkg.trailing_sections()
     summary["package_name"] = pkg.resolve_mapped(
         summary["package_name_mapped"])

@@ -74,6 +74,12 @@ by nothing.
   the 1.x scripts).
 - `narlib/formats.py` — magic-byte + structural format
   identification for the brief §3.1 input list.
+- `narlib/budget.py` — the ResourceBudget abstraction
+  (2.6.2): validated archive/resource limits (entries,
+  per-file and total bytes, per-entry and total ratios,
+  nesting depth, elapsed seconds) shared by the
+  extraction paths; invalid overrides raise a named
+  BudgetError.
 - `narlib/safearchive.py` — extraction with zip-slip, path
   traversal, symlink, bomb-ratio, nesting-depth, and
   total-size guards; every rejection is reported, never silent.
@@ -189,9 +195,13 @@ by nothing.
    (`narlib/investigation.py`); engine adapters feed
    relationship records into their own reports (Unreal
    classic/Zen UObject relationships, Godot text-scene
-   references — the Unreal records live in nar-unreal's
-   standalone reports, not in graph.json, as recorded under
-   R-013/R-008), and the dashboard renders Unified graph and
+   references). Since 2.6.1 the Unreal relationship
+   records ALSO join graph.json as unreal_package /
+   unreal_object nodes and unreal_* edges under the
+   graph's provenance/confidence discipline (closing the
+   R-008 remainder; an earlier sentence here said they
+   live only in the standalone reports — that was the
+   2.6.0 state, reversed in 2.6.1), and the dashboard renders Unified graph and
    Investigation sections when those companions exist
    (Phase 12), staying fully offline. `nar-report.py` is the
    authoritative dashboard generator; nar-analyze invokes it
@@ -227,10 +237,16 @@ compare-feature-map, execution log, case, input, timeline,
 runtime-session, correlations, and the case companions and
 DEX/native documents (application, manifest, frameworks,
 native-inventory, network-analysis, api-architecture, dex,
-dex-classes, dex-methods, native). Validation uses a
+dex-classes, dex-methods, native, permissions).
+Validation uses a
 small stdlib structural validator (the project stays
-dependency-free at runtime); schemas are also valid inputs
-for standard validators in CI. A parse-all regression test
+dependency-free at runtime); the schemas are written to
+that validator's documented subset (see
+references/output-schema.md), and the CI schema job
+parses every schema as JSON and runs the schema tests —
+no standard-validator step runs in CI (an earlier
+sentence here claimed otherwise; corrected in the
+2.6.2 stability campaign). A parse-all regression test
 (`tests/unit/test_schemas.py`) loads every schema file.
 
 ## Runtime subsystem
@@ -262,5 +278,27 @@ remain unverified.
   selection flags; module selection is the choice of verb,
   and stage budgets live on `nar-analyze` itself
   (`--stage-timeout` / `--total-budget`).
+
+## 2.6.2 addendum
+
+- The DEX stage document is consumed through a bounded
+  windowed reader (1 MiB window) instead of a memory map;
+  cache and companion bytes are unchanged (hard
+  byte-identity gate, NAR_2.6.2_VERIFICATION_REPORT.md).
+- `nar case verify` enforces evidence integrity: graph
+  and investigation evidence references (primary and
+  accumulated) resolve to existing documents and fields,
+  endpoints exist, identifiers are unique, counts
+  reconcile, and hypotheses carry basis/confirm/refute.
+  Investigation hypotheses are also gated at build time.
+  Pre-2.6.1 cases verify with warnings for that era's
+  known citation defects; tampering fails in every era.
+- The runtime module reports every device capability
+  with a status (detected / verified / unsupported /
+  unavailable / not_tested) and offers a `validate`
+  surface; the Frida validation suite lives in
+  `tests/runtime_validation/` as device-dependent test
+  tooling.
+- narlib grows to 22 modules (budget.py added).
 - New JSON outputs are additive; 1.x JSON keys are not
   renamed or removed.

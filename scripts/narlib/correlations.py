@@ -209,7 +209,21 @@ def _library_correlations(network_data, dex_data):
     classes = _dex_classes(dex_data)
     entries = []
     for lib in (network_data or {}).get("network_libraries", []):
-        name = lib.get("library") or ""
+        # The endpoints producer (nar-network) emits this
+        # list as label STRINGS; an object form with a
+        # "library" field is also accepted. The pre-fix
+        # code called .get() unconditionally, so any real
+        # target WITH a detected network library crashed
+        # this builder (silently degrading the whole
+        # correlations document since the C-06 hardening);
+        # every retained case had an empty list, which is
+        # why it never fired (stability audit S-03).
+        if isinstance(lib, str):
+            name = lib
+        elif isinstance(lib, dict):
+            name = lib.get("library") or ""
+        else:
+            continue
         prefix = None
         for key, pfx in LIBRARY_PREFIXES:
             if key in name.lower():

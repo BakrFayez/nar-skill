@@ -54,6 +54,7 @@ import argparse
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -67,7 +68,8 @@ from narlib.mmapio import mapped_file  # noqa: E402
 from narlib.iostore import (IoStoreError, extract_chunk,  # noqa: E402
                             parse_utoc)
 from narlib.uasset import UAssetError, parse_package  # noqa: E402
-from narlib.zen import ZenError, parse_zen_package  # noqa: E402
+from narlib.zen import (ZenError, is_zen_package,  # noqa: E402
+                        parse_zen_package)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -92,6 +94,13 @@ DISPLAY_CAP = 25
 # the package cap; the report's iostore_package_counts
 # always records containers considered vs found.
 IOSTORE_PACKAGE_CONTAINER_CAP = 2
+# Relationship edges kept per package (class/super/outer/
+# template/depends edges assembled from the parsed maps);
+# the counts alongside always cover every edge derived.
+# --all-details lifts it (B-18: the help text always
+# promised detail caps lift; this one was wired to the
+# constant directly and never lifted).
+RELATIONSHIP_CAP = 250
 
 
 class UnrealLimits:
@@ -110,11 +119,13 @@ class UnrealLimits:
                  max_chunks=ENTRY_CAP, max_names=NAME_CAP,
                  max_searchable=SEARCHABLE_CAP,
                  max_display=DISPLAY_CAP,
+                 max_relationships=RELATIONSHIP_CAP,
                  max_iostore_package_containers=
                  IOSTORE_PACKAGE_CONTAINER_CAP):
         self.max_packages = max_packages
         self.max_containers = max_containers
         self.max_chunks = max_chunks
+        self.max_relationships = max_relationships
         self.max_names = max_names
         self.max_searchable = max_searchable
         self.max_display = max_display
@@ -156,6 +167,7 @@ def limits_from_args(args):
         limits.max_names = None
         limits.max_searchable = None
         limits.max_display = None
+        limits.max_relationships = None
     return limits
 
 
@@ -241,12 +253,6 @@ def iostore_summary(utoc_bytes, name, ucas_name=None,
     return parsed
 
 
-# Relationship edges kept per package (class/super/outer/
-# template/depends edges assembled from the parsed maps);
-# the counts alongside always cover every edge derived.
-RELATIONSHIP_CAP = 250
-
-
 def _package_index_target(index, imports, exports):
     """Resolve one classic package index per the format:
     0 = none, positive = export (1-based), negative =
@@ -279,7 +285,7 @@ def _package_index_target(index, imports, exports):
     return target
 
 
-def classic_relationships(parsed):
+def classic_relationships(parsed, cap=RELATIONSHIP_CAP):
     """UObject relationship edges for a classic package,
     assembled only from the tables the parser already
     decoded: each export's class / super / outer /
@@ -321,7 +327,7 @@ def classic_relationships(parsed):
                 "from": src, "to": target, "kind": "depends",
                 "evidence": "depends map entry "
                             "(package-index resolution)"})
-    shown, counts = _capped(edges, RELATIONSHIP_CAP)
+    shown, counts = _capped(edges, cap)
     return {
         "edges": shown, "counts": counts,
         "evidence": "table-derived: assembled from the "
@@ -336,7 +342,7 @@ _ZEN_INDEX_KINDS = {0: "export", 1: "script-import",
                     2: "package-import", 3: "null"}
 
 
-def zen_relationships(parsed):
+def zen_relationships(parsed, cap=RELATIONSHIP_CAP):
     """UObject relationship edges for a Zen package,
     assembled only from the export map the parser already
     decoded: each export's outer / class / super /
@@ -361,11 +367,26 @@ def zen_relationships(parsed):
                       "resolved": exp.get(field + "_resolved")}
             if kind_name == "export":
                 target["index"] = raw & 0xFFFFFFFF
+                # Mirror the classic path's unresolved
+                # marking: a same-package export reference
+                # the export map cannot resolve to a named
+                # object carries a note, so downstream
+                # consumers (the graph join) keep it
+                # explicitly unresolved instead of reading
+                # the bare index as a resolved target.
+                idx = target["index"]
+                if idx >= len(exports):
+                    target["note"] = (
+                        "export index outside the export map")
+                elif exports[idx].get("object_name") is None:
+                    target["note"] = (
+                        "export object name does not resolve "
+                        "through this package's name map")
             edges.append({
                 "from": src, "to": target, "kind": field,
                 "evidence": f"export map {field} object "
                             "index (FPackageObjectIndex)"})
-    shown, counts = _capped(edges, RELATIONSHIP_CAP)
+    shown, counts = _capped(edges, cap)
     return {
         "edges": shown, "counts": counts,
         "evidence": "table-derived: assembled from the "
@@ -393,7 +414,8 @@ def zen_package_summary(data, name, limits=None):
             f" A full Zen parse was attempted and "
             f"stopped: {e}")
         return record
-    parsed["relationships"] = zen_relationships(parsed)
+    parsed["relationships"] = zen_relationships(
+        parsed, limits.max_relationships)
     total_names = len(parsed["names"])
     shown, counts = _capped(parsed["names"], limits.max_names)
     parsed["names"] = shown
@@ -426,13 +448,14 @@ def package_summary(data, name, uexp_data=None, limits=None):
     parser; everything else to the classic one."""
     if limits is None:
         limits = UnrealLimits()
-    if _is_zen_package(data):
+    if is_zen_package(data):
         return zen_package_summary(data, name, limits)
     try:
         parsed = parse_package(data, name, uexp_data)
     except UAssetError as e:
         return {"entry": name, "error": f"package parse failed: {e}"}
-    parsed["relationships"] = classic_relationships(parsed)
+    parsed["relationships"] = classic_relationships(
+        parsed, limits.max_relationships)
     total_names = len(parsed["names"])
     shown, counts = _capped(parsed["names"], limits.max_names)
     parsed["names"] = shown
@@ -560,40 +583,40 @@ def _package_limitations(caps=None):
     ]
 
 
-PACKAGE_MAGIC_LE = b"\xc1\x83\x2a\x9e"
-
-
-def _is_zen_package(blob):
-    """UE5 IoStore-native (Zen) package chunks carry the
-    package magic as a trailer, not a header: the chunk
-    opens with the Zen package header instead of an
-    FPackageFileSummary. (On a real UE 5.3 container set,
-    every stored package chunk in it — 684 of 684 — has
-    exactly this shape, and its recorded header size is
-    in range in every case.)"""
-    return len(blob) >= 8 \
-        and blob[:4] != PACKAGE_MAGIC_LE \
-        and blob[-4:] == PACKAGE_MAGIC_LE
-
-
 def _zen_package_record(blob, path):
     """Presentation record for a Zen-format package
     chunk: identified and inventoried, never fed to the
     classic summary parser under a misleading corruption
     error, and no classic summary facts are claimed."""
+    legacy_word = int.from_bytes(blob[0:4], "little") \
+        if len(blob) >= 4 else None
     return {
         "entry": path,
         "format": "zen-package",
         "size": len(blob),
+        # header_size sits in the SECOND word in the
+        # UE5.3+ layout but in the FIRST word in the
+        # legacy EA layout (narlib.zen.parse_summary).
+        # This fallback record exists because the full
+        # parse stopped, so the layout is undetermined:
+        # report the 5.3+ word under the usual key and
+        # disclose the legacy word alongside (B-17).
         "zen_header_size": int.from_bytes(blob[4:8],
                                           "little"),
+        "zen_header_size_ea_legacy_word": legacy_word,
         "note": ("UE5 IoStore-native (Zen) package: the "
                  "chunk carries a Zen package header, not "
                  "an FPackageFileSummary, so the classic "
                  "package parser does not apply. Zen "
                  "headers record no UE4/UE5 object "
                  "version — packages are versioned by "
-                 "the engine build, not per package."),
+                 "the engine build, not per package. "
+                 "zen_header_size is the UE5.3+ header "
+                 "word; the legacy EA layout stores the "
+                 "header size in the first word "
+                 "(zen_header_size_ea_legacy_word) and "
+                 "the layout could not be determined "
+                 "here."),
     }
 
 
@@ -611,11 +634,26 @@ def iostore_packages(utoc_bytes, ucas_bytes, container_name,
         limits = UnrealLimits()
     out = []
     if ucas_bytes is None:
-        return out, _account(0, 0)
+        # Zero packages because the container DATA is
+        # missing is not the same fact as a container
+        # with zero packages: the accounting must say
+        # which (stability audit B-11).
+        acct = _account(0, 0)
+        acct["error"] = ("container data (.ucas) "
+                         "unavailable; package inventory "
+                         "not attempted")
+        return out, acct
     try:
         container = parse_utoc(utoc_bytes, container_name)
-    except IoStoreError:
-        return out, _account(0, 0)
+    except IoStoreError as e:
+        acct = _account(0, 0)
+        acct["error"] = (f"container index (.utoc) did "
+                         f"not parse: {e}")
+        return out, acct
+    if container.get("directory_index_error"):
+        acct_note = container["directory_index_error"]
+    else:
+        acct_note = None
     named = [entry for entry in container["entries"]
              if (entry.get("file") or "").lower().endswith(
                  (".uasset", ".umap"))]
@@ -637,7 +675,13 @@ def iostore_packages(utoc_bytes, ucas_bytes, container_name,
         out.append(record)
         blob = None
     failed = _failed_count(out)
-    return out, _account(total, len(out) - failed, failed)
+    acct = _account(total, len(out) - failed, failed)
+    if acct_note:
+        # The directory index named no files (its parse
+        # failed inside parse_utoc): the zero total is a
+        # failure fact, not an empty container (B-08/B-11).
+        acct["error"] = acct_note
+    return out, acct
 
 
 def pak_packages(pak_path, out_dir, limits=None):
@@ -705,7 +749,7 @@ def pak_packages(pak_path, out_dir, limits=None):
 def analyze(target, work_dir=None, limits=None):
     if limits is None:
         limits = UnrealLimits()
-    report = {"tool": "nar-unreal", "version": "2.6.1",
+    report = {"tool": "nar-unreal", "version": "2.6.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target),
               "limits": limits.describe()}
@@ -901,10 +945,38 @@ def analyze(target, work_dir=None, limits=None):
                 max_names=limits.max_names,
                 max_searchable=limits.max_searchable,
                 max_display=limits.max_display,
+                max_relationships=limits.max_relationships,
                 max_iostore_package_containers=None)
-            records, sub_counts = iostore_packages(
-                zf.read(name), zf.read(ucas_name), name,
-                limits=sub_limits)
+            if work_dir:
+                # Stream the .ucas to a work file and MAP
+                # it instead of materializing the whole
+                # container in memory (stability audit
+                # B-12 — the bare-file path has always
+                # mapped; the APK path read whole). The
+                # records hold parsed data only, so the
+                # mapping can close when the call returns.
+                os.makedirs(work_dir, exist_ok=True)
+                tmp_ucas = os.path.join(
+                    work_dir,
+                    os.path.basename(ucas_name) + ".nar-tmp")
+                try:
+                    with zf.open(ucas_name) as src, \
+                            open(tmp_ucas, "wb") as dst:
+                        shutil.copyfileobj(src, dst, 1 << 20)
+                    with mapped_file(tmp_ucas) as ucas_bytes:
+                        records, sub_counts = \
+                            iostore_packages(
+                                zf.read(name), ucas_bytes,
+                                name, limits=sub_limits)
+                finally:
+                    try:
+                        os.unlink(tmp_ucas)
+                    except OSError:
+                        pass
+            else:
+                records, sub_counts = iostore_packages(
+                    zf.read(name), zf.read(ucas_name), name,
+                    limits=sub_limits)
             io_counts_total += sub_counts["total"]
             io_counts_failed += sub_counts["failed"]
             io_packages.extend(records)
@@ -925,6 +997,7 @@ def analyze(target, work_dir=None, limits=None):
                 max_names=limits.max_names,
                 max_searchable=limits.max_searchable,
                 max_display=limits.max_display,
+                max_relationships=limits.max_relationships,
                 max_iostore_package_containers=
                 limits.max_iostore_package_containers)
             pkgs, total, sub_counts = pak_packages(

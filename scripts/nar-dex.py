@@ -70,8 +70,11 @@ from narlib import registry as reg_mod  # noqa: E402
 from narlib import dexdis  # noqa: E402
 from narlib import oat as oat_mod  # noqa: E402
 from narlib import dex as dex_mod  # noqa: E402
+from narlib import cdex as cdex_mod  # noqa: E402
 from narlib.dex import Dex, DexError  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
+from narlib.safearchive import (  # noqa: E402
+    MEMBER_READ_CAP_BYTES, read_member_capped)
 
 DEX_NAME_RE = re.compile(r"^(base/dex/)?classes\d*\.dex$")
 ENTRY_SUPERS = (
@@ -106,12 +109,27 @@ KOTLIN_METADATA_KINDS = {
 }
 
 
+def _read_file_capped(path):
+    """Whole-file read under the member cap; None when
+    the file is over it (the caller records the refusal
+    instead of materializing an unbounded blob, D-05)."""
+    if os.path.getsize(path) > MEMBER_READ_CAP_BYTES:
+        return None
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
 def load_dexes(target):
-    """Yield (name, bytes) for every DEX in the target."""
+    """Yield (name, bytes) for every DEX in the target.
+
+    A member or file over the read cap yields (name,
+    None): the refusal is recorded by the consumer as a
+    labeled error entry, never silently skipped and
+    never materialized (stability audit D-05)."""
     lower = target.lower()
     if lower.endswith(".dex"):
-        with open(target, "rb") as fh:
-            yield os.path.basename(target), fh.read()
+        yield os.path.basename(target), _read_file_capped(
+            target)
         return
     if lower.endswith(".vdex"):
         with open(target, "rb") as fh:
@@ -141,13 +159,16 @@ def load_dexes(target):
                             hit["offset"] + hit["file_size"]])
         return
     if lower.endswith(".cdex"):
-        with open(target, "rb") as fh:
-            yield os.path.basename(target), fh.read()
+        yield os.path.basename(target), _read_file_capped(
+            target)
         return
     with zipfile.ZipFile(target) as zf:
         for name in sorted(zf.namelist()):
             if DEX_NAME_RE.match(name):
-                yield name, zf.read(name)
+                try:
+                    yield name, read_member_capped(zf, name)
+                except ValueError:
+                    yield name, None
 
 
 def compiled_artifact_info(target):
@@ -526,6 +547,21 @@ def jadx_index(apk_path, out_dir):
                   result.get("output_tail", ""))
     if m:
         errors = int(m.group(1))
+    if result.get("exit_code") not in (0, None) \
+            and not classes and not m:
+        # A hard jadx failure (bad input, broken runtime)
+        # previously walked the empty output directory
+        # and reported class_files 0 / decompile_errors 0
+        # — a failed run dressed as a clean empty index
+        # (stability audit D-03). jadx's legitimate
+        # partial success (exit 1 WITH the errors marker
+        # and classes on disk) still indexes normally.
+        return {"error": f"jadx run failed "
+                         f"(exit {result.get('exit_code')})",
+                "tool_path": result.get("tool_path"),
+                "tool_version": result.get("tool_version"),
+                "exit_code": result.get("exit_code"),
+                "output_tail": result.get("output_tail")}
     result.update({"class_files": len(classes),
                    "decompile_errors": errors,
                    "classes_sample": sorted(classes)[:50]})
@@ -550,7 +586,7 @@ def baksmali_index(dex_bytes_path, out_dir):
 def analyze(target, out_dir=None, use_jadx=False,
             use_baksmali=False, disasm=None, cfg=None,
             xref=None):
-    report = {"tool": "nar-dex", "version": "2.6.1",
+    report = {"tool": "nar-dex", "version": "2.6.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
     artifact = compiled_artifact_info(target)
@@ -561,6 +597,32 @@ def analyze(target, out_dir=None, use_jadx=False,
     first_dex_path = None
     dex_entries = []
     for name, data in load_dexes(target):
+        if data is None:
+            report["dex_files"].append({
+                "name": name,
+                "error": "DEX exceeds the "
+                         f"{MEMBER_READ_CAP_BYTES}-byte "
+                         "read cap; not loaded"})
+            continue
+        if data[:4] == b"cdex":
+            # Compact DEX is identified and its header
+            # parsed by the cdex reader; it is NOT fed to
+            # the standard DEX parser to fail with a
+            # misleading magic error (stability audit
+            # A-16). Payload decoding remains out of
+            # scope, as the cdex module states.
+            record = {"name": name, "format": "compact-dex",
+                      "size_bytes": len(data),
+                      "note": "compact DEX (cdex) payload "
+                              "identified; header facts "
+                              "follow, payload not decoded"}
+            try:
+                record["cdex_header"] = cdex_mod.parse_cdex(
+                    data, name)
+            except cdex_mod.CdexError as e:
+                record["error"] = f"cdex header: {e}"
+            report["dex_files"].append(record)
+            continue
         try:
             dex_obj = Dex(data, name)
             dex_report = analyze_dex(name, data, disasm, cfg,
@@ -773,7 +835,8 @@ def main(argv=None):
     try:
         report = analyze(args.target, args.out, args.jadx,
                          args.baksmali, disasm, cfg, args.xref)
-    except (FileNotFoundError, zipfile.BadZipFile) as e:
+    except (FileNotFoundError, IsADirectoryError,
+            zipfile.BadZipFile) as e:
         print(f"nar-dex: {e}", file=sys.stderr)
         return 2
     if args.out:

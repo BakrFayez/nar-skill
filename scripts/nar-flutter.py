@@ -38,6 +38,7 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib.dex import Dex, DexError  # noqa: E402
+from narlib.safearchive import read_member_capped  # noqa: E402
 
 STABLE_RE = re.compile(rb"(\d+\.\d+\.\d+) \(stable\)")
 DART_VM_RE = re.compile(rb"Dart VM version:?\s*(\d+\.\d+\.\d+)")
@@ -286,9 +287,11 @@ def plugin_inventory(zf, names):
     classes_total = 0
     for dex_name in dex_names:
         try:
-            dex = Dex(zf.read(dex_name), dex_name)
+            dex = Dex(read_member_capped(zf, dex_name),
+                      dex_name)
             defs = dex.class_defs()
-        except (DexError, struct.error, IndexError) as e:
+        except (DexError, struct.error, IndexError,
+                ValueError) as e:
             dex_errors.append({"dex": dex_name,
                                "error": str(e)})
             continue
@@ -311,7 +314,8 @@ def plugin_inventory(zf, names):
                       if n.startswith("lib/")
                       and n.endswith("/libapp.so"))
     if app_libs:
-        data = zf.read(app_libs[0])[:SCAN_CAP]
+        with zf.open(app_libs[0]) as fh:
+            data = fh.read(SCAN_CAP)
         native_strings = [m.group().decode("ascii")
                           for m in _ASCII_RUN_RE.finditer(data)]
         channels += _channel_candidates(
@@ -418,11 +422,13 @@ def fingerprint(apk_path):
         markers = set()
         dart_version = flutter_version = None
         if engine:
-            data = zf.read(engine[0])[:SCAN_CAP]
+            with zf.open(engine[0]) as fh:
+                data = fh.read(SCAN_CAP)
             dart_version = _first_version(data, (DART_VM_RE, STABLE_RE))
             markers |= {m.decode() for m in SNAPSHOT_MARKERS if m in data}
         if app:
-            data = zf.read(app[0])[:SCAN_CAP]
+            with zf.open(app[0]) as fh:
+                data = fh.read(SCAN_CAP)
             flutter_version = _first_version(data, (STABLE_RE,))
             markers |= {m.decode() for m in SNAPSHOT_MARKERS if m in data}
         report["dart_version"] = dart_version

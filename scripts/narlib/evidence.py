@@ -115,29 +115,43 @@ def make_finding(finding_id, title, severity, confidence,
 # ----------------------------------------------------------------
 # Minimal structural JSON-Schema validator (stdlib only).
 # Supports the subset the schemas in schemas/ use: type,
-# required, properties, items, enum, pattern, minimum, maximum,
-# additionalProperties=false, and local $ref (#/definitions/...).
-# It is a structural checker, not a full JSON-Schema engine.
+# required, properties, items, enum, const, pattern, minimum,
+# maximum, additionalProperties=false, and local $ref
+# (#/definitions/...). It is a structural checker, not a
+# full JSON-Schema engine.
 # ----------------------------------------------------------------
 
+_TYPE_CHECKS = {
+    "object": lambda v: isinstance(v, dict),
+    "array": lambda v: isinstance(v, list),
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int)
+    and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+    "null": lambda v: v is None,
+}
+
+# Validation depth follows instance nesting; a pathological
+# document must produce a violation, not a RecursionError
+# (stability audit A-14).
+_MAX_VALIDATE_DEPTH = 100
+
+
 def _type_ok(value, type_name):
-    return {
-        "object": lambda v: isinstance(v, dict),
-        "array": lambda v: isinstance(v, list),
-        "string": lambda v: isinstance(v, str),
-        "integer": lambda v: isinstance(v, int)
-        and not isinstance(v, bool),
-        "number": lambda v: isinstance(v, (int, float))
-        and not isinstance(v, bool),
-        "boolean": lambda v: isinstance(v, bool),
-        "null": lambda v: v is None,
-    }[type_name](value)
+    check = _TYPE_CHECKS.get(type_name)
+    return bool(check) and check(value)
 
 
-def validate(instance, schema, root_schema=None, path="$"):
+def validate(instance, schema, root_schema=None, path="$",
+             _depth=0):
     """Return a list of violation strings ([] means valid)."""
     root_schema = root_schema if root_schema is not None else schema
     errors = []
+    if _depth > _MAX_VALIDATE_DEPTH:
+        return [f"{path}: nesting deeper than "
+                f"{_MAX_VALIDATE_DEPTH} levels; not validated"]
     if "$ref" in schema:
         ref = schema["$ref"]
         if not ref.startswith("#/definitions/"):
@@ -146,12 +160,26 @@ def validate(instance, schema, root_schema=None, path="$"):
         target = (root_schema.get("definitions") or {}).get(name)
         if target is None:
             return [f"{path}: unresolved $ref {ref}"]
-        return validate(instance, target, root_schema, path)
+        return validate(instance, target, root_schema, path,
+                        _depth + 1)
     if "enum" in schema and instance not in schema["enum"]:
         errors.append(f"{path}: {instance!r} not in enum")
+    if "const" in schema and instance != schema["const"]:
+        # Four companion schemas pin their document kind
+        # with const; the validator silently ignored the
+        # keyword until the stability audit (E-04).
+        errors.append(
+            f"{path}: {instance!r} != const "
+            f"{schema['const']!r}")
     type_name = schema.get("type")
     if type_name:
         types = type_name if isinstance(type_name, list) else [type_name]
+        unknown = [t for t in types if t not in _TYPE_CHECKS]
+        if unknown:
+            errors.append(
+                f"{path}: schema names unknown type(s) "
+                f"{unknown}")
+            return errors
         if not any(_type_ok(instance, t) for t in types):
             errors.append(f"{path}: expected type {type_name}")
             return errors
@@ -163,7 +191,8 @@ def validate(instance, schema, root_schema=None, path="$"):
         for key, subschema in props.items():
             if key in instance:
                 errors += validate(instance[key], subschema,
-                                   root_schema, f"{path}.{key}")
+                                   root_schema, f"{path}.{key}",
+                                   _depth + 1)
         if schema.get("additionalProperties") is False:
             for key in instance:
                 if key not in props:
@@ -171,7 +200,7 @@ def validate(instance, schema, root_schema=None, path="$"):
     if isinstance(instance, list) and "items" in schema:
         for i, item in enumerate(instance):
             errors += validate(item, schema["items"], root_schema,
-                               f"{path}[{i}]")
+                               f"{path}[{i}]", _depth + 1)
     if isinstance(instance, str) and "pattern" in schema:
         if not re.search(schema["pattern"], instance):
             errors.append(f"{path}: does not match pattern")

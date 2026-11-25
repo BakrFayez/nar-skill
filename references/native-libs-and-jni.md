@@ -192,6 +192,16 @@ python3 scripts/nar-godot.py game.pck --json
 It reports the pack format, the engine version, the encryption flag,
 and every contained file with its size, using a stdlib directory
 parse (GodotPckTool is the fallback for layouts it cannot read).
+It also extracts scene relationships from text scenes and
+resources (`.tscn` / `.tres` section headers: external resources,
+sub-resources, instanced scenes). Known limits of that extraction:
+at most 25 text files per pack and 4 MiB per file are parsed
+(encrypted entries are counted, never decoded); within one file
+the instance join is quadratic in section counts — each instanced
+node scans the external-resource list — and the per-file
+`instanced_scenes` list is not length-capped, so a pathological
+scene file can be slow to parse and produce a large record. The
+file and count caps bound the total work per pack.
 For manual header work: the layout is magic `GDPC`, then four
 little-endian uint32 values: pack format version, engine major,
 minor, and patch.

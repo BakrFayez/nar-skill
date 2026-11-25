@@ -157,9 +157,9 @@ def parse_oat(data, name="app.oat"):
             iset, f"unknown-{iset}"),
         "dex_file_count": dex_count,
         "key_value_store": oat_key_value_store(data, off),
-        "is_elf": data.startswith(b"\x7fELF"),
+        "is_elf": data[:4] == b"\x7fELF",
         "elf_class": ({1: "ELF32", 2: "ELF64"}.get(data[4])
-                      if data.startswith(b"\x7fELF")
+                      if data[:4] == b"\x7fELF"
                       and len(data) > 4 else None),
         "dex_locations": locations,
     }
@@ -176,7 +176,7 @@ def parse_vdex(data, name="app.vdex"):
     is layout-independent: every standard or compact DEX the
     file carries, with the size its own header declares.
     """
-    if len(data) < 8 or not data.startswith(VDEX_MAGIC):
+    if len(data) < 8 or data[:len(VDEX_MAGIC)] != VDEX_MAGIC:
         raise OatError(f"{name}: not a VDEX file")
     version = _version3(data[4:7])
     out = {"vdex_version": version,
@@ -216,7 +216,14 @@ def scan_embedded_dex(data):
             if version is None or data[idx + 7] != 0:
                 continue
             file_size = None
-            if kind == "dex" and idx + 36 <= len(data):
+            if kind == "dex":
+                if idx + 36 > len(data):
+                    # A DEX magic in the final bytes cannot
+                    # be a real embedded DEX (its header alone
+                    # is 112 bytes); emitting the hit with
+                    # file_size=None crashed the carve with a
+                    # TypeError (stability audit A-02).
+                    continue
                 file_size = struct.unpack_from(
                     "<I", data, idx + 32)[0]
                 if file_size < 112 or idx + file_size > len(data):
@@ -256,6 +263,10 @@ def extract_dex_from_vdex(data, name="app.vdex"):
     for i, hit in enumerate(hits):
         label = "classes" if i == 0 else f"classes{i + 1}"
         if hit["kind"] == "dex":
+            if not hit["file_size"]:
+                # Unreachable after the scan-side guard
+                # (A-02); never slice on an unknown size.
+                continue
             blob = data[hit["offset"]:
                         hit["offset"] + hit["file_size"]]
             out.append((f"{label}.dex", blob, "dex"))
@@ -285,7 +296,7 @@ def parse_odex_dalvik(data, name="app.odex"):
     dex: bytes}. The embedded DEX carries quickened opcodes;
     the bytes are returned as stored, never de-optimized.
     """
-    if len(data) < 40 or not data.startswith(ODEX_MAGIC):
+    if len(data) < 40 or data[:len(ODEX_MAGIC)] != ODEX_MAGIC:
         raise OatError(f"{name}: not a Dalvik ODEX file")
     version = _version3(data[4:7])
     (dex_off, dex_len, deps_off, deps_len, aux_off, aux_len,
@@ -309,7 +320,7 @@ def parse_art_image(data, name="app.art"):
     oat_checksum, oat_file_begin, oat_data_begin, oat_data_end,
     oat_file_end} — the header's own section bounds.
     """
-    if len(data) < 40 or not data.startswith(ART_MAGIC):
+    if len(data) < 40 or data[:len(ART_MAGIC)] != ART_MAGIC:
         raise OatError(f"{name}: not an ART image file")
     version = _version3(data[4:7])
     (image_begin, image_size, oat_checksum, oat_file_begin,

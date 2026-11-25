@@ -563,6 +563,26 @@ class _Package:
     def _validate_summary(self):
         s = self.summary
         n = len(self.data)
+        # Every offset field in the summary addresses the
+        # package (or its .uexp companion); a negative
+        # offset is never valid, and the section readers
+        # base their _Reader on these values — a negative
+        # base slips past the reader's end-of-package
+        # check and leaks a bare struct.error (stability
+        # audit B-02). Only the three main table offsets
+        # were validated here before.
+        for key, v in s.items():
+            if key.endswith("_offset") \
+                    and isinstance(v, int) and v < 0:
+                if key in ("payload_toc_offset",
+                           "data_resource_offset"):
+                    # Recorded-only fields whose documented
+                    # absent sentinel is -1; never used as
+                    # reader bases.
+                    continue
+                raise UAssetError(
+                    f"{key} {v} is negative; the summary "
+                    "is corrupt")
         for key in ("name_count", "export_count", "import_count"):
             v = s[key]
             if v < 0 or v > MAX_TABLE_ENTRIES:
@@ -814,6 +834,14 @@ class _Package:
         if size == 0:
             return {"file": None, "offset": None,
                     "note": "zero-size range"}
+        if size < 0:
+            # A negative serial size satisfied the in-range
+            # test below (offset + size shrinks), and
+            # range_bytes then returned wrong bytes that
+            # were parsed as the export's tag stream —
+            # fabricated evidence (stability audit B-03).
+            return {"file": None, "offset": None,
+                    "note": "negative serial size"}
         if 0 <= offset and offset + size <= len(self.data):
             return {"file": "package", "offset": offset}
         ths = self.summary["total_header_size"]

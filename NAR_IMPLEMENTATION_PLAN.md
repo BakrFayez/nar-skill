@@ -1073,3 +1073,38 @@ planted endpoint/asset changes.
   orchestrated, never copied.
 - Runtime/device features are labeled
   `IMPLEMENTED_BUT_UNVERIFIED` where no device exists.
+
+## 2.6.2 — Verification, Security & Integrity program (2026-11-24)
+
+Owner brief: 8 workstreams (A–H), verification-first, no new
+feature surface beyond what the workstreams name. Statuses use
+the delivery vocabulary: IMPLEMENTED / TESTED / REAL-TARGET
+VERIFIED / SYNTHETIC-ONLY / NOT RUN / NOT IMPLEMENTED.
+
+Baseline (untouched tree, d912c1f == 2.6.1 code state):
+recorded in NAR_2.6.2_VERIFICATION_REPORT.md when the battery
+lands.
+
+Dependency order:
+- WS-A (archive ResourceBudget + DEX fuzz + ELF robustness)
+  and WS-F (case/evidence integrity) are independent of the
+  performance work; WS-D (windowed JSON) touches the same
+  orchestrator file as A/F in disjoint regions.
+- WS-B (runtime validation) depends only on nar-runtime and
+  the local emulator; physical-device items are NOT RUN by
+  design (no device attached to this machine).
+- WS-C (Zen real validation) uses the real IoStore sets
+  retained locally from the earlier authorized hunt (role
+  labels only in this repo); it depends on nothing from A/D.
+- WS-E (accuracy corpus) depends on stable analyzer outputs;
+  it runs after A/D land so labels measure the final code.
+- WS-G (CI expansion) is prepared in-tree after the test
+  surface settles; the workflow file is applied via the web
+  UI at publication (push channel cannot carry it).
+- WS-H (docs + verification report + version bump) is last.
+
+Execution: parallel worker branches per workstream group,
+coordinator merges with a battery after each merge
+(pytest, e2e private, e2e public, doctor), then WS-G/WS-H
+and the final layered battery (unit → security → integration
+→ e2e → real targets → runtime → performance).

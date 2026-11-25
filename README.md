@@ -4,7 +4,7 @@
 
 **Understand Every Layer. Follow Every Evidence.**
 
-Version 2.6.1
+Version 2.6.2
 Research by Bakr Fayez
 
 NAR is an AI agent skill for Android APK reverse engineering. It covers all Android apps and games, old and new: regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
@@ -53,6 +53,33 @@ python3 scripts/nar.py analyze app.apk --out case/
 Every module also runs through the unified CLI
 (`python3 scripts/nar.py dex|native|network|security|engines …`)
 or standalone, exactly as in 1.x.
+
+## What's new in 2.6.2
+
+A verification, security and integrity round (see
+CHANGELOG.md and NAR_2.6.2_VERIFICATION_REPORT.md).
+Archive handling now sits on one validated
+ResourceBudget abstraction; the DEX parsers are
+hardened by a deterministic mutation-fuzz campaign
+(30,000 cases, zero failures after fixes); the
+evidence checks that 2.6.1 ran externally are now
+enforced inside `nar case verify` itself. Unreal Zen
+relationships are verified on real IoStore titles for
+the first time — 2,644 real Zen packages across three
+real container sets, every total reconciled against
+independent oracles — and a confidence overstatement
+in endpoint classification (`confirmed` for mere
+string presence) is corrected to `dex-string`. The
+DEX stage document is now read through a bounded
+window instead of a memory map, with byte-identical
+case outputs; accuracy is measured on cross-labeled
+real corpora (real engine-identification precision
+measured for the first time). Runtime validation
+gains a status vocabulary, a `validate` surface and
+a Frida validation suite — verified live on the
+emulator; physical-device validation remains
+NOT RUN (no device is attached to the development
+machine).
 
 ## What's new in 2.6.1
 
@@ -171,9 +198,14 @@ alongside timings.
   adapters) and a built-in ELF parser (dependencies, JNI
   exports, hardening, dependency graph, readelf cross-check).
 - **Static network intelligence**: classified endpoint
-  inventory (confirmed / potential / third-party /
+  inventory (dex-string / potential / third-party /
   unused-candidate / sensitive / unverified), backend
-  services, and network-security-config parsing.
+  services, and network-security-config parsing. (The
+  dex-string class was named "confirmed" before 2.6.2;
+  the rename is a calibration correction — a string
+  reference was never confirmation of traffic — and
+  `nar case verify` maps the old label in pre-2.6.2
+  cases.)
 - **Structured security findings**: the NAR-SEC schema —
   severity, confidence, evidence, impact, remediation, and
   false-positive notes for every finding.
@@ -199,6 +231,30 @@ alongside timings.
 `nar-doctor.sh` checks your toolchain and tells you what is missing. `nar-triage.py` gives you the first five minutes on any APK: SHA-256, package, version, DEX versions, native libs, signature schemes, engine hints. `nar-analyze.py` runs the whole static workup in one command and writes a single evidence report (`report.md` + `report.json`). `nar-strings.py`, `nar-compare.py`, and `nar-perms.py` cover strings, version diffs, and permission audits. `nar-pak.py` lists and extracts Unreal `.pak` archives. `nar-il2cpp.py` (Il2CppDumper by default, Cpp2IL as an optional second backend), `nar-flutter.py`, `nar-godot.py`, and `nar-rn.py` handle the Unity IL2CPP, Flutter/Dart, Godot, and React Native deep dives.
 
 Then open `SKILL.md` and follow the routing table for your question.
+
+## Example prompts
+
+Copy one, replace the file name with your own APK, and send it to your agent:
+
+**Full analysis**
+
+```
+Use the NAR skill to run a full analysis on this APK: app.apk — build the complete case with report, graph, and investigation, and summarize the verified facts only.
+```
+
+**Security & permissions audit**
+
+```
+Use NAR to audit this APK: permissions, exported components, network endpoints and their classification, protection systems, and security findings — every finding with its evidence and verification status.
+```
+
+**Rebuild blueprint**
+
+```
+Use the NAR skill to fully reverse-engineer app.apk, then turn the analysis into a rebuild blueprint I can implement from: feature map, architecture, data flows, and an implementation order — from verified evidence only, with anything unverifiable marked UNVERIFIED.
+```
+
+The full set — engine identification, version comparison, deep game analysis, pre-install triage, case verification, and the complete rebuild-blueprint prompt — is in `references/example-prompts.md`.
 
 ## Install for your agent
 
@@ -240,7 +296,7 @@ Manual CLI use (no agent): the scripts work on their own. `nar-doctor.sh` and `n
 | apktool | 2.7.0 or newer | Manifest, resources, smali |
 | jadx | 1.5.x CLI or a jadx jar | Decompilation |
 | aapt2, apksigner, zipalign | Android SDK build-tools 34 or newer | Badging, signatures, alignment |
-| Python | 3.9 or newer | `nar-triage.py` |
+| Python | 3.10 or newer (pyproject floor; the doctor enforces it) | `nar-triage.py` |
 | adb | SDK platform-tools | Dynamic analysis (optional) |
 | Frida | Matching client and server versions | Runtime hooks (optional) |
 | Ghidra | 12.2 or newer | Deep native analysis (optional) |
@@ -343,13 +399,14 @@ nar-skill/
   NAR_IMPLEMENTATION_PLAN.md  Phase plans and completion records
   NAR_TEST_MATRIX.md        Executed test evidence matrix
   .gitignore                Keeps APKs and decoded output out of git
-  references/               One guide per topic (24 guides)
+  references/               One guide per topic (25 guides)
     app-bundles.md
     architecture.md
     benchmarks.md
     dex-smali-and-decompile.md
     dynamic-analysis.md
     evidence-workflows.md
+    example-prompts.md
     flutter-dart.md
     frida-scripts.md
     legacy-analysis.md
@@ -391,6 +448,7 @@ nar-skill/
     native.schema.json
     native-inventory.schema.json
     network-analysis.schema.json
+    permissions.schema.json
     report.schema.json
     runtime-session.schema.json
     security-findings.schema.json
@@ -425,6 +483,7 @@ nar-skill/
     protection-signatures.json  Versioned protection-signature database (nar-triage, via narlib)
     narlib/                 Shared core library used by the 2.0 modules
       __init__.py
+      budget.py             ResourceBudget: validated archive/resource limits shared by the extraction paths
       cdex.py               Compact DEX header + section-table parser (payload not decoded)
       companions.py         Brief-named case companion projections
       correlations.py       Cross-module correlation records (DEX/ELF/manifest/network joins)
@@ -456,8 +515,17 @@ nar-skill/
     generate_fixtures.py    Fixture generator CLI (writes the synthetic set + manifest)
     expected_outputs.json   Builder-intent expected-output manifest for the synthetic set
     unit/                   Pytest unit suite (parsers, guards, schemas, registry)
+    fuzz/                   Deterministic DEX mutation-fuzz harness (seeded; crash artifacts preserved)
+    accuracy/               Labeled-corpus accuracy runner (real/synthetic separate, per-analyzer P/R/F1)
+    runtime_validation/     Frida runtime validation suite (emulator-provable subset; physical = NOT RUN)
     benchmarks/
       run_benchmarks.py     Fixture-corpus benchmark runner (timings, accuracy metrics, peak memory)
+      check_regression.py   Regression gate over the committed baselines
+      baseline-2.5.2.json   Per-release performance baselines (2.5.2 … 2.6.2)
+      baseline-2.6.0.json
+      baseline-2.6.1.json
+      baseline-2.6.2.json
+      accuracy-2.6.2.json   The 2.6.2 labeled-corpus accuracy record
   examples/
     sample-report.md        Filled report from a real triage run
     quick-triage.md         Example command session

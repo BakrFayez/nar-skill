@@ -159,6 +159,18 @@ def parse_entries(data, version, index_offset, index_size,
             if blocks < 0 or blocks > 1_000_000:
                 raise PakError(f"implausible compression block count: {blocks}")
             r.read(blocks * 16)
+        if offset > len(data) or size > len(data):
+            # Classic (v1–7) entry extents were never
+            # validated at list time (stability audit
+            # B-09): a corrupt or hostile index published
+            # offsets/sizes pointing outside the file as
+            # inventory fact. The encoded (v10+) path has
+            # always range-checked; the classic path now
+            # refuses the index instead.
+            raise PakError(
+                f"entry {name!r} declares offset/size "
+                f"({offset}+{size}) outside the "
+                f"{len(data)}-byte file")
         encrypted = False
         if trailer:
             # v3+ trailer: a 1-byte encryption flag followed by the
@@ -810,6 +822,30 @@ def extract_pak(path, pattern, out_dir):
                     "error": "entry name has no safe relative path"})
                 continue
             dest = os.path.join(out_dir, *parts)
+            # The name filter above is lexical only: a
+            # pre-existing symlink inside out_dir would
+            # still redirect the write outside it. Prove
+            # the resolved destination stays inside the
+            # resolved root and never write through a
+            # symlink at the destination itself (C-01,
+            # the same discipline as safearchive).
+            root_real = os.path.realpath(out_dir)
+            dest_real = os.path.realpath(dest)
+            if dest_real != root_real and not dest_real.startswith(
+                    root_real + os.sep):
+                errors.append({
+                    "name": entry["name"],
+                    "error": "destination escapes the "
+                             "output directory through a "
+                             "symlink"})
+                continue
+            if os.path.islink(dest):
+                errors.append({
+                    "name": entry["name"],
+                    "error": "destination is a pre-existing "
+                             "symlink; refusing to write "
+                             "through it"})
+                continue
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "wb") as fh:
                 fh.write(blob)

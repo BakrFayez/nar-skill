@@ -155,19 +155,27 @@ def run_json_tool(script, args, timeout=1800):
 
 
 def unitypy_census(data):
-    """Object-type census of one bundle via UnityPy, or None."""
+    """Object-type census of one bundle via UnityPy.
+
+    Returns (status, census): status is "ok",
+    "unavailable" (UnityPy not importable) or
+    "load-failed" (UnityPy present but the bundle did
+    not load). The pre-audit form returned None for all
+    three, so the report claimed "UnityPy is not
+    importable" even when it was present and the bundle
+    was corrupt (stability audit B-13)."""
     try:
         import UnityPy  # optional dependency
     except ImportError:
-        return None
+        return "unavailable", None
     try:
         env = UnityPy.load(data)
         census = {}
         for obj in env.objects:
             census[obj.type.name] = census.get(obj.type.name, 0) + 1
-        return census
+        return "ok", census
     except Exception:
-        return None
+        return "load-failed", None
 
 
 class BundleError(Exception):
@@ -185,6 +193,7 @@ _BUNDLE_FLAG_AT_END = 0x80          # blocks info at the end
 _NODE_FLAG_SERIALIZED_FILE = 0x04
 BUNDLE_INSPECT_CAP = 5
 _BUNDLE_DETAIL_CAP = 50
+_LZMA_OUTPUT_CEILING = 256 * 1024 * 1024
 
 
 def _read_cstring(data, pos, what):
@@ -217,6 +226,16 @@ def _bundle_decompress(raw, comp_type, expected_size, what):
         if len(raw) < 5:
             raise BundleError(f"{what}: LZMA block too small "
                               "for its properties header")
+        if expected_size > _LZMA_OUTPUT_CEILING:
+            # The output bound was the attacker-declared
+            # expected size itself (a u32), so a crafted
+            # block could direct a multi-GiB allocation
+            # (stability audit B-21). UnityFS blocks are
+            # small by design; refuse absurd promises.
+            raise BundleError(
+                f"{what}: LZMA block promises "
+                f"{expected_size} decompressed bytes, over "
+                f"the {_LZMA_OUTPUT_CEILING}-byte ceiling")
         props = raw[0]
         dict_size = struct.unpack_from("<I", raw, 1)[0]
         filters = [{"id": lzma.FILTER_LZMA1,
@@ -565,7 +584,7 @@ def parse_unityfs_bundle(data, name=""):
 
 
 def analyze(target, work_dir=None):
-    report = {"tool": "nar-unity", "version": "2.6.1",
+    report = {"tool": "nar-unity", "version": "2.6.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target)}
     triage = run_json_tool("nar-triage.py", [target]) or {}
@@ -594,6 +613,7 @@ def analyze(target, work_dir=None):
                 catalog = parse_addressables_catalog(zf.read(name))
                 catalog["path"] = name
                 break
+        bundle_total = 0
         for name in names:
             if name.startswith("assets/bin/Data/"):
                 data_files += 1
@@ -613,9 +633,18 @@ def analyze(target, work_dir=None):
                         version_strings.append(
                             m.group(1).decode("ascii", "replace"))
                 if is_bundle:
-                    bundles.append(name)
-            if len(bundles) > MAX_BUNDLE_SCAN:
-                break
+                    bundle_total += 1
+                    # Only the deep-scan candidate list is
+                    # capped; the counting above (Data
+                    # files, Addressables, bundle total)
+                    # always covers the whole archive. The
+                    # pre-audit loop BROKE at the cap, so a
+                    # bundle-heavy archive silently lost
+                    # its Data-file and Addressables counts
+                    # while the report called the inventory
+                    # complete (stability audit B-04).
+                    if len(bundles) < MAX_BUNDLE_SCAN:
+                        bundles.append(name)
     report.update({
         "verdict": "unity" if backend else "absent",
         "scripting_backend": backend,
@@ -625,7 +654,16 @@ def analyze(target, work_dir=None):
         "data_file_count": data_files,
         "unityfs_bundles": bundles[:50],
         "unityfs_bundle_count": len(bundles),
+        "unityfs_bundle_total": bundle_total,
+        "unityfs_bundle_scan_truncated":
+            bundle_total > len(bundles),
         "addressables": addressables,
+        "inventory_scope": (
+            "bundle inventory covers entries named "
+            "*.unity3d / *.bundle (magic-verified) plus "
+            "the conventional assets/bin/Data paths; "
+            "bundles stored under other names are not "
+            "inspected (B-14)"),
     })
     if catalog is not None:
         report["addressables_catalog"] = catalog
@@ -666,19 +704,37 @@ def analyze(target, work_dir=None):
             report["il2cpp"] = {k: il2cpp.get(k) for k in
                                 ("verdict", "metadata_version",
                                  "dumper") if k in il2cpp}
+        else:
+            # A failed subprocess was previously
+            # indistinguishable from "not IL2CPP" (B-13).
+            report["il2cpp"] = {
+                "error": "nar-il2cpp.py did not return a "
+                         "result; the IL2CPP analysis is "
+                         "missing, not negative"}
     # Optional UnityPy census on the first bundle found.
-    census = None
+    census_status, census = None, None
     if bundles:
         with zipfile.ZipFile(target) as zf:
             with zf.open(bundles[0]) as fh:
-                census = unitypy_census(fh.read())
+                census_status, census = unitypy_census(
+                    fh.read())
     if census is not None:
         report["unitypy_census_first_bundle"] = census
-    else:
+    elif census_status == "unavailable":
         report["notes"] = [
             "UnityPy is not importable in this interpreter; "
-            "bundle object census skipped (bundle inventory "
-            "above is magic-verified and complete)."]
+            "bundle object census skipped."]
+    elif census_status == "load-failed":
+        report["notes"] = [
+            "UnityPy is installed but failed to load the "
+            "first bundle; bundle object census skipped."]
+    if report.get("unityfs_bundle_scan_truncated"):
+        report.setdefault("notes", []).append(
+            f"bundle deep-scan list capped at "
+            f"{MAX_BUNDLE_SCAN} of "
+            f"{report['unityfs_bundle_total']} bundles; "
+            "counts cover the whole archive, deep "
+            "inspection covers the listed subset")
     return report
 
 

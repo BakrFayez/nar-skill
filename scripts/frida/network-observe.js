@@ -45,6 +45,12 @@ function redactUrl(raw) {
         if (hash !== -1) {
             url = url.substring(0, hash);
         }
+        // Strip URL userinfo (user:password@): the query
+        // is length-masked below, but the authority's
+        // credentials previously survived into the log,
+        // contradicting this script's own header (D-12).
+        url = url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/i,
+                          "$1REDACTED@");
         var query = url.indexOf("?");
         if (query === -1) {
             return url;

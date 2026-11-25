@@ -136,8 +136,13 @@ def test_doctor_reports_all_scripts_compile(tmp_path):
     check = next(c for c in doc["checks"]
                  if c["name"] == "nar-scripts")
     assert check["status"] == "ok"
+    # The compile check covers narlib too since the
+    # stability campaign (D-08): the detail names both
+    # counts, each the true glob count.
+    narlib = sorted((SCRIPTS / "narlib").glob("*.py"))
     assert check["detail"] == (
-        f"all bundled scripts compile ({len(scripts)} scripts)")
+        f"all bundled scripts compile ({len(scripts)} scripts"
+        f" + {len(narlib)} narlib modules)")
     after = {p.name for p in cache_dir.glob("*")} \
         if cache_dir.is_dir() else set()
     assert after == before
@@ -622,5 +627,5 @@ def test_nar_security_redacts_planted_cleartext_endpoint(tmp_path):
                                   "in code"]
     assert len(cleartext) == 1
     assert cleartext[0]["evidence"].startswith(
-        "1 confirmed http:// endpoint(s)")
+        "1 DEX-string http:// endpoint(s)")
     assert report["severity_counts"]["medium"] >= 1

@@ -132,6 +132,33 @@ ZEN_PKG = {
     },
 }
 
+ZEN_UNRESOLVED_PKG = {
+    # The record shape nar-unreal's zen_relationships
+    # emits for an export target outside the export map
+    # (the target carries the unresolved note, mirroring
+    # the classic path's out-of-map targets).
+    "entry": "Game/Content/Zen/ZenBadRef.uasset",
+    "exports": [{"index": 0, "object_name": "ZenBadRef"}],
+    "relationships": {
+        "edges": [
+            {"from": {"kind": "export", "index": 0,
+                      "object_name": "ZenBadRef"},
+             "to": {"kind": "export",
+                    "resolved": "export[9] (unresolved)",
+                    "index": 9,
+                    "note": "export index outside the "
+                            "export map"},
+             "kind": "outer",
+             "evidence": "export map outer object index "
+                         "(FPackageObjectIndex)"},
+        ],
+        "counts": {"total": 1, "processed": 1,
+                   "skipped": 0, "failed": 0},
+        "evidence": "table-derived: assembled from the "
+                    "parsed Zen export map only",
+    },
+}
+
 CAPPED_PKG = {
     "entry": "Game/Content/Big/BigPkg.uasset",
     "exports": [{"index": 0, "object_name": "Big"}],
@@ -244,6 +271,24 @@ class TestGraphUnreal(unittest.TestCase):
         self.assertEqual(sup["confidence"], "low")
         kinds = {n["id"]: n for n in doc["nodes"]}
         self.assertEqual(kinds[sup["target"]]["status"],
+                         "unresolved")
+
+    def test_zen_unresolved_export_target_stays_unresolved(self):
+        doc = self._build(_items(ZEN_UNRESOLVED_PKG))
+        self.assertEqual(
+            evidence.validate(
+                doc, _schema("graph.schema.json")), [])
+        edges = _unreal_edges(doc)
+        self.assertEqual(len(edges), 1)
+        edge = edges[0]
+        # An out-of-map Zen export target is kept, marked
+        # unresolved, at low confidence — the same
+        # discipline the classic path gets — never
+        # upgraded to a resolved high-confidence edge.
+        self.assertEqual(edge["kind"], "unreal_outer")
+        self.assertEqual(edge["confidence"], "low")
+        kinds = {n["id"]: n for n in doc["nodes"]}
+        self.assertEqual(kinds[edge["target"]]["status"],
                          "unresolved")
 
     def test_capped_relationships_record_the_cap(self):

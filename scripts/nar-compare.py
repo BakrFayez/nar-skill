@@ -366,6 +366,12 @@ def _run_json_tool(script, args, timeout=1800):
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout)
+        if proc.returncode != 0:
+            # A failed tool's stdout is an error document,
+            # not a result: returning it let a bad target
+            # produce an empty-but-successful report
+            # downstream (stability audit D-02).
+            return None
         return json.loads(proc.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
@@ -602,7 +608,7 @@ def feature_map(report):
             "content_changed_excluding_signing": content_changed},
     }
     return {
-        "tool": "nar-compare", "version": "2.4.0",
+        "tool": "nar-compare", "version": "2.6.2",
         "kind": "version-feature-map",
         "old": {"file": old.get("file"),
                 "sha256": old.get("sha256")},

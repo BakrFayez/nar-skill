@@ -65,9 +65,16 @@ def _hex_bytes(value, where):
     if not isinstance(value, str):
         _fail(f"{where}: expected a hex string")
     try:
-        return bytes.fromhex(value)
+        out = bytes.fromhex(value)
     except ValueError:
         _fail(f"{where}: invalid hex: {value!r}")
+    if not out:
+        # An empty pattern is worse than a missing one:
+        # buf.find(b"") matches at every position, so an
+        # empty Widevine form would manufacture hit counts
+        # on every DEX (stability audit D-09).
+        _fail(f"{where}: empty hex value")
+    return out
 
 
 def load_signatures(path=None):
@@ -107,7 +114,10 @@ def load_signatures(path=None):
     seen_keys = set()
     for entry in doc.get("categories") or []:
         if not isinstance(entry, dict) \
-                or not entry.get("key") or not entry.get("label"):
+                or not isinstance(entry.get("key"), str) \
+                or not entry.get("key") \
+                or not isinstance(entry.get("label"), str) \
+                or not entry.get("label"):
             _fail(f"malformed category entry: {entry!r}")
         if entry["key"] in seen_keys:
             _fail(f"duplicate category key: {entry['key']}")
@@ -117,10 +127,16 @@ def load_signatures(path=None):
         _fail("signature database declares no categories")
 
     packers = []
+    seen_packer_names = set()
     for entry in doc.get("packers") or []:
+        if not isinstance(entry, dict):
+            _fail(f"packer entry is not an object: {entry!r}")
         name = entry.get("name")
         if not name:
             _fail(f"packer entry without a name: {entry!r}")
+        if name in seen_packer_names:
+            _fail(f"duplicate packer name: {name}")
+        seen_packer_names.add(name)
         matchers = []
         for m in entry.get("so_matchers", []):
             if not isinstance(m, dict) \
@@ -131,27 +147,46 @@ def load_signatures(path=None):
         subs = entry.get("entry_substrings", [])
         if not all(isinstance(s, str) for s in subs):
             _fail(f"{name}: entry substrings must be strings")
+        dex_patterns = _dex_patterns(entry, name)
+        if not matchers and not dex_patterns and not subs:
+            # A signature that can never fire is dead
+            # weight counted as coverage (D-09).
+            _fail(f"{name}: packer declares no matchers, "
+                  "no DEX patterns and no entry substrings")
         packers.append((name, matchers,
-                        _dex_patterns(entry, name), list(subs)))
+                        dex_patterns, list(subs)))
     if not packers:
         _fail("signature database declares no packers")
 
     def marker_list(field):
         out = []
+        seen = set()
         for entry in doc.get(field) or []:
+            if not isinstance(entry, dict):
+                _fail(f"{field}: entry is not an object: "
+                      f"{entry!r}")
             name = entry.get("name")
             if not name:
                 _fail(f"{field}: entry without a name: {entry!r}")
+            if name in seen:
+                _fail(f"{field}: duplicate entry name: {name}")
+            seen.add(name)
             note = entry.get("note")
             if note is not None and not isinstance(note, str):
                 _fail(f"{field}/{name}: note must be a string or null")
-            out.append((name, _dex_patterns(entry, name), note))
+            patterns = _dex_patterns(entry, name)
+            if not patterns:
+                _fail(f"{field}/{name}: entry declares no "
+                      "DEX patterns and can never fire")
+            out.append((name, patterns, note))
         return out
 
     rasp = marker_list("rasp_dex_markers")
     licensing = marker_list("licensing_dex_markers")
 
     wv = doc.get("widevine") or {}
+    if not isinstance(wv, dict):
+        _fail("widevine section is not an object")
     widevine = {
         "uuid_string": _hex_bytes(wv.get("uuid_string_hex"),
                                   "widevine.uuid_string"),
@@ -177,6 +212,8 @@ def load_signatures(path=None):
             _fail(f"signature database {field} does not compile: {e}")
 
     thresholds = doc.get("thresholds") or {}
+    if not isinstance(thresholds, dict):
+        _fail("thresholds section is not an object")
     ints = {}
     for key in ("stub_dex_max_bytes", "stub_app_min_bytes",
                 "stub_payload_min_bytes"):
@@ -184,6 +221,12 @@ def load_signatures(path=None):
         if not isinstance(value, int) or isinstance(value, bool) \
                 or value <= 0:
             _fail(f"threshold {key} is not a positive integer")
+        if value > (1 << 40):
+            # These are byte counts for stub/payload sizes;
+            # anything past 1 TiB is a data error, not a
+            # tuning choice (D-09).
+            _fail(f"threshold {key} is absurdly large: "
+                  f"{value}")
         ints[key] = value
 
     sig = {

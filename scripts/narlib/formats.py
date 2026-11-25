@@ -66,6 +66,47 @@ def _read_tail(path, n=_TAIL_BYTES):
         return fh.read(n)
 
 
+def _crc_check_budgeted(zf):
+    """testzip() equivalent under a decompression budget.
+
+    zipfile.testzip() inflates every entry in full with no
+    bound, so merely IDENTIFYING a hostile archive cost
+    decompression proportional to its inflated size
+    (stability audit A-08). This pass streams entries and
+    stops at the ResourceBudget default total; the verdict
+    records when the check was skipped or aborted instead
+    of pretending the archive was verified.
+    Returns (bad_entry_or_None, note_or_None)."""
+    from .budget import ResourceBudget
+    budget = ResourceBudget()
+    infos = zf.infolist()
+    declared = sum(i.file_size for i in infos)
+    if declared > budget.max_total_bytes:
+        return None, ("crc check skipped: declared "
+                      "uncompressed total exceeds the "
+                      "resource budget")
+    total = 0
+    for info in infos:
+        if info.is_dir():
+            continue
+        try:
+            with zf.open(info) as fh:
+                while True:
+                    chunk = fh.read(1 << 20)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > budget.max_total_bytes:
+                        return None, (
+                            "crc check aborted: streamed "
+                            "bytes exceed the resource "
+                            "budget (declared sizes lied)")
+        except (zipfile.BadZipFile, RuntimeError, EOFError,
+                OSError):
+            return info.filename, None
+    return None, None
+
+
 def _zip_verdict(path, ext):
     """Structural verdict for a ZIP-family file."""
     evidence = ["PK zip signature"]
@@ -79,9 +120,11 @@ def _zip_verdict(path, ext):
     with zf:
         names = zf.namelist()
         details["entry_count"] = len(names)
-        bad = zf.testzip()
+        bad, crc_note = _crc_check_budgeted(zf)
         if bad is not None:
             details["crc_failure_entry"] = bad
+        if crc_note:
+            details["crc_check"] = crc_note
         name_set = set(names)
         has_manifest = "AndroidManifest.xml" in name_set
         has_dex = any(DEX_RE.match(n) for n in names)
@@ -260,7 +303,7 @@ def identify(path):
         # magic 204 bytes from EOF). Scan a bounded 4 KiB tail.
         tail = _read_tail(path, 4096) if size >= 4 else b""
         found = False
-        for off in range(0, max(0, len(tail) - 4)):
+        for off in range(0, max(0, len(tail) - 3)):
             if struct.unpack_from("<I", tail, off)[0] == PAK_MAGIC:
                 verdict = {"format": "unreal-pak", "confidence": "high",
                            "evidence": ["pak footer magic found in tail"],
@@ -316,9 +359,11 @@ def validate_structure(path, verdict=None):
     if fmt in ("apk", "apks", "xapk", "aab", "aar", "jar", "zip", "obb"):
         try:
             with zipfile.ZipFile(path) as zf:
-                bad = zf.testzip()
+                bad, crc_note = _crc_check_budgeted(zf)
                 if bad is not None:
                     notes.append(f"CRC failure in entry: {bad}")
+                if crc_note:
+                    notes.append(crc_note)
                 if not zf.namelist():
                     notes.append("zip has zero entries")
         except zipfile.BadZipFile:
@@ -453,11 +498,23 @@ def archive_structure_summary(path, fmt=None):
                 if summary["has_classes_jar"]:
                     try:
                         import io
-                        inner = zipfile.ZipFile(
-                            io.BytesIO(zf.read("classes.jar")))
-                        summary["classes_jar_class_count"] = sum(
-                            1 for n in inner.namelist()
-                            if n.endswith(".class"))
+                        jar_info = zf.getinfo("classes.jar")
+                        if jar_info.file_size \
+                                > STRUCT_READ_CAP_BYTES:
+                            # Never materialize an unbounded
+                            # member for a summary count
+                            # (stability audit A-08).
+                            summary["classes_jar_class_count"] \
+                                = None
+                        else:
+                            inner = zipfile.ZipFile(
+                                io.BytesIO(
+                                    zf.read("classes.jar")))
+                            summary[
+                                "classes_jar_class_count"] \
+                                = sum(
+                                    1 for n in inner.namelist()
+                                    if n.endswith(".class"))
                     except zipfile.BadZipFile:
                         summary["classes_jar_class_count"] = None
                 summary["has_r_txt"] = "R.txt" in names

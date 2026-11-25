@@ -40,6 +40,14 @@ def load_json(path):
         return None
 
 
+def _doc(path):
+    """A companion document as a dict: a missing,
+    unparsable or non-object companion renders as an
+    absent section, never a crashed report (C-11)."""
+    doc = load_json(path)
+    return doc if isinstance(doc, dict) else {}
+
+
 def esc(value):
     return html.escape(str(value if value is not None else ""))
 
@@ -140,20 +148,20 @@ def render(case_dir):
     report = load_json(os.path.join(case_dir, "report.json"))
     if report is None:
         raise RuntimeError(f"no readable report.json in {case_dir}")
-    fingerprint = load_json(os.path.join(case_dir,
+    fingerprint = _doc(os.path.join(case_dir,
                                          "fingerprint.json")) or {}
-    engines = load_json(os.path.join(case_dir, "engines.json")) or {}
-    endpoints = load_json(os.path.join(case_dir,
+    engines = _doc(os.path.join(case_dir, "engines.json")) or {}
+    endpoints = _doc(os.path.join(case_dir,
                                        "endpoints.json")) or {}
-    security = load_json(os.path.join(case_dir,
+    security = _doc(os.path.join(case_dir,
                                       "security-findings.json")) or {}
-    assets = load_json(os.path.join(case_dir, "assets.json")) or {}
-    native = load_json(os.path.join(case_dir, "native.json")) or {}
-    exec_log = load_json(os.path.join(case_dir,
+    assets = _doc(os.path.join(case_dir, "assets.json")) or {}
+    native = _doc(os.path.join(case_dir, "native.json")) or {}
+    exec_log = _doc(os.path.join(case_dir,
                                       "execution-log.json")) or {}
-    graph_doc = load_json(os.path.join(case_dir,
+    graph_doc = _doc(os.path.join(case_dir,
                                        "graph.json")) or {}
-    investigation = load_json(os.path.join(
+    investigation = _doc(os.path.join(
         case_dir, "investigation.json")) or {}
     identity = report.get("identity") or {}
     parts = []
@@ -177,10 +185,10 @@ def render(case_dir):
             rows))
     verdicts = engines.get("verdicts") or []
     if verdicts:
-        rows = [(v["engine"], "detected" if v["detected"]
-                 else "weak", v["confidence"], v.get("score"),
+        rows = [(v.get("engine"), "detected" if v.get("detected")
+                 else "weak", v.get("confidence"), v.get("score"),
                  v.get("version") or "")
-                for v in verdicts]
+                for v in verdicts if isinstance(v, dict)]
         parts.append("<h2>Engines</h2>" + table(
             ["Engine", "State", "Confidence", "Score", "Version"],
             rows))
@@ -200,8 +208,9 @@ def render(case_dir):
             f"{esc(note)}</p>" + svg)
     eps = endpoints.get("endpoints") or []
     if eps:
-        rows = [(e["classification"], e["kind"], e["url"][:140])
-                for e in eps]
+        rows = [(e.get("classification"), e.get("kind"),
+                 (e.get("url") or "")[:140])
+                for e in eps if isinstance(e, dict)]
         parts.append(
             '<h2>Network endpoints</h2>'
             '<input class="filter" type="search" '
@@ -210,8 +219,9 @@ def render(case_dir):
             + table(["Class", "Kind", "URL"], rows))
     findings = security.get("findings") or []
     if findings:
-        rows = [(f["severity"], f["id"], f["title"],
-                 f["confidence"]) for f in findings]
+        rows = [(f.get("severity"), f.get("id"), f.get("title"),
+                 f.get("confidence"))
+                for f in findings if isinstance(f, dict)]
         parts.append(
             '<h2>Security findings</h2>'
             '<input class="filter" type="search" '
@@ -221,10 +231,12 @@ def render(case_dir):
                     rows))
     asset_list = assets.get("assets") or []
     if asset_list:
-        largest = sorted(asset_list,
-                         key=lambda a: -a["size_bytes"])[:50]
-        rows = [(a["category"], a["type"], a["size_bytes"],
-                 a["path"]) for a in largest]
+        largest = sorted(
+            (a for a in asset_list if isinstance(a, dict)),
+            key=lambda a: -(a.get("size_bytes") or 0))[:50]
+        rows = [(a.get("category"), a.get("type"),
+                 a.get("size_bytes"), a.get("path"))
+                for a in largest]
         parts.append(
             '<h2>Assets (50 largest)</h2>'
             '<input class="filter" type="search" '
@@ -238,17 +250,20 @@ def render(case_dir):
         by_kind = g_counts.get("nodes_by_kind") or {}
         if not by_kind:
             for n in g_nodes:
-                by_kind[n.get("kind")] = \
-                    by_kind.get(n.get("kind"), 0) + 1
+                if isinstance(n, dict):
+                    by_kind[n.get("kind")] = \
+                        by_kind.get(n.get("kind"), 0) + 1
         e_by_kind = g_counts.get("edges_by_kind") or {}
         if not e_by_kind:
             for e in g_edges:
-                e_by_kind[e.get("kind")] = \
-                    e_by_kind.get(e.get("kind"), 0) + 1
+                if isinstance(e, dict):
+                    e_by_kind[e.get("kind")] = \
+                        e_by_kind.get(e.get("kind"), 0) + 1
         n_nodes = g_counts.get("nodes", len(g_nodes))
         n_edges = g_counts.get("edges", len(g_edges))
         rows = [(k, by_kind.get(k, 0), e_by_kind.get(k, 0))
-                for k in sorted(set(by_kind) | set(e_by_kind))]
+                for k in sorted(set(by_kind) | set(e_by_kind),
+                                key=str)]
         stages = ", ".join(
             graph_doc.get("contributing_stages") or [])
         parts.append(
@@ -345,7 +360,8 @@ def render(case_dir):
                      "answer it"], rows))
     entries = exec_log.get("entries") or []
     if entries:
-        rows = [(e["stage"], e["status"], e.get("duration_s"))
+        rows = [(e.get("stage"), e.get("status"),
+                 e.get("duration_s"))
                 for e in entries]
         parts.append("<h2>Execution log</h2>" + table(
             ["Stage", "Status", "Seconds"], rows))

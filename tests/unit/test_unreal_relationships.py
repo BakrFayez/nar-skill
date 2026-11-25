@@ -100,6 +100,85 @@ def test_zen_relationships_exact_edges():
                for e in edges)
 
 
+def test_zen_relationships_export_target_outside_map_is_noted():
+    # One export whose outer is export 9: the target is
+    # outside the export map, so the relationship target
+    # must carry the same unresolved note the classic
+    # path records ("export index outside the export
+    # map") — without it the graph join cannot tell the
+    # reference is unresolved and would upgrade it to a
+    # high-confidence resolved edge. (Real-corpus audit:
+    # no stored Zen package in the corpora on hand has
+    # such a target, so this stays synthetic coverage of
+    # a boundary the real sets do not exercise.)
+    chunk = test_zen.current_fixture(exports=[
+        test_zen.export_entry(
+            0, len(test_zen.PAYLOAD), 4, test_zen.oi_export(9),
+            test_zen.oi_package(0, 0), test_zen.OI_NULL,
+            test_zen.OI_NULL, 0x1122334455667788, 3)],
+        bundle=[(0, 0), (0, 1)])
+    pkg = nar_unreal.zen_package_summary(chunk, "synthetic-chunk")
+    edges = pkg["relationships"]["edges"]
+    outer = [e for e in edges if e["kind"] == "outer"]
+    assert len(outer) == 1
+    assert outer[0]["to"]["kind"] == "export"
+    assert outer[0]["to"]["index"] == 9
+    assert outer[0]["to"]["note"] == \
+        "export index outside the export map"
+    # The resolved class target (package-import) is a
+    # cross-package reference and carries no such note.
+    klass = [e for e in edges if e["kind"] == "class"]
+    assert len(klass) == 1
+    assert "note" not in klass[0]["to"]
+
+
+def test_zen_relationships_export_target_unnamed_is_noted():
+    # Export 1's name index is outside the package name
+    # map, so its object name does not resolve; export
+    # 0's outer reference to it must be noted as
+    # unresolved rather than presented as resolved.
+    chunk = test_zen.current_fixture(exports=[
+        test_zen.export_entry(
+            0, len(test_zen.PAYLOAD), 4, test_zen.oi_export(1),
+            test_zen.oi_package(0, 0), test_zen.OI_NULL,
+            test_zen.OI_NULL, 0x1122334455667788, 3),
+        test_zen.export_entry(
+            len(test_zen.PAYLOAD), 0, 99, test_zen.OI_NULL,
+            test_zen.oi_package(0, 0), test_zen.OI_NULL,
+            test_zen.OI_NULL, 0x99AABBCCDDEEFF00, 3)],
+        bundle=[(0, 0), (0, 1), (1, 0), (1, 1)])
+    pkg = nar_unreal.zen_package_summary(chunk, "synthetic-chunk")
+    outer = [e for e in pkg["relationships"]["edges"]
+             if e["kind"] == "outer"]
+    assert len(outer) == 1
+    assert outer[0]["to"]["index"] == 1
+    assert "does not resolve" in outer[0]["to"]["note"]
+
+
+def test_zen_relationships_export_target_in_map_has_no_note():
+    # A forward reference to a later, named export (the
+    # shape the real corpora do contain) resolves and
+    # carries no note.
+    chunk = test_zen.current_fixture(exports=[
+        test_zen.export_entry(
+            0, len(test_zen.PAYLOAD), 4, test_zen.OI_NULL,
+            test_zen.oi_export(1), test_zen.OI_NULL,
+            test_zen.OI_NULL, 0x1122334455667788, 3),
+        test_zen.export_entry(
+            len(test_zen.PAYLOAD), 0, 5, test_zen.OI_NULL,
+            test_zen.oi_package(0, 0), test_zen.OI_NULL,
+            test_zen.OI_NULL, 0x99AABBCCDDEEFF00, 3)],
+        bundle=[(0, 0), (0, 1), (1, 0), (1, 1)])
+    pkg = nar_unreal.zen_package_summary(chunk, "synthetic-chunk")
+    klass = [e for e in pkg["relationships"]["edges"]
+             if e["kind"] == "class"
+             and e["from"]["index"] == 0]
+    assert len(klass) == 1
+    assert klass[0]["to"]["kind"] == "export"
+    assert klass[0]["to"]["index"] == 1
+    assert "note" not in klass[0]["to"]
+
+
 def test_relationships_present_on_bare_package_report(
         tmp_path):
     target = tmp_path / "synthetic.uasset"

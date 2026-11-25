@@ -12,7 +12,7 @@
     "properties": {
      "classification": {
       "enum": [
-       "confirmed",
+       "dex-string",
        "potential",
        "third-party",
        "unused-candidate",

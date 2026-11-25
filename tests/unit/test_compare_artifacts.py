@@ -116,6 +116,96 @@ class CompareArtifactsTest(unittest.TestCase):
                          ["version_name"]["new"], "2.0")
         self.assertEqual(fmap["overall_severity"], "medium")
 
+    def test_comparison_document_validates_against_schema(self):
+        # E-03 (stability campaign): the comparison schema
+        # described a pre-2.0 document for several
+        # releases while no test validated a comparison
+        # against it. A complete minimal document in the
+        # producer's real shape must validate; the old
+        # shape the schema previously demanded must not.
+        side = {
+            "file": "a.apk", "path": "/x/a.apk",
+            "sha256": "a" * 64, "size_bytes": 10,
+            "zip_entries": 1, "dex_count": 1,
+            "dex_total_bytes": 5,
+            "dex_totals": {"string_count": 1, "type_count": 1,
+                           "proto_count": 0, "field_count": 0,
+                           "method_count": 1, "class_count": 1},
+            "dex_files": [{"name": "classes.dex",
+                           "size_bytes": 5,
+                           "counts": {
+                               "string_count": 1,
+                               "type_count": 1,
+                               "proto_count": 0,
+                               "field_count": 0,
+                               "method_count": 1,
+                               "class_count": 1}}],
+            "has_manifest": True, "badging": {},
+            "badging_status": "ok", "entry_hashes": {},
+            "signing_files": [], "native_libs_by_abi": {},
+            "native_lib_count": 0, "resource_file_count": 0,
+            "asset_count": 0, "other_file_count": 0,
+            "resources_arsc": {"size_bytes": 0,
+                               "sha256": "b" * 64}}
+        report = {
+            "old": side, "new": dict(side),
+            "identical_files": True,
+            "diff": {
+                "entries": {"added": [], "removed": [],
+                            "changed": [], "added_count": 0,
+                            "removed_count": 0,
+                            "changed_count": 0},
+                "dex": {"added": [], "removed": [],
+                        "changed": [],
+                        "totals_delta": {
+                            "string_count": 0, "type_count": 0,
+                            "proto_count": 0, "field_count": 0,
+                            "method_count": 0,
+                            "class_count": 0},
+                        "total_bytes_delta": 0},
+                "native_libs": {"added": [], "removed": [],
+                                "changed": []},
+                "signing_files": {"added": [], "removed": [],
+                                  "changed": []},
+                "resources_arsc": {"status": "same",
+                                   "old": {}, "new": {}},
+                "permissions_added": [],
+                "permissions_removed": [],
+                "manifest_changed": False,
+                "identity_changed": False,
+                "size_delta_bytes": 0, "entry_count_delta": 0,
+                "counts_delta": {}},
+            "extended": {
+                "similarity": {
+                    "entry_jaccard_identical": 1.0,
+                    "identical_entries": 1,
+                    "total_entries_union": 1},
+                "assets": {"added": [], "removed": [],
+                           "changed": [], "added_count": 0,
+                           "removed_count": 0,
+                           "changed_count": 0},
+                "classes": {"added_count": 0,
+                            "removed_count": 0,
+                            "added_sample": [],
+                            "removed_sample": []},
+                "endpoints": {"added": [], "removed": [],
+                              "added_count": 0,
+                              "removed_count": 0},
+                "engine_versions": {"old": {}, "new": {},
+                                    "changed": False},
+                "severity": [], "overall_severity": "none",
+                "notes": []}}
+        with open(os.path.join(
+                ROOT, "schemas", "comparison.schema.json"),
+                encoding="utf-8") as fh:
+            schema = json.load(fh)
+        self.assertEqual(evidence.validate(report, schema),
+                         [])
+        legacy = {"old_sha256": "a", "new_sha256": "b",
+                  "categories": {}}
+        self.assertNotEqual(
+            evidence.validate(legacy, schema), [])
+
     def test_build_noise_separates_signing_churn(self):
         fmap = self.cmp.feature_map(fake_report())
         noise = fmap["build_noise"]

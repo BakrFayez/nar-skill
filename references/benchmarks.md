@@ -38,11 +38,21 @@ is known by construction (Unity ×2, Flutter, React
 Native, Unreal, Godot). A detection is a verdict with
 `detected: true` naming the expected engine (either
 Unity variant counts for the Unity roles). The metric
-is recall over labeled positives. **Real-corpus
-precision is NOT RUN**: no labeled engine-negative real
-corpus exists locally — the clean app set's engines are
-unlabeled, so a "false positive" cannot be scored
-honestly.
+this runner reports is recall over labeled positives:
+its own real set carries no labeled negatives, so it
+does not score precision. Precision on real data IS
+measured separately by the accuracy corpus
+(`tests/accuracy/`, 30 real samples cross-labeled by
+two independent engine analyzers, negatives included):
+precision/recall/F1 = 1.0 in
+`tests/benchmarks/accuracy-2.6.2.json`. (Through
+2.6.1 this page said real-corpus precision was
+NOT RUN; that was true of every corpus that existed
+then and is superseded for the precision question by
+the 2.6.2 accuracy corpus. The `real_precision` string
+inside baseline-2.6.2.json's metrics block describes
+that baseline runner's own corpus and is left as the
+historical record.)
 
 **Engine detection (synthetic).** Doctored demo copies
 of the project's own demo app, each carrying one
@@ -111,3 +121,34 @@ python3 tests/benchmarks/run_benchmarks.py --out metrics.json
 vary by machine and load; accuracy metrics over the
 same corpus are deterministic and should reproduce
 exactly.
+
+## 2.6.2 — matrix, gate, and labeled accuracy
+
+`tests/benchmarks/baseline-2.6.2.json` records an
+8-case matrix over the local corpus by role and size
+class (small / medium / large / multi-DEX / container /
+Unity / Unreal / native-heavy): per case, input size,
+peak RSS, per-stage durations, second-run cache
+counts, output size, and completion status, with the
+2.6.0/2.6.1 figures carried in under the same harness
+discipline. The headline fixture (273 MB) peaks at
+1,545,367,552 B vs 2.6.1's 1,536,069,632 B — inside
+run-to-run noise; the 2.6.2 windowed (non-mmap) DEX
+stage reader holds the byte-identity gate but does
+not lower the peak, which is now set by per-element
+parse transients. That is stated, not spun.
+
+`tests/benchmarks/check_regression.py` compares a
+fresh baseline against a reference: a headline memory
+regression beyond the threshold (default 5%) fails
+with an actionable message; timing differences are
+warnings only, and missing keys are reported as SKIP,
+never as zero.
+
+Labeled accuracy lives in `tests/accuracy/` with
+results in `tests/benchmarks/accuracy-2.6.2.json`:
+synthetic corpora carry builder ground truth; real
+corpora are cross-labeled (a fixture of one engine
+family is a labeled negative for the others), and the
+two are always reported separately. Analyzers without
+defensible ground truth are recorded NOT MEASURED.

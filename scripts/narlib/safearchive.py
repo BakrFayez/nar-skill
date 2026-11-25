@@ -18,7 +18,10 @@ the destination directory, with sanitized relative paths.
 """
 import os
 import stat
+import time
 import zipfile
+
+from .budget import ResourceBudget
 
 DEFAULT_LIMITS = {
     "max_entries": 20000,
@@ -36,6 +39,14 @@ _ARCHIVE_EXTS = (".zip", ".apk", ".aab", ".xapk", ".apkm", ".apks",
 def _entry_problems(info, limits, totals):
     """Return a rejection reason for a ZipInfo, or None."""
     name = info.filename
+    mode = (info.external_attr >> 16) & 0xFFFF
+    if stat.S_ISLNK(mode):
+        # Checked before the directory early return: a
+        # symlink entry wearing a trailing slash used to
+        # be skipped silently, against this module's
+        # "nothing is silently skipped" rule (stability
+        # audit C-14).
+        return "symlink entry"
     if name.endswith("/"):
         return None  # directory entry: nothing to write
     if name.startswith("/") or name.startswith("\\"):
@@ -45,9 +56,6 @@ def _entry_problems(info, limits, totals):
     parts = name.replace("\\", "/").split("/")
     if ".." in parts:
         return "path traversal (..)"
-    mode = (info.external_attr >> 16) & 0xFFFF
-    if stat.S_ISLNK(mode):
-        return "symlink entry"
     # File-type bits are authoritative only when present; many
     # writers store bare permission bits (no type), which means
     # a regular file.
@@ -65,6 +73,45 @@ def _entry_problems(info, limits, totals):
     return None
 
 
+#: Default ceiling for read_member_capped (the nar-rn
+#: snapshot precedent): no single archive member a NAR
+#: tool materializes in memory may exceed this.
+MEMBER_READ_CAP_BYTES = 256 * 1024 * 1024
+
+
+def read_member_capped(zf, name, cap_bytes=MEMBER_READ_CAP_BYTES):
+    """Read one zip member fully, under a hard cap.
+
+    The declared size is checked BEFORE decompression
+    and the streamed byte count is checked again while
+    reading (a crafted central directory can understate
+    the size). Raises ValueError over the cap. Several
+    tools previously materialized members with a bare
+    zf.read() — a small hostile APK with a huge inflated
+    member drove hundreds of MB of peak RSS through the
+    analysis pipeline (stability audit D-05)."""
+    info = zf.getinfo(name)
+    if info.file_size > cap_bytes:
+        raise ValueError(
+            f"archive member {name!r} declares "
+            f"{info.file_size} bytes, over the "
+            f"{cap_bytes}-byte member read cap")
+    out = bytearray()
+    with zf.open(name) as fh:
+        while True:
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                break
+            out += chunk
+            if len(out) > cap_bytes:
+                raise ValueError(
+                    f"archive member {name!r} exceeded "
+                    f"the {cap_bytes}-byte member read "
+                    "cap while streaming (declared size "
+                    "understated)")
+    return bytes(out)
+
+
 def _is_archive_name(name):
     return name.lower().endswith(_ARCHIVE_EXTS)
 
@@ -72,13 +119,28 @@ def _is_archive_name(name):
 def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
     """Extract a zip-family file under the guard limits.
 
+    ``limits`` is a partial limits dict (the historical shape)
+    or a ``narlib.budget.ResourceBudget``; both are normalized
+    to a ResourceBudget internally (2.6.2) and validated --
+    invalid values raise ``narlib.budget.BudgetError``.
+
     Returns {extracted: [{entry, path, size_bytes}], rejected:
     [{entry, reason}], nested_archives: [names], totals}.
     Nested archives are listed, and extracted as plain files;
     recursion into them happens only when the caller drives it
     (depth is tracked and reported, never automatic).
+
+    Duplicate member names: both entries are processed in
+    central-directory order; the second write lands on the same
+    contained target and replaces the first file's contents.
+    That is deterministic, stays inside the destination, and
+    both entries appear in ``extracted`` -- it is never a
+    silent escape, but callers that care about first-wins
+    semantics must dedupe themselves.
     """
-    limits = {**DEFAULT_LIMITS, **(limits or {})}
+    budget = ResourceBudget.from_safearchive_limits(limits)
+    limits = {**DEFAULT_LIMITS, **budget.to_safearchive_limits()}
+    started = time.monotonic()
     report = {"source": zip_path, "dest": dest_dir, "depth": _depth,
               "extracted": [], "rejected": [], "nested_archives": [],
               "totals": {"entries": 0, "bytes": 0}}
@@ -104,6 +166,21 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
         for info in infos:
             name = info.filename
             if name.endswith("/"):
+                # Directory entries write nothing, but a
+                # symlink-mode directory entry is a
+                # rejection, not a skip (C-14).
+                reason = _entry_problems(info, limits, totals)
+                if reason:
+                    report["rejected"].append(
+                        {"entry": name, "reason": reason})
+                continue
+            if budget.max_elapsed_seconds is not None and \
+                    time.monotonic() - started > \
+                    budget.max_elapsed_seconds:
+                report["rejected"].append({
+                    "entry": name,
+                    "reason": "elapsed time budget exceeded "
+                              f"({budget.max_elapsed_seconds}s)"})
                 continue
             reason = _entry_problems(info, limits, totals)
             if reason:
@@ -120,6 +197,19 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
                     target_real.startswith(dest_real + os.sep)):
                 report["rejected"].append(
                     {"entry": name, "reason": "escapes destination"})
+                continue
+            if os.path.islink(target):
+                # A pre-existing symlink FILE at the target
+                # path whose target lies inside the
+                # destination passes the containment proof,
+                # but open("wb") would follow it and
+                # overwrite a different file (stability
+                # audit C-15). Refuse to write through any
+                # link at the final component.
+                report["rejected"].append(
+                    {"entry": name,
+                     "reason": "target path is a pre-existing "
+                               "symlink"})
                 continue
             os.makedirs(os.path.dirname(target), exist_ok=True)
             # Limits are enforced on ACTUAL bytes written,

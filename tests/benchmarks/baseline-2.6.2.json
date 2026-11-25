@@ -1,0 +1,862 @@
+{
+  "machine": "Linux x86_64",
+  "python": "3.12.3",
+  "runs": [
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-triage.py",
+      "seconds": 1.09,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-fingerprint.py",
+      "seconds": 1.15,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-engines.py",
+      "seconds": 1.24,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-dex.py",
+      "seconds": 0.15,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-native.py",
+      "seconds": 0.16,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-network.py",
+      "seconds": 1.24,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "demo (synthetic, ~29 KB)",
+      "size_bytes": 29297,
+      "module": "nar-assets.py",
+      "seconds": 0.11,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-triage.py",
+      "seconds": 1.49,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-fingerprint.py",
+      "seconds": 1.77,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-engines.py",
+      "seconds": 1.52,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-dex.py",
+      "seconds": 5.03,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-native.py",
+      "seconds": 0.14,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-network.py",
+      "seconds": 5.52,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "app (manifest FIX_APP)",
+      "size_bytes": 6118211,
+      "module": "nar-assets.py",
+      "seconds": 0.12,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-triage.py",
+      "seconds": 4.88,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-fingerprint.py",
+      "seconds": 5.12,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-engines.py",
+      "seconds": 5.28,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-dex.py",
+      "seconds": 4.11,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-native.py",
+      "seconds": 4.07,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-network.py",
+      "seconds": 37.8,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "game (manifest FIX_GAME)",
+      "size_bytes": 28430131,
+      "module": "nar-assets.py",
+      "seconds": 0.17,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-triage.py",
+      "seconds": 6.24,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-fingerprint.py",
+      "seconds": 6.19,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-engines.py",
+      "seconds": 5.99,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-dex.py",
+      "seconds": 0.42,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-native.py",
+      "seconds": 2.39,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-network.py",
+      "seconds": 20.43,
+      "exit_code": 0
+    },
+    {
+      "fixture_role": "unity (manifest FIX_UNITY)",
+      "size_bytes": 63764627,
+      "module": "nar-assets.py",
+      "seconds": 1.3,
+      "exit_code": 0
+    }
+  ],
+  "memory": {
+    "status": "measured",
+    "fixture_role": "FIX_UNITY_BUNDLES",
+    "size_bytes": 273366540,
+    "peak_rss_bytes": 1545367552,
+    "wall_seconds": 1241.59,
+    "exit_code": 0,
+    "scope": "peak RSS of the nar-analyze process itself (RUSAGE_CHILDREN, measured before any other child ran); stage subprocess peaks are excluded"
+  },
+  "benchmark_matrix": [
+    {
+      "fixture_role": "demo",
+      "kind": "small synthetic demo",
+      "size_class": "small",
+      "size_bytes": 29297,
+      "status": "completed",
+      "wall_seconds": 24.71,
+      "peak_rss_bytes": 293347328,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 0.988,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.129,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 0.124,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 1.364,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 0.981,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 0.209,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 0.163,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 9.303,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 2.442,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 0.151,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 0.003,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.001,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 140089,
+      "second_wall_seconds": 9.37,
+      "cache": {
+        "second_run_stages": 12,
+        "second_run_cached": 7,
+        "second_run_executed": 5
+      }
+    },
+    {
+      "fixture_role": "FIX_APP",
+      "kind": "app",
+      "size_class": "small",
+      "size_bytes": 6118211,
+      "status": "completed",
+      "wall_seconds": 111.55,
+      "peak_rss_bytes": 285073408,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 1.475,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.191,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 3.948,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 1.806,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 1.611,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 44.933,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 0.198,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 13.492,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 7.184,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 0.133,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 0.643,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.008,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 59714589,
+      "second_wall_seconds": 82.1,
+      "cache": {
+        "second_run_stages": 12,
+        "second_run_cached": 7,
+        "second_run_executed": 5
+      }
+    },
+    {
+      "fixture_role": "FIX_JAVA",
+      "kind": "app",
+      "size_class": "small",
+      "size_bytes": 4869943,
+      "status": "completed",
+      "wall_seconds": 94.15,
+      "peak_rss_bytes": 285503488,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 2.343,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.138,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 4.388,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 2.59,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 2.418,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 27.771,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 0.248,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 17.29,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 9.572,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 0.181,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 0.367,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.004,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 34250823,
+      "second_wall_seconds": 59.82,
+      "cache": {
+        "second_run_stages": 12,
+        "second_run_cached": 7,
+        "second_run_executed": 5
+      }
+    },
+    {
+      "fixture_role": "FIX_XAPK",
+      "kind": "container (xapk)",
+      "size_class": "medium",
+      "size_bytes": 53826448,
+      "status": "completed",
+      "wall_seconds": 436.05,
+      "peak_rss_bytes": 533086208,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 0.299,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.133,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 11.565,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 4.653,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 4.255,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 219.259,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 0.516,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 30.186,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 19.969,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 0.396,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 4.242,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.12,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 258060785,
+      "second_wall_seconds": 224.9,
+      "cache": {
+        "second_run_stages": 12,
+        "second_run_cached": 7,
+        "second_run_executed": 5
+      }
+    },
+    {
+      "fixture_role": "FIX_UNITY",
+      "kind": "unity engine fixture",
+      "size_class": "medium",
+      "size_bytes": 63764627,
+      "status": "completed",
+      "wall_seconds": 100.23,
+      "peak_rss_bytes": 854237184,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 4.009,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.117,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 9.99,
+          "status": "ok"
+        },
+        "nar-il2cpp.py": {
+          "duration_s": 23.699,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 5.865,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 4.062,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 1.466,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 1.682,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 22.449,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 18.234,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 0.867,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 0.119,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.009,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 4036682,
+      "second_wall_seconds": 45.2,
+      "cache": {
+        "second_run_stages": 13,
+        "second_run_cached": 7,
+        "second_run_executed": 6
+      }
+    },
+    {
+      "fixture_role": "FIX_GAME_UNREAL",
+      "kind": "unreal engine fixture",
+      "size_class": "medium",
+      "size_bytes": 28430131,
+      "status": "completed",
+      "wall_seconds": 152.78,
+      "peak_rss_bytes": 396955648,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 3.538,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.092,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 22.006,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 3.612,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 3.48,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 28.1,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 3.008,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 34.112,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 28.938,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 0.153,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 0.438,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.006,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 88234884,
+      "second_wall_seconds": 77.21,
+      "cache": {
+        "second_run_stages": 12,
+        "second_run_cached": 7,
+        "second_run_executed": 5
+      }
+    },
+    {
+      "fixture_role": "FIX_FLUTTER",
+      "kind": "native-heavy fixture",
+      "size_class": "large",
+      "size_bytes": 130304708,
+      "status": "completed",
+      "wall_seconds": 184.82,
+      "peak_rss_bytes": 542519296,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 1.984,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.111,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 24.459,
+          "status": "ok"
+        },
+        "nar-flutter.py": {
+          "duration_s": 1.336,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 2.546,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 2.164,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 46.316,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 1.249,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 36.543,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 28.791,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 0.354,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 1.166,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.043,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 91113824,
+      "second_wall_seconds": 105.37,
+      "cache": {
+        "second_run_stages": 13,
+        "second_run_cached": 7,
+        "second_run_executed": 6
+      }
+    },
+    {
+      "fixture_role": "FIX_UNITY_BUNDLES",
+      "kind": "large fixture, multi-DEX",
+      "size_class": "large",
+      "size_bytes": 273366540,
+      "status": "completed",
+      "wall_seconds": 1107.97,
+      "peak_rss_bytes": 1525026816,
+      "exit_code": 0,
+      "stages": {
+        "nar-triage.py": {
+          "duration_s": 8.913,
+          "status": "ok"
+        },
+        "nar-perms.py": {
+          "duration_s": 0.164,
+          "status": "ok"
+        },
+        "nar-strings.py": {
+          "duration_s": 61.34,
+          "status": "ok"
+        },
+        "nar-il2cpp.py": {
+          "duration_s": 42.886,
+          "status": "ok"
+        },
+        "nar-fingerprint.py": {
+          "duration_s": 10.018,
+          "status": "ok"
+        },
+        "nar-engines.py": {
+          "duration_s": 9.135,
+          "status": "ok"
+        },
+        "nar-dex.py": {
+          "duration_s": 473.645,
+          "status": "ok"
+        },
+        "nar-native.py": {
+          "duration_s": 5.375,
+          "status": "ok"
+        },
+        "nar-network.py": {
+          "duration_s": 94.095,
+          "status": "ok"
+        },
+        "nar-security.py": {
+          "duration_s": 82.541,
+          "status": "ok"
+        },
+        "nar-assets.py": {
+          "duration_s": 1.315,
+          "status": "ok"
+        },
+        "graph": {
+          "duration_s": 8.282,
+          "status": "ok"
+        },
+        "investigation": {
+          "duration_s": 0.052,
+          "status": "ok"
+        }
+      },
+      "output_size_bytes": 872061620,
+      "second_wall_seconds": 881.9,
+      "cache": {
+        "second_run_stages": 13,
+        "second_run_cached": 7,
+        "second_run_executed": 6
+      }
+    }
+  ],
+  "prior_baselines": {
+    "baseline-2.6.0.json": {
+      "memory": null
+    },
+    "baseline-2.6.1.json": {
+      "memory": {
+        "status": "measured",
+        "fixture_role": "FIX_UNITY_BUNDLES",
+        "size_bytes": 273366540,
+        "peak_rss_bytes": 1536069632,
+        "wall_seconds": 462.1,
+        "exit_code": 0,
+        "scope": "peak RSS of the nar-analyze process itself (RUSAGE_CHILDREN, measured before any other child ran); stage subprocess peaks are excluded"
+      }
+    }
+  },
+  "methodology": "Benchmark matrix (2.6.2): full nar-analyze runs per fixture role/size class, each in a fresh driver process; peak RSS is the driver's RUSAGE_CHILDREN maximum for that case's nar-analyze child (stage subprocess peaks are grandchildren and excluded, the same scope as the headline memory block). Per-stage durations and second-run cache counts come from the case's own execution-log.json. Wall time is recorded but is load-dependent on this shared box and is never the headline metric; peak RSS is. Prior-baseline memory blocks are carried in verbatim for comparison.",
+  "metrics": {
+    "corpora_note": "role labels only; synthetic and real corpora are always reported separately",
+    "protection_attribution": {
+      "status": "measured",
+      "corpus": "real",
+      "definition": "an attributed commercial_packer finding in nar-triage --json output",
+      "protected_fixtures": 1,
+      "protected_detected": 1,
+      "clean_fixtures": 9,
+      "clean_false_positives": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "engine_detection": {
+      "real": {
+        "labeled": 6,
+        "detected": 6,
+        "per_role": {
+          "FIX_UNITY": "detected",
+          "FIX_UNITY_BUNDLES": "detected",
+          "FIX_FLUTTER": "detected",
+          "FIX_RN": "detected",
+          "FIX_GAME_UNREAL": "detected",
+          "FIX_GODOT_LOOSE": "detected"
+        },
+        "status": "measured",
+        "recall_on_labeled_positives": 1.0
+      },
+      "synthetic": {
+        "labeled": 8,
+        "matched": 8,
+        "per_label": {
+          "Xamarin / .NET": "detected",
+          "Cordova (hybrid)": "detected",
+          "Capacitor (hybrid)": "detected",
+          "Qt for Android": "detected",
+          "Defold": "detected",
+          "Ren'Py": "detected",
+          "RPG Maker (web export)": "detected",
+          "Embedded Python": "detected"
+        },
+        "status": "measured",
+        "accuracy": 1.0
+      },
+      "real_precision": "NOT RUN \u2014 no labeled engine-negative real corpus exists locally, so real-corpus precision cannot be computed"
+    },
+    "format_identification": {
+      "status": "measured",
+      "corpus": "real",
+      "labeled": 10,
+      "correct": 10,
+      "accuracy": 1.0,
+      "per_role": {
+        "FIX_APP": "correct",
+        "FIX_GAME": "correct",
+        "FIX_UNITY": "correct",
+        "FIX_UNITY_BUNDLES": "correct",
+        "FIX_FLUTTER": "correct",
+        "FIX_RN": "correct",
+        "FIX_GAME_UNREAL": "correct",
+        "FIX_GODOT_LOOSE": "correct",
+        "FIX_XAPK": "correct",
+        "FIX_GODOT_PCK": "correct"
+      }
+    },
+    "format_identification_synthetic": {
+      "status": "measured",
+      "corpus": "synthetic",
+      "labeled": 5,
+      "correct": 5,
+      "accuracy": 1.0,
+      "per_file": {
+        "synthetic.dex": "correct",
+        "libsynthetic.so": "correct",
+        "synthetic.pck": "correct",
+        "synthetic.pak": "correct",
+        "synthetic.utoc": "correct"
+      }
+    },
+    "endpoint_classification": {
+      "status": "not_run",
+      "reason": "no labeled endpoint corpus exists locally: ground truth would require hand-labeled URL classifications for real apps, and none is recorded. The network stage's classification is rule-based; its per-case counts are reported, but they are not measured against ground truth and no accuracy figure is claimed."
+    }
+  }
+}

@@ -1,1 +1,495 @@
-{"$schema":"http://json-schema.org/draft-07/schema#","properties":{"categories":{"type":"object"},"limitations":{"items":{"type":"string"},"type":"array"},"new_sha256":{"type":"string"},"old_sha256":{"type":"string"},"similarity":{"maximum":1,"minimum":0,"type":"number"},"summary":{"type":"object"}},"required":["old_sha256","new_sha256","categories"],"title":"NAR version comparison","type":"object"}
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "definitions": {
+  "dex_file": {
+   "properties": {
+    "counts": {
+     "$ref": "#/definitions/dex_totals"
+    },
+    "name": {
+     "type": "string"
+    },
+    "size_bytes": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "name",
+    "size_bytes",
+    "counts"
+   ],
+   "type": "object"
+  },
+  "dex_totals": {
+   "properties": {
+    "class_count": {
+     "type": "integer"
+    },
+    "field_count": {
+     "type": "integer"
+    },
+    "method_count": {
+     "type": "integer"
+    },
+    "proto_count": {
+     "type": "integer"
+    },
+    "string_count": {
+     "type": "integer"
+    },
+    "type_count": {
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "file_fingerprint": {
+   "properties": {
+    "sha256": {
+     "type": "string"
+    },
+    "size_bytes": {
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "name_delta": {
+   "properties": {
+    "added": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "changed": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "removed": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "name_delta_counts": {
+   "properties": {
+    "added": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "added_count": {
+     "type": "integer"
+    },
+    "changed": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "changed_count": {
+     "type": "integer"
+    },
+    "removed": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "removed_count": {
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "side": {
+   "properties": {
+    "asset_count": {
+     "type": "integer"
+    },
+    "badging": {
+     "type": "object"
+    },
+    "badging_status": {
+     "type": "string"
+    },
+    "dex_count": {
+     "type": "integer"
+    },
+    "dex_files": {
+     "items": {
+      "$ref": "#/definitions/dex_file"
+     },
+     "type": "array"
+    },
+    "dex_total_bytes": {
+     "type": "integer"
+    },
+    "dex_totals": {
+     "$ref": "#/definitions/dex_totals"
+    },
+    "entry_hashes": {
+     "type": "object"
+    },
+    "file": {
+     "type": "string"
+    },
+    "has_manifest": {
+     "type": "boolean"
+    },
+    "native_lib_count": {
+     "type": "integer"
+    },
+    "native_libs_by_abi": {
+     "type": "object"
+    },
+    "other_file_count": {
+     "type": "integer"
+    },
+    "path": {
+     "type": "string"
+    },
+    "resource_file_count": {
+     "type": "integer"
+    },
+    "resources_arsc": {
+     "$ref": "#/definitions/file_fingerprint"
+    },
+    "sha256": {
+     "type": "string"
+    },
+    "signing_files": {
+     "items": {
+      "$ref": "#/definitions/signing_file"
+     },
+     "type": "array"
+    },
+    "size_bytes": {
+     "type": "integer"
+    },
+    "zip_entries": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "file",
+    "sha256",
+    "size_bytes",
+    "zip_entries",
+    "dex_count",
+    "dex_total_bytes",
+    "dex_totals",
+    "has_manifest"
+   ],
+   "type": "object"
+  },
+  "signing_file": {
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "sha256": {
+     "type": "string"
+    },
+    "size_bytes": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "name",
+    "size_bytes",
+    "sha256"
+   ],
+   "type": "object"
+  }
+ },
+ "description": "The document nar-compare.compare() emits: per-side inventories (old/new), the diff block, and the extended analysis block. Rewritten in the 2.6.2 stability campaign (E-03): the previous schema described a pre-2.0 document (old_sha256/new_sha256/categories) that no produced comparison has matched for several releases, and no test validated a real comparison.json against it.",
+ "properties": {
+  "diff": {
+   "properties": {
+    "counts_delta": {
+     "type": "object"
+    },
+    "dex": {
+     "properties": {
+      "added": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "changed": {
+       "items": {
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "new": {
+          "$ref": "#/definitions/dex_file"
+         },
+         "old": {
+          "$ref": "#/definitions/dex_file"
+         }
+        },
+        "required": [
+         "name",
+         "old",
+         "new"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "removed": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "total_bytes_delta": {
+       "type": "integer"
+      },
+      "totals_delta": {
+       "$ref": "#/definitions/dex_totals"
+      }
+     },
+     "type": "object"
+    },
+    "entries": {
+     "$ref": "#/definitions/name_delta_counts"
+    },
+    "entry_count_delta": {
+     "type": "integer"
+    },
+    "identity_changed": {
+     "type": "boolean"
+    },
+    "manifest_changed": {
+     "type": "boolean"
+    },
+    "native_libs": {
+     "$ref": "#/definitions/name_delta"
+    },
+    "permissions_added": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "permissions_removed": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "resources_arsc": {
+     "properties": {
+      "new": {
+       "$ref": "#/definitions/file_fingerprint"
+      },
+      "old": {
+       "$ref": "#/definitions/file_fingerprint"
+      },
+      "status": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "signing_files": {
+     "properties": {
+      "added": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "changed": {
+       "items": {
+        "properties": {
+         "name": {
+          "type": "string"
+         },
+         "new": {
+          "$ref": "#/definitions/signing_file"
+         },
+         "old": {
+          "$ref": "#/definitions/signing_file"
+         }
+        },
+        "required": [
+         "name",
+         "old",
+         "new"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "removed": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      }
+     },
+     "type": "object"
+    },
+    "size_delta_bytes": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "entries",
+    "dex",
+    "permissions_added",
+    "permissions_removed",
+    "manifest_changed",
+    "identity_changed",
+    "size_delta_bytes",
+    "entry_count_delta"
+   ],
+   "type": "object"
+  },
+  "extended": {
+   "properties": {
+    "assets": {
+     "$ref": "#/definitions/name_delta_counts"
+    },
+    "classes": {
+     "properties": {
+      "added_count": {
+       "type": "integer"
+      },
+      "added_sample": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "removed_count": {
+       "type": "integer"
+      },
+      "removed_sample": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      }
+     },
+     "type": "object"
+    },
+    "endpoints": {
+     "properties": {
+      "added": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "added_count": {
+       "type": "integer"
+      },
+      "removed": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "removed_count": {
+       "type": "integer"
+      }
+     },
+     "type": "object"
+    },
+    "engine_versions": {
+     "type": "object"
+    },
+    "notes": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "overall_severity": {
+     "type": "string"
+    },
+    "severity": {
+     "items": {
+      "properties": {
+       "change": {
+        "type": "string"
+       },
+       "level": {
+        "type": "string"
+       },
+       "reason": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "level",
+       "change",
+       "reason"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "similarity": {
+     "properties": {
+      "entry_jaccard_identical": {
+       "maximum": 1,
+       "minimum": 0,
+       "type": "number"
+      },
+      "identical_entries": {
+       "type": "integer"
+      },
+      "total_entries_union": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "entry_jaccard_identical",
+      "identical_entries",
+      "total_entries_union"
+     ],
+     "type": "object"
+    }
+   },
+   "required": [
+    "similarity",
+    "overall_severity",
+    "severity",
+    "notes"
+   ],
+   "type": "object"
+  },
+  "identical_files": {
+   "type": "boolean"
+  },
+  "new": {
+   "$ref": "#/definitions/side"
+  },
+  "old": {
+   "$ref": "#/definitions/side"
+  }
+ },
+ "required": [
+  "old",
+  "new",
+  "diff",
+  "extended",
+  "identical_files"
+ ],
+ "title": "NAR version comparison",
+ "type": "object"
+}

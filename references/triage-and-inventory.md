@@ -289,6 +289,14 @@ Reading the section:
   pins are configured, so the class is not a marker. A compiled-in
   `sha256/...` pin constant, or a pin-set in the network security
   config, is.
+- **Records carry no per-record confidence or verification
+  status.** Each protection record has a category, a name, an
+  `attributed` flag (whether a dedicated marker names the
+  product), and its evidence strings — unlike `nar-security`
+  findings, it has no `confidence` score and no
+  `verification_status` field. Read every record as an
+  UNVERIFIED static indicator: the marker was present in the
+  package, nothing more.
 
 What triage does **not** claim, because there is no reliable static
 marker:

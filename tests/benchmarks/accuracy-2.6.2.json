@@ -1,0 +1,150 @@
+{
+  "methodology": "Per-analyzer binary/multiclass scoring against labeled corpora (tests/accuracy/corpus.py). Synthetic and real corpora are reported separately and never pooled. Real labels: role bindings from prior verified analysis plus cross-labeling. Output carries role labels and counts only. no local labeling file; derived role bindings + cross-labels only",
+  "analyzers": {
+    "engine_identification": {
+      "samples": 30,
+      "positives": 6,
+      "negatives": 24,
+      "tp": 6,
+      "fp": 0,
+      "fn": 0,
+      "tn": 24,
+      "unclassified": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "fpr": 0.0,
+      "fnr": 0.0,
+      "status": "measured",
+      "dataset": "real",
+      "definition": "per-family binary detection (nar-engines detected verdict in the family); negatives are cross-labeled fixtures of other families"
+    },
+    "framework_detection": {
+      "samples": 64,
+      "positives": 8,
+      "negatives": 56,
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "tn": 56,
+      "unclassified": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "fpr": 0.0,
+      "fnr": 0.0,
+      "status": "measured",
+      "dataset": "synthetic",
+      "definition": "per-framework binary detection; negatives are cross-labeled fixtures of other frameworks"
+    },
+    "format_identification": {
+      "real": {
+        "status": "measured",
+        "dataset": "real",
+        "samples": 10,
+        "correct": 10,
+        "unclassified": 0,
+        "accuracy": 1.0,
+        "confusion_matrix": {
+          "apk": {
+            "apk": 8
+          },
+          "godot-pck": {
+            "godot-pck": 1
+          },
+          "xapk": {
+            "xapk": 1
+          }
+        }
+      },
+      "synthetic": {
+        "status": "measured",
+        "dataset": "synthetic",
+        "samples": 5,
+        "correct": 5,
+        "unclassified": 0,
+        "accuracy": 1.0,
+        "confusion_matrix": {
+          "elf": {
+            "elf": 1
+          },
+          "dex": {
+            "dex": 1
+          },
+          "unreal-pak": {
+            "unreal-pak": 1
+          },
+          "godot-pck": {
+            "godot-pck": 1
+          },
+          "unreal-iostore": {
+            "unreal-iostore": 1
+          }
+        }
+      }
+    },
+    "protection_attribution": {
+      "samples": 26,
+      "positives": 1,
+      "negatives": 25,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 25,
+      "unclassified": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "fpr": 0.0,
+      "fnr": 0.0,
+      "status": "measured",
+      "dataset": "real",
+      "definition": "an attributed commercial_packer finding in nar-triage output; negatives are the clean set plus cross-labeled fixtures"
+    },
+    "endpoint_classification": {
+      "synthetic": {
+        "status": "measured",
+        "dataset": "synthetic",
+        "samples": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "confusion_matrix": {
+          "sensitive": {
+            "sensitive": 2
+          },
+          "third-party": {
+            "third-party": 1
+          },
+          "dex-string": {
+            "dex-string": 1
+          },
+          "potential": {
+            "potential": 1
+          },
+          "unused-candidate": {
+            "unused-candidate": 1
+          },
+          "unverified": {
+            "unverified": 2
+          }
+        },
+        "definition": "nar-network classify() against construction-defined labels; measures rule consistency, weaker than independent human labeling"
+      },
+      "real": {
+        "status": "not_measured",
+        "reason": "no independently labeled endpoint corpus exists locally: ground truth would require hand-labeled URL classifications for real apps, and none is recorded"
+      }
+    },
+    "native_library_identification": {
+      "status": "not_measured",
+      "reason": "no labeled native-library corpus is recorded locally: ground truth would require per-fixture verified library inventories, and none is recorded; library lists are reported per case, unmeasured"
+    },
+    "security_finding_classification": {
+      "status": "not_measured",
+      "reason": "no labeled security-findings corpus exists locally: findings are deterministic rule outputs and no independent ground-truth labels (which findings SHOULD fire on which fixture) are recorded; inventing them from the rules themselves would be circular"
+    }
+  }
+}

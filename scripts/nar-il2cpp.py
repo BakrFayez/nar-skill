@@ -60,6 +60,17 @@ DUMP_TIMEOUT = 1800  # seconds; big games dump slowly
 # above any real libil2cpp.so / global-metadata.dat —
 # and is enforced on the declared size and again on the
 # streamed byte count.
+try:
+    from narlib.budget import ResourceBudget as _ResourceBudget
+    #: The pair-extraction policy as a budget instance (2.6.2):
+    #: a single per-entry cap, mapping cleanly onto
+    #: max_file_bytes. MAX_PAIR_ENTRY_BYTES below is an alias of
+    #: the budget field and is read at call time (tests patch it).
+    IL2CPP_PAIR_BUDGET = _ResourceBudget(
+        max_file_bytes=1024 * 1024 * 1024,
+        max_total_bytes=1024 * 1024 * 1024)
+except Exception:  # pragma: no cover - narlib always ships it
+    IL2CPP_PAIR_BUDGET = None
 MAX_PAIR_ENTRY_BYTES = 1024 * 1024 * 1024
 
 
@@ -94,6 +105,17 @@ def _extract_capped(zf, entry, dst_path):
         except OSError:
             pass
         raise
+    except (zipfile.BadZipFile, RuntimeError, EOFError) as e:
+        # A corrupt entry (bad CRC, truncated stream) is
+        # a refusal like the cap: remove the partial file
+        # and surface the ValueError the caller handles,
+        # never a leaked zipfile error (D-10).
+        try:
+            os.unlink(dst_path)
+        except OSError:
+            pass
+        raise ValueError(
+            f"entry {entry} unreadable: {e}") from e
     return dst_path
 
 TYPEDEF_RE = re.compile(r"// TypeDefIndex: \d+")

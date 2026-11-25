@@ -232,6 +232,12 @@ def _read_header(data, legacy=False):
             f"{block_entry_size} (expected {BLOCK_ENTRY_SIZE})")
     if version > max(TOC_VERSIONS):
         raise IoStoreError(f"unknown TOC version {version}")
+    if version == 0:
+        # TOC_VERSIONS[0] is the enum's "Invalid" sentinel;
+        # no real container carries it (stability audit B-15).
+        raise IoStoreError(
+            "TOC version 0 (Invalid) is not a real "
+            "container version")
     return {
         "magic_ok": True,
         "version": version,
@@ -561,13 +567,33 @@ def _walk(data, header):
         r.take(2 * hash_size + 20 * block_count)
 
     directory_index = None
+    directory_index_error = None
     if version >= 2 and (flags & 0x08) \
             and header["directory_index_size"] > 0:
         buf = r.take(header["directory_index_size"])
         try:
             directory_index = parse_directory_index(buf)
-        except (IoStoreError, struct.error):
+            # A file row naming a TOC entry outside the
+            # table is corrupt, not a name (stability
+            # audit B-08): reject the index and record
+            # why, instead of silently counting a name
+            # no chunk can carry.
+            bad_idx = [k for k in directory_index["paths"]
+                       if not 0 <= k
+                       < header["toc_entry_count"]]
+            if bad_idx:
+                raise IoStoreError(
+                    "directory index names TOC entry "
+                    f"{bad_idx[0]}, outside the "
+                    f"{header['toc_entry_count']} entries "
+                    "in the table")
+        except (IoStoreError, struct.error) as e:
+            # The failure is recorded on the result
+            # (directory_index_error) so an unnamed-chunk
+            # container is distinguishable from a
+            # container with no index at all (B-08).
             directory_index = None
+            directory_index_error = str(e)
 
     # Meta: whatever remains, minus the on-demand trailer
     # for a v6 container flagged OnDemand.
@@ -660,6 +686,7 @@ def _walk(data, header):
         "directory_index": (
             {k: v for k, v in directory_index.items()
              if k != "paths"} if directory_index else None),
+        "directory_index_error": directory_index_error,
         "meta_present": bool(meta),
         "meta_entry_size": meta_stride or None,
         "trailing_bytes": len(data) - r.pos,
@@ -732,7 +759,25 @@ def extract_chunk(parsed, ucas_data, index):
         if method == "None":
             chunk = raw
         elif method == "Zlib":
-            chunk = zlib.decompress(raw)
+            # Capped inflation (stability audit B-01): the
+            # TOC promises the block's uncompressed size;
+            # never materialize more than that plus one
+            # probe byte, so a hostile stream cannot expand
+            # unboundedly before the size check below can
+            # refuse it (the pak parser's discipline).
+            promised = block["uncompressed_size"]
+            d = zlib.decompressobj()
+            try:
+                chunk = d.decompress(raw, promised + 1)
+            except zlib.error as e:
+                raise IoStoreError(
+                    f"zlib block decompression failed: {e}"
+                ) from e
+            if len(chunk) > promised or d.unconsumed_tail:
+                raise IoStoreError(
+                    "decompressed block expands past the "
+                    f"{promised} bytes the TOC promises; "
+                    "refusing to inflate it further")
         else:
             raise IoStoreError(
                 f"compression method {method!r} is named but "
@@ -759,6 +804,8 @@ def chunk_sha1_ok(parsed, ucas_data, index):
     chunk hash, a different construction).
     """
     import hashlib
+    if not 0 <= index < len(parsed["entries"]):
+        raise IoStoreError(f"chunk index {index} out of range")
     entry = parsed["entries"][index]
     want = entry.get("sha1")
     if not want:

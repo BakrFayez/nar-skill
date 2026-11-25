@@ -30,12 +30,32 @@ class DotNetMetaError(Exception):
     pass
 
 
+# Whole-file read ceiling for count_assembly: the same
+# 512 MiB structural-read cap narlib.formats applies
+# (stability audit A-09).
+MAX_ASSEMBLY_BYTES = 512 * 1024 * 1024
+
+
+def _need(data, off, size, what):
+    if off < 0 or size < 0 or off + size > len(data):
+        raise DotNetMetaError(
+            f"{what} at {off:#x} ({size} bytes) outside "
+            f"the file ({len(data)} bytes)")
+
+
 def _u16(data, off):
+    _need(data, off, 2, "u16 field")
     return struct.unpack_from("<H", data, off)[0]
 
 
 def _u32(data, off):
+    _need(data, off, 4, "u32 field")
     return struct.unpack_from("<I", data, off)[0]
+
+
+def _unpack(fmt, data, off, what):
+    _need(data, off, struct.calcsize(fmt), what)
+    return struct.unpack_from(fmt, data, off)
 
 
 def _coded_size(tables, tag_bits, rows):
@@ -56,9 +76,11 @@ class _Tables:
     def __init__(self, data, base, strings):
         self.data = data
         self.strings = strings
+        _need(data, base, 24, "tables stream header")
         (self.major, self.minor, self.heap_sizes) = (
             data[base + 4], data[base + 5], data[base + 6])
-        self.valid = struct.unpack_from("<Q", data, base + 8)[0]
+        self.valid = _unpack("<Q", data, base + 8,
+                             "tables stream mask")[0]
         pos = base + 24
         self.rows = {}
         for t in range(64):
@@ -111,7 +133,11 @@ def count_assembly(path):
     CLI assembly file. `types` excludes the <Module>
     pseudo-type row every assembly carries."""
     with open(path, "rb") as fh:
-        data = fh.read()
+        data = fh.read(MAX_ASSEMBLY_BYTES + 1)
+    if len(data) > MAX_ASSEMBLY_BYTES:
+        raise DotNetMetaError(
+            f"assembly exceeds the {MAX_ASSEMBLY_BYTES} "
+            "byte structural-read cap")
     if data[:2] != b"MZ":
         raise DotNetMetaError("not a PE file (no MZ header)")
     pe_off = _u32(data, 0x3C)
@@ -136,8 +162,8 @@ def count_assembly(path):
     sec_base = opt + opt_size
     for i in range(section_count):
         off = sec_base + i * 40
-        vsize, vaddr, raw_size, raw_ptr = struct.unpack_from(
-            "<IIII", data, off + 8)
+        vsize, vaddr, raw_size, raw_ptr = _unpack(
+            "<IIII", data, off + 8, "section header")
         sections.append((vaddr, max(vsize, raw_size), raw_ptr))
 
     def rva_to_off(rva):
@@ -157,9 +183,14 @@ def count_assembly(path):
     pos += 4
     streams = {}
     for _ in range(stream_count):
-        s_off, s_size = struct.unpack_from("<II", data, pos)
+        s_off, s_size = _unpack("<II", data, pos,
+                                "stream directory entry")
         pos += 8
-        end = data.index(b"\x00", pos)
+        try:
+            end = data.index(b"\x00", pos)
+        except ValueError:
+            raise DotNetMetaError(
+                "stream name is not NUL-terminated") from None
         name = data[pos:end].decode("ascii", "replace")
         pos += ((end - pos + 1) + 3) & ~3
         streams[name] = (meta_off + s_off, s_size)
@@ -182,10 +213,12 @@ def count_assembly(path):
         s = tables.str_size
         for i in range(type_rows):
             row = base + i * row_size
-            name_idx = struct.unpack_from(
-                "<I" if s == 4 else "<H", data, row + 4)[0]
-            ns_idx = struct.unpack_from(
-                "<I" if s == 4 else "<H", data, row + 4 + s)[0]
+            name_idx = _unpack(
+                "<I" if s == 4 else "<H", data, row + 4,
+                "TypeDef name index")[0]
+            ns_idx = _unpack(
+                "<I" if s == 4 else "<H", data, row + 4 + s,
+                "TypeDef namespace index")[0]
             name = tables.string(name_idx)
             if i == 0 and name == "<Module>":
                 types -= 1

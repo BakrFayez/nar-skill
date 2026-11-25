@@ -32,6 +32,7 @@ from narlib import registry as reg_mod  # noqa: E402
 from narlib.elf import Elf, ElfError  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 from narlib.mmapio import mapped_file  # noqa: E402
+from narlib.safearchive import read_member_capped  # noqa: E402
 
 SO_RE = re.compile(r"^(base/)?lib/([^/]+)/(.+\.so)$")
 
@@ -144,7 +145,7 @@ def analyze_elf(name, data, cross_check_path=None):
 
 
 def analyze(target, only_lib=None, work_dir=None):
-    report = {"tool": "nar-native", "version": "2.6.1",
+    report = {"tool": "nar-native", "version": "2.6.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     # Libraries are processed ONE AT A TIME (parse, record,
@@ -174,7 +175,13 @@ def analyze(target, only_lib=None, work_dir=None):
                     continue
                 if only_lib and m.group(3) != only_lib:
                     continue
-                data = zf.read(name)
+                try:
+                    data = read_member_capped(zf, name)
+                except ValueError as e:
+                    report["libraries"].append({
+                        "name": f"{m.group(2)}/{m.group(3)}",
+                        "error": str(e)})
+                    continue
                 temp_path = None
                 if work_dir:
                     os.makedirs(work_dir, exist_ok=True)
@@ -320,7 +327,8 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         report = analyze(args.target, args.lib, args.work)
-    except (FileNotFoundError, zipfile.BadZipFile) as e:
+    except (FileNotFoundError, IsADirectoryError,
+            zipfile.BadZipFile) as e:
         print(f"nar-native: {e}", file=sys.stderr)
         return 2
     if args.json:

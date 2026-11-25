@@ -35,6 +35,9 @@ import re
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib.safearchive import read_member_capped  # noqa: E402
+
 DEX_RE = re.compile(r"^(base/dex/)?classes\d*\.dex$")
 SO_RE = re.compile(r"^(base/)?lib/([^/]+)/(.+\.so)$")
 ARSC_RE = re.compile(r"^(base/)?resources\.arsc$")
@@ -252,8 +255,9 @@ def scan(apk_path, min_length):
                    if DEX_RE.match(n) or SO_RE.match(n) or ARSC_RE.match(n)]
         for name in targets:
             try:
-                data = zf.read(name)
-            except (KeyError, zipfile.BadZipFile, OSError):
+                data = read_member_capped(zf, name)
+            except (KeyError, zipfile.BadZipFile, OSError,
+                    ValueError):
                 continue
             count = 0
             for s in extract_runs(data, min_length):

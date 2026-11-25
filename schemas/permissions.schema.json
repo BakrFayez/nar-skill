@@ -1,0 +1,249 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "definitions": {
+  "component": {
+   "properties": {
+    "exported": {
+     "type": "boolean"
+    },
+    "exported_explicit": {
+     "type": "boolean"
+    },
+    "intent_filter_count": {
+     "type": "integer"
+    },
+    "intent_filters": {
+     "items": {
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "name": {
+     "type": "string"
+    },
+    "permission": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "name",
+    "exported"
+   ],
+   "type": "object"
+  }
+ },
+ "description": "The permissions.json case companion: the nar-perms document written verbatim by the pipeline (added as a companion in 2.6.1 because graph.json and investigation.json cite it as evidence). This schema was missing until the 2.6.2 stability campaign (E-09), so the document verify lists as a companion was the one companion no schema covered. The producer has two shapes: the full document, and an error document ({file, path, parser_requested, error}) when the target carries no manifest; required lists only the fields both shapes carry. Field nullability mirrors the producer: manifest attributes that are absent are null, not omitted.",
+ "properties": {
+  "application": {
+   "properties": {
+    "allow_backup": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    },
+    "debuggable": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    },
+    "label": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "network_security_config": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "uses_cleartext_traffic": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "component_counts": {
+   "type": "object"
+  },
+  "components": {
+   "properties": {
+    "activity": {
+     "items": {
+      "$ref": "#/definitions/component"
+     },
+     "type": "array"
+    },
+    "activity-alias": {
+     "items": {
+      "$ref": "#/definitions/component"
+     },
+     "type": "array"
+    },
+    "provider": {
+     "items": {
+      "$ref": "#/definitions/component"
+     },
+     "type": "array"
+    },
+    "receiver": {
+     "items": {
+      "$ref": "#/definitions/component"
+     },
+     "type": "array"
+    },
+    "service": {
+     "items": {
+      "$ref": "#/definitions/component"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "custom_permissions": {
+   "items": {
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "error": {
+   "type": "string"
+  },
+  "exported_count": {
+   "type": "integer"
+  },
+  "file": {
+   "type": "string"
+  },
+  "intent_filter_count": {
+   "type": "integer"
+  },
+  "launcher_activity": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "manifest_entry": {
+   "type": "string"
+  },
+  "min_sdk": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "package": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "parse_note": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "parse_path": {
+   "type": "string"
+  },
+  "parser_requested": {
+   "type": "string"
+  },
+  "path": {
+   "type": "string"
+  },
+  "permission_count": {
+   "type": "integer"
+  },
+  "permissions": {
+   "items": {
+    "properties": {
+     "declared_in_manifest": {
+      "type": "boolean"
+     },
+     "group": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "source": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "permissions_by_group": {
+   "type": "object"
+  },
+  "shared_user_id": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "split_name": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "target_sdk": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "uses_sdk_all": {
+   "items": {
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "uses_sdk_count": {
+   "type": "integer"
+  },
+  "version_code": {
+   "type": [
+    "integer",
+    "null"
+   ]
+  },
+  "version_name": {
+   "type": [
+    "string",
+    "null"
+   ]
+  }
+ },
+ "required": [
+  "file",
+  "path",
+  "parser_requested"
+ ],
+ "title": "NAR permissions companion (nar-perms document)",
+ "type": "object"
+}

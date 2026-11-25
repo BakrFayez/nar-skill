@@ -89,18 +89,29 @@ def _dotted(descriptor):
 # Cap on accumulated merge evidence (2.6.1): a node or
 # edge merged from many sources keeps its first evidence
 # in "evidence" and up to this many further distinct
-# references in "evidence_also" — merges never silently
-# discard provenance, and the list stays bounded.
+# references in "evidence_also" — the list stays bounded.
+# References past the cap ARE discarded, and the graph
+# builder now counts them and records the count in its
+# notes: the earlier "never silently discard" wording
+# overstated the mechanism (stability audit C-12).
 _EVIDENCE_ALSO_CAP = 8
+
+_CONF_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 def _add_also(record, ev):
+    """Accumulate one merge-evidence reference. Returns
+    True when the reference was kept (or was already
+    present), False when the cap dropped it."""
     if ev == record["evidence"]:
-        return
+        return True
     also = record.setdefault("evidence_also", [])
-    if ev in also or len(also) >= _EVIDENCE_ALSO_CAP:
-        return
+    if ev in also:
+        return True
+    if len(also) >= _EVIDENCE_ALSO_CAP:
+        return False
     also.append(ev)
+    return True
 
 
 class _Graph:
@@ -109,6 +120,7 @@ class _Graph:
         self.edges = []
         self._edge_index = {}
         self.stages = set()
+        self.provenance_dropped = 0
 
     def node(self, kind, key, label, stage, document,
              field_path, status=None):
@@ -125,16 +137,27 @@ class _Graph:
             existing = self.nodes[nid]
             if status and not existing.get("status"):
                 existing["status"] = status
-            _add_also(existing,
-                      _ev(stage, document, field_path))
+            if not _add_also(existing,
+                             _ev(stage, document, field_path)):
+                self.provenance_dropped += 1
         return nid
 
     def edge(self, source, target, kind, confidence, stage,
              document, field_path, status=None):
         key = (source, target, kind, status)
         if key in self._edge_index:
-            _add_also(self._edge_index[key],
-                      _ev(stage, document, field_path))
+            record = self._edge_index[key]
+            if not _add_also(record,
+                             _ev(stage, document, field_path)):
+                self.provenance_dropped += 1
+            # A later, stronger source for the same edge
+            # raises its confidence: first-writer-wins
+            # understated the evidence behind merged
+            # edges (stability audit C-12).
+            new_conf = confidence or "low"
+            if _CONF_RANK.get(new_conf, 0) > _CONF_RANK.get(
+                    record["confidence"], 0):
+                record["confidence"] = new_conf
             return
         self.stages.add(stage)
         record = {
@@ -270,7 +293,7 @@ def build_graph(dex_data=None, native_data=None,
                 fingerprint_data=None, engines_data=None,
                 security_data=None, assets_data=None,
                 correlations_data=None, unreal_data=None,
-                version="2.6.1"):
+                version="2.6.2"):
     """Build the graph document. Any input may be None (a
     degraded stage): its nodes/edges are then absent and a
     note records the gap, mirroring correlations."""
@@ -665,6 +688,14 @@ def build_graph(dex_data=None, native_data=None,
     if unreal_data:
         _unreal_section(g, app_id, unreal_data, notes)
 
+    if g.provenance_dropped:
+        notes.append(
+            f"{g.provenance_dropped} merge-evidence "
+            "reference(s) exceeded the per-record "
+            f"evidence_also cap ({_EVIDENCE_ALSO_CAP}) and "
+            "were not retained; the retained references "
+            "are in the records' evidence/evidence_also "
+            "fields")
     nodes = [g.nodes[k] for k in sorted(g.nodes)]
     edges = sorted(
         g.edges,
@@ -722,7 +753,15 @@ def query_graph(graph_doc, kind=None, edge_kind=None,
     if min_confidence is not None:
         # Accept a level name or a numeric 0..1 threshold.
         if isinstance(min_confidence, str):
-            floor = order.get(min_confidence.lower(), 0)
+            if min_confidence.lower() not in order:
+                # A misspelled level used to map to floor
+                # 0 and silently return the unfiltered
+                # graph (stability audit C-18).
+                raise ValueError(
+                    f"unknown confidence level "
+                    f"{min_confidence!r} (expected low, "
+                    "medium or high)")
+            floor = order[min_confidence.lower()]
         else:
             floor = 2 if min_confidence > 0.66 else \
                 1 if min_confidence > 0.33 else 0

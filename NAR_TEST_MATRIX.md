@@ -77,13 +77,20 @@ synthetic):
 - Absence produces: SKIP with a reason (`pytest.skip` /
   `skipTest` / `SkipTest`, "fixture absent") — never a
   failure, never a pass. Measured with an empty
-  `$NAR_FIXTURES`: those four files report 19 passed,
-  8 skipped, 0 failed.
+  `$NAR_FIXTURES` at 2.6.2: the fixture-bound files
+  (nine or more, not the four of the 2.5.2 record) skip
+  16 tests with reasons and the suite reports
+  595 passed / 16 skipped / 0 failed; with the private
+  fixture tree bound, 611 passed / 0 skipped. The
+  per-release addenda at the end of this file carry the
+  current numbers.
 
 ### Real-World Authorized Tests — local-only
 
 The end-to-end harness and the corpus sweeps:
-`tests/run_e2e.sh` (65 cases) runs every bundled script
+`tests/run_e2e.sh` (68 cases in private mode;
+15 passed / 48 skipped in public mode, where
+fixture-bound cases skip by design) runs every bundled script
 against real, locally authorized app/game files bound
 by role through `$NAR_FIXTURES/manifest.env` (the
 `FIX_*` roles listed in the harness header), including
@@ -129,9 +136,13 @@ The one library-level gate is PyYAML:
 ### Performance Benchmarks — measured, local corpus
 
 `tests/benchmarks/run_benchmarks.py` with the recorded
-baseline in `tests/benchmarks/baseline-2.5.2.json`
-(the 2.5.2 W0 baseline plus the W4 after-optimization
-record on identical inputs). The 2.6.0 record
+baselines in `tests/benchmarks/` (baseline-2.5.2.json
+is the 2.5.2 W0 baseline plus the W4 after-optimization
+record on identical inputs; baseline-2.6.0.json,
+baseline-2.6.1.json and baseline-2.6.2.json continue
+the series on the same methodology, and
+accuracy-2.6.2.json records the labeled-corpus
+accuracy run). The 2.6.0 record
 (`tests/benchmarks/baseline-2.6.0.json`, Phase 11)
 re-runs the four W0 commands on byte-identical inputs
 with the same wrapper harness, and adds: synthetic-corpus
@@ -1872,3 +1883,53 @@ record since then (full detail in CHANGELOG.md for
 - Battery at W5 end (pre-W6): pytest 303 passed /
   0 failed, e2e 65 passed / 0 failed / 0 skipped,
   doctor READY.
+
+## Addendum (2026-11-25) — 2.6.2 stability & certification campaign
+
+Executed on the final stabilized tree (branch
+stability-certification). Full record:
+NAR_FINAL_VERIFICATION_REPORT.md.
+
+- Unit battery (fixtures bound): **653 passed /
+  0 failed** (611 at the 2.6.2 baseline + 43 campaign
+  regression tests in tests/unit/test_stability_campaign.py
+  − 1 net from contract/stub corrections). Every fix in
+  the campaign register carries a regression test.
+- Clean-extraction shape (empty fixture root, the
+  hosted-CI form): **637 passed / 16 skipped**, every
+  skip printing its reason (demo/unity/flutter/RN
+  fixture absent). Private-fixture tests are never
+  silently counted as executed.
+- e2e: private **68 passed / 0 failed / 0 skipped**;
+  public **15 passed / 0 failed / 48 skipped**.
+- CI: all 9 jobs in .github/workflows/ci.yml executed
+  locally from a `git archive` extraction — unit
+  637/16, syntax OK, schema 27 parse + 2 passed /
+  5 skipped, cli-smoke OK, security-regression 122
+  passed, docs-consistency 30 passed, e2e-public
+  15/0/48, fuzz-smoke 500 iterations / 0 failures,
+  benchmark-smoke gate PASS (informational). One job
+  defect found and fixed: fuzz-smoke lacked the pytest
+  install its harness requires (CI-01).
+- Security subsets are inside the counts above; the
+  DEX fuzz smoke (fixed seed 1, 500 iterations) reports
+  0 distinct failures.
+- Accuracy: tests/accuracy/run_accuracy.py reproduces
+  tests/benchmarks/accuracy-2.6.2.json exactly (engine
+  real 30 samples P/R/F1 1.0; framework synthetic 64;
+  format real 10/10 + synthetic 5/5; protection real
+  26, FP 0; endpoint synthetic 8/8; endpoint-real /
+  native-library / security-finding NOT MEASURED).
+- Real-target: Zen sweep over the three retained
+  IoStore sets reconciles exactly with the 2.6.2
+  record (2,644 packages parsed, 0 failed, 7,736
+  relationship edges by kind, 0 unresolved, 13,911
+  Oodle extraction refusals by name); classic pak
+  listing identical (v11, 1,564 entries).
+- Compatibility: all 15 retained cases re-verified —
+  14 OK (one designed legacy warning), 1 expected
+  failure on a legacy harness artifact's own manifest
+  inconsistency (correctly detected).
+- Runtime: nar-runtime validate PASS on the emulator
+  (API 26, TCG), Frida validation suite 28/28 PASS,
+  no-device validate exits 1. Physical device: NOT RUN.

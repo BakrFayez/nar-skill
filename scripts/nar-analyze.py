@@ -32,8 +32,8 @@ MIT License. See LICENSE in the repo root.
 import argparse
 import hashlib
 import json
-import mmap
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,7 +52,7 @@ try:
     from narlib import investigation as _investigation
     from narlib import safearchive as _safearchive
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "2.6.1"
+    NAR_VERSION = "2.6.2"
     _companions = None
     _correlations = None
     _evidence = None
@@ -140,9 +140,17 @@ def run_json_tool(script, args, timeout=TOOL_TIMEOUT):
         return None, f"{script} could not start: {e}"
     try:
         data = json.loads(proc.stdout)
+        # A child that exits non-zero but prints parseable
+        # JSON (usually an in-band error document) is not
+        # an unqualified success: the execution log said
+        # "ok" whenever stdout parsed, ignoring the exit
+        # code (stability audit C-17). The data is still
+        # returned — consumers handle in-band errors — but
+        # the log now records the run as degraded.
         EXEC_LOG.append({"stage": script, "module": script,
                          "tool": script, "tool_version": None,
-                         "status": "ok",
+                         "status": ("ok" if proc.returncode == 0
+                                    else "degraded"),
                          "duration_s": round(time.time() - started, 3)})
         return data, None
     except ValueError:
@@ -216,21 +224,62 @@ def pick_base_apk(triage, names):
 # absurd inflation; they are enforced on the declared
 # size and again on the streamed byte count, because a
 # crafted central directory can understate the size.
+try:
+    from narlib.budget import ResourceBudget as _ResourceBudget
+except Exception:  # pragma: no cover - narlib always ships it
+    _ResourceBudget = None
+
+#: The contained-extraction policy as a named budget instance
+#: (2.6.2): per-entry 4 GiB / whole-run 8 GiB -- the same values
+#: the ad-hoc constants carried in 2.6.1. The MAX_* names stay
+#: as aliases of the budget fields; extract_entry reads them
+#: (through _effective_extract_caps) at call time so tests and
+#: embedders that patch the constants keep working.
+ANALYZE_EXTRACT_BUDGET = _ResourceBudget(
+    max_entries=20_000,
+    max_file_bytes=4 * 1024 * 1024 * 1024,
+    max_total_bytes=8 * 1024 * 1024 * 1024) if _ResourceBudget else None
 MAX_EXTRACT_ENTRY_BYTES = 4 * 1024 * 1024 * 1024
 MAX_EXTRACT_TOTAL_BYTES = 8 * 1024 * 1024 * 1024
 _EXTRACT_BUDGET = {"used": 0}
 
 
+def _effective_extract_caps():
+    """(per-entry cap, total cap) for the next extraction:
+    the module-level MAX_* values, read at call time so a
+    patched constant takes effect (the 2.6.1 regression tests
+    patch them). Unpatched, they equal ANALYZE_EXTRACT_BUDGET."""
+    return MAX_EXTRACT_ENTRY_BYTES, MAX_EXTRACT_TOTAL_BYTES
+
+
 def _contained_join(root, *parts):
     """Join parts under root, refusing any result that
-    escapes root (absolute parts, '..' traversal)."""
-    dest = os.path.normpath(os.path.join(root, *parts))
-    root_abs = os.path.abspath(root)
-    if dest != root_abs and \
-            not dest.startswith(root_abs + os.sep):
+    escapes root (absolute parts, '..' traversal).
+
+    Two proofs, mirroring narlib.safearchive (stability
+    audit C-01/C-09): the root is first made absolute —
+    comparing a relative destination against an absolute
+    root used to refuse EVERY entry for a relative --work
+    dir — and the joined destination is then resolved
+    with realpath, so a symlink component already inside
+    the root cannot redirect the write outside it (the
+    lexical check alone was blind to pre-existing links,
+    the exact gap safearchive was hardened against in
+    Phase 10 and this extractor never got)."""
+    root_real = os.path.realpath(root)
+    dest = os.path.normpath(os.path.join(root_real, *parts))
+    if dest != root_real and \
+            not dest.startswith(root_real + os.sep):
         raise ValueError(
             "archive entry path escapes the work "
             f"directory: {os.path.join(*parts)!r}")
+    dest_real = os.path.realpath(dest)
+    if dest_real != root_real and \
+            not dest_real.startswith(root_real + os.sep):
+        raise ValueError(
+            "archive entry path escapes the work "
+            "directory through a symlink: "
+            f"{os.path.join(*parts)!r}")
     return dest
 
 
@@ -241,17 +290,26 @@ def extract_entry(zf, name, root, *rel_parts):
     budget; a partially written file is removed first."""
     dest = _contained_join(root, *rel_parts)
     info = zf.getinfo(name)
-    if info.file_size > MAX_EXTRACT_ENTRY_BYTES:
+    cap_entry, cap_total = _effective_extract_caps()
+    if info.file_size > cap_entry:
         raise ValueError(
             f"archive entry {name!r} declares "
             f"{info.file_size} bytes, over the "
-            f"{MAX_EXTRACT_ENTRY_BYTES}-byte extraction cap")
+            f"{cap_entry}-byte extraction cap")
     if _EXTRACT_BUDGET["used"] + info.file_size \
-            > MAX_EXTRACT_TOTAL_BYTES:
+            > cap_total:
         raise ValueError(
             f"archive entry {name!r} would exceed the "
-            f"{MAX_EXTRACT_TOTAL_BYTES}-byte total "
+            f"{cap_total}-byte total "
             "extraction budget for this run")
+    if os.path.islink(dest):
+        # Never write through a pre-existing symlink at
+        # the destination itself (C-01 companion guard,
+        # as in safearchive C-15).
+        raise ValueError(
+            f"archive entry {name!r} destination is a "
+            "pre-existing symlink; refusing to write "
+            "through it")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     written = 0
     try:
@@ -261,9 +319,9 @@ def extract_entry(zf, name, root, *rel_parts):
                 if not chunk:
                     break
                 written += len(chunk)
-                if written > MAX_EXTRACT_ENTRY_BYTES or \
+                if written > cap_entry or \
                         _EXTRACT_BUDGET["used"] + written \
-                        > MAX_EXTRACT_TOTAL_BYTES:
+                        > cap_total:
                     raise ValueError(
                         f"archive entry {name!r} exceeded "
                         "the extraction budget while "
@@ -276,8 +334,33 @@ def extract_entry(zf, name, root, *rel_parts):
         except OSError:
             pass
         raise
+    except (zipfile.BadZipFile, RuntimeError, EOFError,
+            OSError) as e:
+        # A corrupt entry (bad CRC, truncated stream) is a
+        # refusal like any other: remove the partial file and
+        # surface it as the same ValueError the budget and
+        # containment refusals use, never a leaked zipfile
+        # error (2.6.2).
+        try:
+            os.unlink(dest)
+        except OSError:
+            pass
+        raise ValueError(
+            f"archive entry {name!r} unreadable: {e}") from e
     _EXTRACT_BUDGET["used"] += written
     return dest
+
+
+def extract_entry_record(zf, name, root, *rel_parts):
+    """Structured form of extract_entry (2.6.2): never raises
+    for a refusal. Returns (dest, None) on success or
+    (None, {"entry": name, "reason": str}) on refusal -- the
+    same {entry, reason} record shape narlib.safearchive
+    produces, so callers can accumulate rejections uniformly."""
+    try:
+        return extract_entry(zf, name, root, *rel_parts), None
+    except ValueError as e:
+        return None, {"entry": name, "reason": str(e)}
 
 
 def zip_entry_flags(names):
@@ -391,21 +474,52 @@ def run_cached_stage(stage, script, args, cache_key, out_dir):
                       f"{BUDGET['total_budget_s']}s exhausted "
                       f"before stage {stage}"), False
     if os.path.isfile(cache_path) and os.path.isfile(key_path):
-        with open(key_path, encoding="utf-8") as fh:
-            if fh.read().strip() == cache_key:
+        try:
+            with open(key_path, encoding="utf-8") as fh:
+                key_matches = fh.read().strip() == cache_key
+            cached_doc = None
+            if key_matches:
                 with open(cache_path, encoding="utf-8") as fh:
-                    EXEC_LOG.append({
-                        "stage": stage, "module": script,
-                        "tool": script, "tool_version": NAR_VERSION,
-                        "status": "cached", "duration_s": 0.0})
-                    return json.load(fh), None, True
+                    cached_doc = json.load(fh)
+            if key_matches and isinstance(cached_doc, dict):
+                EXEC_LOG.append({
+                    "stage": stage, "module": script,
+                    "tool": script, "tool_version": NAR_VERSION,
+                    "status": "cached", "duration_s": 0.0})
+                return cached_doc, None, True
+            if key_matches:
+                # The key matched but the document is
+                # unreadable or not an object: the cache
+                # pair is corrupt (or was poisoned). The
+                # pre-audit code let json.load raise and
+                # killed the whole analysis with a
+                # traceback (stability audit C-05). Treat
+                # it as a miss, drop the pair, re-run.
+                for stale in (cache_path, key_path):
+                    try:
+                        os.unlink(stale)
+                    except OSError:
+                        pass
+        except (OSError, ValueError):
+            for stale in (cache_path, key_path):
+                try:
+                    os.unlink(stale)
+                except OSError:
+                    pass
     data, err = run_json_tool(script, args)
     if data is not None and out_dir:
+        # Write the pair atomically (temp + rename, key
+        # LAST): an interrupted run must never leave a
+        # key claiming a half-written document (C-05).
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        with open(cache_path, "w", encoding="utf-8") as fh:
+        tmp_doc = cache_path + ".tmp"
+        with open(tmp_doc, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
-        with open(key_path, "w", encoding="utf-8") as fh:
+        os.replace(tmp_doc, cache_path)
+        tmp_key = key_path + ".tmp"
+        with open(tmp_key, "w", encoding="utf-8") as fh:
             fh.write(cache_key)
+        os.replace(tmp_key, key_path)
     return data, err, False
 
 
@@ -438,6 +552,14 @@ def run_cached_stage(stage, script, args, cache_key, out_dir):
 # classic stage path (the caller performs the fallback);
 # behavior on malformed stage output mirrors run_json_tool
 # (a "produced no JSON" degradation, never a crash).
+#
+# 2.6.2 WS-D1: steps 3–4 read the document through
+# _WindowedReader (a bounded 1 MiB window) instead of an
+# mmap: the file is never mapped, so no file-backed pages
+# are charged to the process beyond the resident window,
+# and the whole document is never held. Outputs are
+# byte-identical to the mmap path (hard gate, 2.6.2
+# benchmark record).
 
 def _json_skip_ws(mm, i):
     n = len(mm)
@@ -448,7 +570,7 @@ def _json_skip_ws(mm, i):
 
 def _json_value_end(mm, i):
     """End offset (exclusive) of the JSON value starting at
-    or after offset i in the mapped bytes. Pure structural
+    or after offset i in the source bytes. Pure structural
     scan — strings are skipped escape-aware and no value is
     materialized. Raises ValueError on malformed input."""
     i = _json_skip_ws(mm, i)
@@ -564,25 +686,99 @@ def _dex_file_projection(f):
     return out
 
 
+class _WindowedReader:
+    """Bounded-window random-access reader over a file
+    (2.6.2 WS-D1: replaces the mmap-backed reads of the
+    DEX stage document).
+
+    Presents exactly the interface the JSON span scanners
+    consume — len(), integer indexing returning an int,
+    slicing returning bytes — but never maps the file and
+    never holds more than one fixed-size window of it
+    (default 1 MiB) plus whatever slice a caller explicitly
+    requests (a single dex_files element, a single token).
+    The scanners and the re-serializer scan sequentially,
+    so accesses hit the resident window; a slice spanning
+    windows is assembled window by window. The bytes are
+    the file's bytes, unchanged, so the projection and the
+    companion outputs are byte-identical to the mmap path
+    they replace (hard gate: see the 2.6.2 benchmark
+    record)."""
+
+    def __init__(self, path, window_size=1 << 20):
+        self._fh = open(path, "rb")
+        self._size = os.fstat(self._fh.fileno()).st_size
+        self._window_size = max(4096, int(window_size))
+        self._wstart = -1
+        self._wdata = b""
+
+    def __len__(self):
+        return self._size
+
+    def close(self):
+        self._fh.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+    def _window(self, i):
+        """(window_bytes, offset_of_i_within_window),
+        loading the window containing offset i if needed."""
+        if not (self._wstart <= i
+                < self._wstart + len(self._wdata)):
+            self._wstart = (i // self._window_size) \
+                * self._window_size
+            self._fh.seek(self._wstart)
+            self._wdata = self._fh.read(self._window_size)
+        return self._wdata, i - self._wstart
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            start, stop, step = key.indices(self._size)
+            if step != 1:
+                return bytes(self[i]
+                             for i in range(start, stop, step))
+            if stop <= start:
+                return b""
+            parts = []
+            i = start
+            while i < stop:
+                data, off = self._window(i)
+                take = min(len(data) - off, stop - i)
+                if take <= 0:
+                    break
+                parts.append(data[off:off + take])
+                i += take
+            return b"".join(parts)
+        i = key + self._size if key < 0 else key
+        if not 0 <= i < self._size:
+            raise IndexError(
+                "windowed reader index out of range")
+        data, off = self._window(i)
+        return data[off]
+
+
 def _dex_projection_from_file(path):
     """Stream a DEX stage document from disk and return
     {totals, dex_files: [projections]}. Each dex_files
     element is parsed, projected and discarded before the
-    next is read, so the full document is never resident."""
+    next is read, so the full document is never resident.
+    Reads go through the bounded-window reader (2.6.2
+    WS-D1): the file is never mapped or held whole."""
     totals = None
     files = []
-    with open(path, "rb") as fh:
-        mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
-        try:
-            for key, vs, ve in _json_object_items(mm):
-                if key == "dex_files":
-                    for es, ee in _json_array_items(mm, vs):
-                        files.append(_dex_file_projection(
-                            json.loads(mm[es:ee])))
-                elif key == "totals":
-                    totals = json.loads(mm[vs:ve])
-        finally:
-            mm.close()
+    with _WindowedReader(path) as mm:
+        for key, vs, ve in _json_object_items(mm):
+            if key == "dex_files":
+                for es, ee in _json_array_items(mm, vs):
+                    files.append(_dex_file_projection(
+                        json.loads(mm[es:ee])))
+            elif key == "totals":
+                totals = json.loads(mm[vs:ve])
     return {"totals": totals, "dex_files": files}
 
 
@@ -631,14 +827,13 @@ def _json_emit_value(mm, i, out, depth):
 
 def _dex_companion_from_cache(cache_path, companion_path):
     """Write the indent=1 companion (dex.json) from the
-    cached stage document via the token re-serializer."""
-    with open(cache_path, "rb") as fh:
-        mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
-        try:
-            with open(companion_path, "wb") as out:
-                _json_emit_value(mm, 0, out, 0)
-        finally:
-            mm.close()
+    cached stage document via the token re-serializer,
+    reading through the bounded-window reader (2.6.2
+    WS-D1) — the cache file is never mapped or held
+    whole, and the emitted bytes are unchanged."""
+    with _WindowedReader(cache_path) as mm:
+        with open(companion_path, "wb") as out:
+            _json_emit_value(mm, 0, out, 0)
 
 
 def _dex_stage_streamed(report, companions, apk_path,
@@ -819,12 +1014,21 @@ def _unreal_graph_input(report):
 
 
 def run_2_0_stages(report, apk_path, out_dir, work_dir,
-                   perms_data=None):
+                   perms_data=None, key_path=None):
     """The 2.0 module stages: fingerprint, engine fusion, DEX,
     native, network, security, assets. Each writes its
     standardized companion document into the case directory
     and a summary into the report. Failures degrade to a
-    limitation line, never to a fabricated result."""
+    limitation line, never to a fabricated result.
+
+    key_path names the file whose hash keys the stage
+    cache. It MUST be the file the case itself is keyed
+    to (the user's target): the pre-audit form hashed
+    apk_path, which for container targets is the
+    EXTRACTED base APK — a different file from the one
+    case.json records — so every container-built case
+    failed its own verify cache-integrity check
+    (stability audit S-01)."""
     companions = {}
     report["companions"] = companions
     if not out_dir:
@@ -832,7 +1036,8 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
             "2.0 module stages skipped: no case output directory")
         return
     os.makedirs(out_dir, exist_ok=True)
-    cache_key_base = sha256_of(apk_path) + "|" + NAR_VERSION
+    cache_key_base = sha256_of(key_path or apk_path) \
+        + "|" + NAR_VERSION
 
     def stage(stage_name, script, args, companion_file, summarize):
         key = hashlib.sha256(
@@ -842,6 +1047,37 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
         if data is None:
             report["limitations"].append(
                 f"2.0 stage {stage_name} degraded: {err}")
+            return None
+        # A stage document is evidence: it must be a JSON
+        # object, and where a companion schema is mapped
+        # it must satisfy it, BEFORE it is written into
+        # the case (stability audit C-02 — companions were
+        # previously written with no validation at all,
+        # so a poisoned or malformed document entered the
+        # case unchecked and verify only ever looked at
+        # the file's manifest hash).
+        problem = None
+        if not isinstance(data, dict):
+            problem = "stage returned a non-object document"
+        else:
+            schema_name = _COMPANION_SCHEMAS.get(companion_file)
+            if schema_name:
+                try:
+                    from narlib import evidence as _ev
+                    schema = json.load(open(os.path.join(
+                        os.path.dirname(HERE), "schemas",
+                        schema_name), encoding="utf-8"))
+                    violations = _ev.validate(data, schema)
+                    if violations:
+                        problem = ("stage document failed "
+                                   "its companion schema: "
+                                   + violations[0])
+                except (OSError, ValueError):
+                    problem = None  # schema unreadable: the
+                    # dict check above still applied
+        if problem:
+            report["limitations"].append(
+                f"2.0 stage {stage_name} degraded: {problem}")
             return None
         with open(os.path.join(out_dir, companion_file),
                   "w", encoding="utf-8") as fh:
@@ -966,41 +1202,51 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     if _companions is not None and _evidence is not None:
         schema_dir = os.path.join(
             os.path.dirname(HERE), "schemas")
-        projections = [
+        # The projection CALLS run inside the per-item try:
+        # the pre-audit code built the list eagerly, so a
+        # projection raising on a malformed stage document
+        # (a bare dict .get chain over attacker-shaped
+        # data) crashed the whole analysis before the
+        # validation guard was ever reached (stability
+        # audit C-06). Builders now receive thunks.
+        projection_builders = [
             ("application", "application.json",
              "application.schema.json",
-             _companions.project_application(fp_data, NAR_VERSION)),
+             lambda: _companions.project_application(
+                 fp_data, NAR_VERSION)),
             ("manifest", "manifest.json", "manifest.schema.json",
-             _companions.project_manifest(
-                 report.get("permissions"), report.get("identity"),
-                 NAR_VERSION)),
+             lambda: _companions.project_manifest(
+                 report.get("permissions"),
+                 report.get("identity"), NAR_VERSION)),
             ("native-inventory", "native-inventory.json",
              "native-inventory.schema.json",
-             _companions.project_native_inventory(
+             lambda: _companions.project_native_inventory(
                  nat_data, NAR_VERSION)),
             ("frameworks", "frameworks.json",
              "frameworks.schema.json",
-             _companions.project_frameworks(
+             lambda: _companions.project_frameworks(
                  eng_data, fp_data, NAR_VERSION)),
             # Network companions (Evolution Phase 5), projected
             # from the network stage's endpoints document.
             ("network-analysis", "network-analysis.json",
              "network-analysis.schema.json",
-             _companions.project_network_analysis(
+             lambda: _companions.project_network_analysis(
                  net_data, NAR_VERSION)),
             ("api-architecture", "api-architecture.json",
              "api-architecture.schema.json",
-             _companions.project_api_architecture(
+             lambda: _companions.project_api_architecture(
                  net_data, NAR_VERSION)),
         ]
-        for key, filename, schema_name, doc in projections:
+        for key, filename, schema_name, build_doc in \
+                projection_builders:
             try:
+                doc = build_doc()
                 with open(os.path.join(schema_dir, schema_name),
                           encoding="utf-8") as fh:
                     schema = json.load(fh)
                 errors = _evidence.validate(doc, schema)
-            except (OSError, ValueError) as e:
-                errors = [f"schema unavailable: {e}"]
+            except Exception as e:
+                errors = [f"projection failed: {e}"]
             if errors:
                 report["limitations"].append(
                     f"companion {filename} not emitted: "
@@ -1018,8 +1264,18 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
     # in the report, per the phase spec.
     corr = None
     if _correlations is not None and _evidence is not None:
-        corr = _correlations.build_correlations(
-            dex_data, nat_data, perms_data, net_data, NAR_VERSION)
+        try:
+            corr = _correlations.build_correlations(
+                dex_data, nat_data, perms_data, net_data,
+                NAR_VERSION)
+        except Exception as e:
+            # Same C-06 discipline: a correlations build
+            # that raises on malformed stage data degrades
+            # to a limitation, never a crashed analysis.
+            report["limitations"].append(
+                "companion correlations.json not emitted: "
+                f"build failed ({e})")
+            corr = None
         try:
             with open(os.path.join(
                     os.path.dirname(HERE), "schemas",
@@ -1437,7 +1693,7 @@ def analyze(target, work_dir, out_dir=None):
     # native / network / security / assets) with case caching.
     if apk_for_steps and not triage.get("is_obb"):
         run_2_0_stages(report, apk_for_steps, out_dir, work_dir,
-                       perms_data=perms)
+                       perms_data=perms, key_path=target)
 
     # Limitations and unknowns: the honest tail of every report.
     lim = report["limitations"]
@@ -1686,6 +1942,12 @@ def _case_files(case_dir):
     for root, _dirs, names in os.walk(case_dir):
         for name in names:
             full = os.path.join(root, name)
+            if os.path.islink(full):
+                # Never follow a symlink out of the case:
+                # export would otherwise bundle (and the
+                # manifest would bless) content that lives
+                # outside the case directory (C-18).
+                continue
             rel = os.path.relpath(full, case_dir)
             out.append((rel.replace(os.sep, "/"), full))
     return sorted(out)
@@ -1697,11 +1959,29 @@ def export_case(case_dir, bundle_path):
     summary dict. The manifest travels inside the bundle
     and lands in the imported case, where verify_case
     re-checks every file against it."""
-    case_doc = {}
+    # Refuse non-cases (stability audit C-10): the
+    # pre-audit form exported a nonexistent directory as
+    # a "successful" 0-file bundle, and a bundle path
+    # INSIDE the case directory made the export include
+    # the bundle it was writing and then fail its own
+    # verify.
+    if not os.path.isdir(case_dir):
+        raise ValueError(
+            f"not a case directory: {case_dir}")
     case_json = os.path.join(case_dir, "case.json")
-    if os.path.isfile(case_json):
-        with open(case_json, encoding="utf-8") as fh:
-            case_doc = json.load(fh)
+    if not os.path.isfile(case_json):
+        raise ValueError(
+            f"not a NAR case (case.json missing): {case_dir}")
+    bundle_real = os.path.realpath(bundle_path)
+    case_real = os.path.realpath(case_dir)
+    if bundle_real == case_real or bundle_real.startswith(
+            case_real + os.sep):
+        raise ValueError(
+            "bundle path must be outside the case "
+            "directory (an in-case bundle would include "
+            "itself)")
+    with open(case_json, encoding="utf-8") as fh:
+        case_doc = json.load(fh)
     files = []
     with zipfile.ZipFile(bundle_path, "w",
                          zipfile.ZIP_DEFLATED) as zf:
@@ -1750,16 +2030,739 @@ def import_case(bundle_path, out_dir):
     if _safearchive is None:
         raise ValueError("narlib.safearchive is unavailable; "
                          "refusing unguarded extraction")
-    report = _safearchive.safe_extract(bundle_path, out_dir)
-    if report["rejected"]:
-        reasons = "; ".join(
-            f"{r['entry']}: {r['reason']}"
-            for r in report["rejected"][:10])
-        raise ValueError(f"unsafe entries in bundle: {reasons}")
-    result = verify_case(out_dir)
+    # Extract + verify in a STAGING directory first; the
+    # destination is touched only after the imported
+    # case verifies (stability audit C-03). The pre-audit
+    # form extracted straight into out_dir, so a bundle
+    # that failed verification had already overwritten
+    # the destination's files with unverified content.
+    parent = os.path.dirname(os.path.abspath(out_dir)) \
+        or "."
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix=".nar-import-",
+                               dir=parent)
+    try:
+        report = _safearchive.safe_extract(bundle_path,
+                                           staging)
+        if report["rejected"]:
+            reasons = "; ".join(
+                f"{r['entry']}: {r['reason']}"
+                for r in report["rejected"][:10])
+            raise ValueError(
+                f"unsafe entries in bundle: {reasons}")
+        result = verify_case(staging)
+        if result.get("ok") is False:
+            raise ValueError(
+                "imported case failed verification ("
+                + "; ".join(result.get("failures", [])[:5])
+                + "); destination left untouched")
+        # Files the bundle carried that its manifest does
+        # not list (C-07): surfaced, never silent.
+        try:
+            with zipfile.ZipFile(bundle_path) as zf:
+                manifest = json.loads(
+                    zf.read(BUNDLE_MANIFEST))
+            listed = {f.get("path")
+                      for f in manifest.get("files", [])}
+        except (ValueError, KeyError):
+            listed = set()
+        extracted_names = [
+            e.get("entry") if isinstance(e, dict) else e
+            for e in report["extracted"]]
+        extra = sorted(
+            e for e in extracted_names
+            if e not in listed and e != BUNDLE_MANIFEST)
+        if os.path.isdir(out_dir) and os.listdir(out_dir):
+            shutil.rmtree(out_dir)
+        elif os.path.isdir(out_dir):
+            os.rmdir(out_dir)
+        os.rename(staging, out_dir)
+        staging = None
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
     result["imported_to"] = os.path.abspath(out_dir)
     result["files_imported"] = len(report["extracted"])
+    if extra:
+        result["files_not_in_manifest"] = extra
     return result
+
+
+# ----------------------------------------------------------------
+# Evidence & case integrity (2.6.2, Workstream F).
+#
+# verify_case historically checked the input hash, the
+# bundle manifest and the stage-cache keys. The checks
+# below add the evidence layer the 2.6.1 verification
+# round ran EXTERNALLY over produced cases (report §3,
+# 19 programmatic checks) as ENFORCED validation inside
+# `nar case verify`: evidence references resolve, graph
+# structure is internally consistent, counts reconcile,
+# hypotheses are complete, companions listed by the
+# report are present and schema-valid, and companion
+# version fields agree with the case record.
+#
+# Hard-failure vs warning policy (backward compatibility
+# is a hard constraint: cases produced by 2.6.0 / 2.6.1
+# must still verify):
+#
+# HARD FAILURES in every era — invariants the pipeline
+# has never legitimately broken: duplicate node / edge
+# identifiers, graph edges pointing at missing nodes,
+# header counts that disagree with the arrays they
+# count, a companion the report lists but the case does
+# not contain, a companion that fails its repo schema,
+# and a companion version field that disagrees with the
+# case's recorded NAR version (one run writes one case
+# at one version; disagreement means a stale or mixed
+# copy, not a legacy case).
+#
+# WARNINGS (reported, never failing verify) for the two
+# defect families a pre-2.6.1 case can LEGITIMATELY
+# carry, both documented in the 2.6.1 report itself:
+# (a) evidence references citing a document or field
+# path that does not resolve — §4 records that 2.6.0
+# cases cite permissions.json, which that pipeline
+# never wrote, and §2 item 4 records the pre-fix
+# application-node citation; failing every archived
+# 2.6.0 case for the pipeline's own known defect would
+# make verify useless on the existing archive, while a
+# case recorded at 2.6.1+ was produced by a pipeline
+# proven to write every cited document (§3), so the
+# same finding there is a hard failure; (b) a
+# pre-2.6.1 investigation without the
+# unverified_findings section (the 2.6.1 separation)
+# and hypothesis-field gaps in such a legacy document.
+# A counts block that is ABSENT (rather than wrong) is
+# likewise a warning: there is nothing to reconcile,
+# and absence is a legacy shape, not tampering.
+# ----------------------------------------------------------------
+
+_COMPANION_SCHEMAS = {
+    "graph.json": "graph.schema.json",
+    "investigation.json": "investigation.schema.json",
+    "correlations.json": "correlations.schema.json",
+    "application.json": "application.schema.json",
+    "manifest.json": "manifest.schema.json",
+    "native-inventory.json": "native-inventory.schema.json",
+    "frameworks.json": "frameworks.schema.json",
+    "network-analysis.json": "network-analysis.schema.json",
+    "api-architecture.json": "api-architecture.schema.json",
+    "fingerprint.json": "fingerprint.schema.json",
+    "engines.json": "engine.schema.json",
+    "dex.json": "dex.schema.json",
+    "native.json": "native.schema.json",
+    "endpoints.json": "endpoints.schema.json",
+    "security-findings.json": "security-findings.schema.json",
+    "assets.json": "assets.schema.json",
+    "case.json": "case.schema.json",
+    "execution-log.json": "execution-log.schema.json",
+    "permissions.json": "permissions.schema.json",
+}
+
+
+def _version_tuple(value):
+    if not isinstance(value, str):
+        return None
+    parts = []
+    for piece in value.strip().split("."):
+        if not piece.isdigit():
+            return None
+        parts.append(int(piece))
+    return tuple(parts) or None
+
+
+def _version_lt(value, floor):
+    """True when dotted-numeric version `value` is below
+    `floor`. Unparseable values are NOT less (strictness
+    is the default; legacy treatment must be earned by a
+    parseable old version)."""
+    vt, ft = _version_tuple(value), _version_tuple(floor)
+    if vt is None or ft is None:
+        return False
+    width = max(len(vt), len(ft))
+    return vt + (0,) * (width - len(vt)) < \
+        ft + (0,) * (width - len(ft))
+
+
+def _resolve_evidence_path(document, field_path):
+    """Resolve an evidence field path inside a document.
+
+    Grammar (the one the builders actually emit — see
+    narlib.graph / narlib.investigation): dot-separated
+    dictionary keys, each optionally followed by one or
+    more [integer] list indexes, e.g.
+    "properties.package", "permissions[3].name",
+    "components.activity-alias[0].name" (component keys
+    are manifest tag names verbatim and CAN contain
+    hyphens — a narrower tokenizer was the 2.6.1
+    checker-side defect recorded in report §3),
+    "dex_files[0].classes[2].class",
+    "engines.unreal_packages[0].relationships.edges[1]".
+    A key is any run of characters other than '.' and
+    '['; resolution requires the key to EXIST (a present
+    key with a null value still resolves)."""
+    if not isinstance(field_path, str) or not field_path:
+        return False
+    cur = document
+    i, n = 0, len(field_path)
+    while i < n:
+        start = i
+        while i < n and field_path[i] not in ".[":
+            i += 1
+        key = field_path[start:i]
+        if not key or not isinstance(cur, dict) \
+                or key not in cur:
+            return False
+        cur = cur[key]
+        while i < n and field_path[i] == "[":
+            end = field_path.find("]", i)
+            if end < 0:
+                return False
+            token = field_path[i + 1:end]
+            if not token.isdigit():
+                return False
+            idx = int(token)
+            if not isinstance(cur, list) or idx >= len(cur):
+                return False
+            cur = cur[idx]
+            i = end + 1
+        if i < n:
+            if field_path[i] != ".":
+                return False
+            i += 1
+            if i >= n:
+                return False
+    return True
+
+
+def _hypothesis_field_problems(hyp):
+    """Ways an investigation hypothesis is incomplete:
+    it must carry a basis evidence reference plus
+    non-empty confirm and refute criteria (the same
+    gate narlib.investigation enforces at build time)."""
+    if not isinstance(hyp, dict):
+        return ["not an object"]
+    problems = []
+    basis = hyp.get("basis")
+    if not isinstance(basis, dict) or not all(
+            str(basis.get(k) or "").strip()
+            for k in ("stage", "document", "field_path")):
+        problems.append(
+            "missing basis evidence reference "
+            "(stage/document/field_path)")
+    if not str(hyp.get("confirm") or "").strip():
+        problems.append("missing confirm criterion")
+    if not str(hyp.get("refute") or "").strip():
+        problems.append("missing refute criterion")
+    return problems
+
+
+def _verify_evidence_integrity(case_dir, case_doc):
+    """The evidence-integrity section of verify_case:
+    structured per-check results over graph.json /
+    investigation.json / correlations.json (when present)
+    plus the report's companion list. Returns
+    {ok, checks, failures, warnings, notes} where each
+    check is {check, status: pass|fail|warning, detail}.
+    Only "fail" checks land in failures (and therefore
+    in verify's exit code); "warning" checks are the
+    documented legacy tolerances above."""
+    checks, failures, warnings, notes = [], [], [], []
+
+    def record(name, status, detail=""):
+        checks.append({"check": name, "status": status,
+                       "detail": detail})
+        if status == "fail":
+            failures.append(f"{name}: {detail}")
+        elif status == "warning":
+            warnings.append(f"{name}: {detail}")
+
+    case_version = (case_doc or {}).get("nar_version")
+    legacy_case = _version_lt(case_version, "2.6.1")
+    # Severity for evidence-reference and legacy-shape
+    # findings (see the policy block above).
+    ref_status = "warning" if legacy_case else "fail"
+
+    cache = {}
+
+    def present(name):
+        return os.path.isfile(os.path.join(case_dir, name))
+
+    def load(name):
+        if name not in cache:
+            doc = None
+            if present(name):
+                try:
+                    with open(os.path.join(case_dir, name),
+                              encoding="utf-8") as fh:
+                        doc = json.load(fh)
+                except (OSError, ValueError):
+                    doc = None
+            cache[name] = doc
+        return cache[name]
+
+    # ---- report + companion list -------------------------
+    report_doc = load("report.json")
+    if present("report.json") and report_doc is None:
+        record("report.json parses", "fail",
+               "report.json is not valid JSON")
+    companions = {}
+    if isinstance(report_doc, dict) and isinstance(
+            report_doc.get("companions"), dict):
+        companions = report_doc["companions"]
+    listed = {}
+    for key, entry in companions.items():
+        if isinstance(entry, dict) and entry.get("file"):
+            listed[entry["file"]] = key
+    if listed:
+        missing = [f for f in sorted(listed)
+                   if not present(f)]
+        record(
+            "companion files listed in report.json present",
+            "fail" if missing else "pass",
+            "missing from case: " + ", ".join(missing)
+            if missing else
+            f"{len(listed)} listed companions present")
+    elif present("report.json"):
+        notes.append("report.json lists no companions; "
+                     "companion-presence check not applicable")
+
+    # ---- schema validity + version fields ----------------
+    targets = set(listed)
+    for name in ("graph.json", "investigation.json",
+                 "correlations.json"):
+        if present(name):
+            targets.add(name)
+    inv_doc = load("investigation.json") \
+        if present("investigation.json") else None
+    inv_legacy = isinstance(inv_doc, dict) and \
+        "unverified_findings" not in inv_doc and \
+        (_version_lt(inv_doc.get("version"), "2.6.1")
+         or legacy_case)
+    if targets:
+        schema_dir = os.path.join(
+            os.path.dirname(HERE), "schemas")
+        schema_bad = []
+        for fname in sorted(targets):
+            schema_name = _COMPANION_SCHEMAS.get(fname)
+            if present(fname) and load(fname) is None:
+                schema_bad.append(
+                    f"{fname}: not valid JSON")
+                continue
+            if not schema_name or _evidence is None:
+                continue
+            doc = load(fname)
+            if not isinstance(doc, (dict, list)):
+                continue
+            try:
+                with open(os.path.join(schema_dir, schema_name),
+                          encoding="utf-8") as fh:
+                    schema = json.load(fh)
+            except (OSError, ValueError) as e:
+                schema_bad.append(
+                    f"{fname}: schema unavailable: {e}")
+                continue
+            candidate = doc
+            if fname == "investigation.json" and inv_legacy:
+                # Validate the legacy shape on its own
+                # terms: inject the section the 2.6.1
+                # separation added, so the ONLY tolerated
+                # schema gap is that section's absence.
+                candidate = dict(doc)
+                candidate["unverified_findings"] = []
+            if fname == "endpoints.json" and isinstance(
+                    doc, dict) and _version_lt(
+                    case_version, "2.6.2"):
+                # Era mapping (stability audit S-02): the
+                # endpoint classification 'confirmed' was
+                # renamed 'dex-string' in 2.6.2 (a
+                # calibration correction — a string
+                # reference was never confirmation of
+                # traffic). Cases written before the
+                # rename carry the old label legitimately;
+                # validate them under the mapping, the
+                # same era discipline as inv_legacy above,
+                # instead of hard-failing every archived
+                # case on the pipeline's own rename.
+                eps = doc.get("endpoints")
+                if isinstance(eps, list) and any(
+                        isinstance(e, dict) and
+                        e.get("classification") == "confirmed"
+                        for e in eps):
+                    candidate = dict(doc)
+                    candidate["endpoints"] = [
+                        {**e, "classification": "dex-string"}
+                        if isinstance(e, dict) and e.get(
+                            "classification") == "confirmed"
+                        else e for e in eps]
+                    notes.append(
+                        "endpoints.json carries the "
+                        "pre-2.6.2 'confirmed' endpoint "
+                        "label; validated under the era "
+                        "mapping to 'dex-string' (the "
+                        "2.6.2 calibration rename)")
+            errs = _evidence.validate(candidate, schema)
+            if fname == "investigation.json" and inv_legacy:
+                # Hypothesis-field gaps in a legacy
+                # document are reported (as warnings) by
+                # the dedicated hypothesis check below;
+                # the schema layer must not re-report
+                # them as hard failures.
+                errs = [e for e in errs if not (
+                    "$.hypotheses" in e
+                    and "missing required" in e
+                    and any(k in e for k in
+                            ("basis", "confirm", "refute")))]
+            if errs:
+                schema_bad.append(
+                    f"{fname}: {errs[0]}"
+                    + (f" (+{len(errs) - 1} more)"
+                       if len(errs) > 1 else ""))
+        record(
+            "companion schema validity",
+            "fail" if schema_bad else "pass",
+            "; ".join(schema_bad[:5]) if schema_bad else
+            "listed/present companions validate against "
+            "the repo schemas")
+        version_bad = []
+        version_seen = 0
+        for fname in sorted(targets):
+            doc = load(fname)
+            if not isinstance(doc, dict) \
+                    or "version" not in doc:
+                continue
+            version_seen += 1
+            value = doc.get("version")
+            if not isinstance(value, str) or not value.strip():
+                version_bad.append(
+                    f"{fname}: version field is not a "
+                    "non-empty string")
+            elif case_version and value != case_version:
+                version_bad.append(
+                    f"{fname}: version {value} does not "
+                    f"match case nar_version {case_version} "
+                    "(stale or mixed-version companion)")
+        if version_seen:
+            record(
+                "companion version fields match the case "
+                "record",
+                "fail" if version_bad else "pass",
+                "; ".join(version_bad[:5]) if version_bad
+                else f"{version_seen} version fields agree "
+                     f"with nar_version {case_version}")
+    if inv_legacy:
+        record(
+            "investigation legacy sections", "warning",
+            "pre-2.6.1 investigation without an "
+            "unverified_findings section; accepted as a "
+            "legacy case (the section was added by the "
+            "2.6.1 fact separation)")
+
+    # ---- graph structure ---------------------------------
+    graph_doc = load("graph.json") \
+        if present("graph.json") else None
+    if present("graph.json") and graph_doc is None:
+        record("graph.json parses", "fail",
+               "graph.json is not valid JSON")
+    refs = []  # (owner description, evidence dict)
+
+    def collect_refs(owner, record):
+        if not isinstance(record, dict):
+            return
+        for slot in ("evidence", "basis",
+                     "triggering_evidence"):
+            ev = record.get(slot)
+            if isinstance(ev, dict):
+                refs.append((owner, ev))
+        for ev in record.get("evidence_also") or []:
+            if isinstance(ev, dict):
+                refs.append((owner, ev))
+
+    if isinstance(graph_doc, dict):
+        nodes = [n for n in graph_doc.get("nodes") or []
+                 if isinstance(n, dict)]
+        edges = [e for e in graph_doc.get("edges") or []
+                 if isinstance(e, dict)]
+        ids = [n.get("id") for n in nodes]
+        dup_nodes = sorted({i for i in ids
+                            if ids.count(i) > 1})
+        record(
+            "graph node identifiers are unique",
+            "fail" if dup_nodes else "pass",
+            "duplicate node ids: " + ", ".join(
+                str(d) for d in dup_nodes[:5])
+            if dup_nodes else
+            f"{len(ids)} node ids unique")
+        edge_keys = [(e.get("source"), e.get("target"),
+                      e.get("kind"), e.get("status"))
+                     for e in edges]
+        dup_edges = sorted(
+            {k for k in edge_keys if edge_keys.count(k) > 1},
+            key=str)
+        record(
+            "graph edge identifiers are unique",
+            "fail" if dup_edges else "pass",
+            "duplicate edges (source, target, kind, "
+            "status): " + "; ".join(
+                str(d) for d in dup_edges[:5])
+            if dup_edges else
+            f"{len(edge_keys)} edge identities unique")
+        node_set = set(ids)
+        orphans = [e for e in edges
+                   if e.get("source") not in node_set
+                   or e.get("target") not in node_set]
+        orphan_detail = "; ".join(
+            f"{e.get('source')} -> {e.get('target')} "
+            f"({e.get('kind')})" for e in orphans[:5])
+        record(
+            "graph edge endpoints exist as nodes",
+            "fail" if orphans else "pass",
+            f"{len(orphans)} edge endpoints reference "
+            f"missing nodes: {orphan_detail}"
+            if orphans else
+            f"all {len(edges)} edges join existing nodes")
+        record(
+            "graph orphaned relationships",
+            "fail" if orphans else "pass",
+            f"{len(orphans)} orphaned relationships "
+            f"(edges referencing missing nodes): "
+            f"{orphan_detail}" if orphans else
+            "no orphaned relationships")
+        counts = graph_doc.get("counts")
+        if isinstance(counts, dict):
+            problems = []
+            if counts.get("nodes") != len(nodes):
+                problems.append(
+                    f"counts.nodes is {counts.get('nodes')} "
+                    f"but the nodes array has {len(nodes)}")
+            if counts.get("edges") != len(edges):
+                problems.append(
+                    f"counts.edges is {counts.get('edges')} "
+                    f"but the edges array has {len(edges)}")
+            for label, key, items in (
+                    ("nodes_by_kind", "kind", nodes),
+                    ("edges_by_kind", "kind", edges)):
+                recorded = counts.get(label)
+                if isinstance(recorded, dict):
+                    actual = {}
+                    for item in items:
+                        actual[item.get(key)] = \
+                            actual.get(item.get(key), 0) + 1
+                    for kind in sorted(
+                            set(recorded) | set(actual),
+                            key=str):
+                        if recorded.get(kind) != \
+                                actual.get(kind):
+                            problems.append(
+                                f"counts.{label}[{kind}] is "
+                                f"{recorded.get(kind)} but "
+                                f"the array has "
+                                f"{actual.get(kind)}")
+            record(
+                "graph counts reconcile with the arrays",
+                "fail" if problems else "pass",
+                "; ".join(problems[:5]) if problems else
+                "header counts match the node/edge arrays")
+        else:
+            record(
+                "graph counts reconcile with the arrays",
+                "warning",
+                "graph.json carries no counts block; "
+                "nothing to reconcile (legacy shape)")
+        for node in nodes:
+            collect_refs(
+                f"graph.json node {node.get('id')}", node)
+        for edge in edges:
+            collect_refs(
+                f"graph.json edge {edge.get('source')} -> "
+                f"{edge.get('target')} ({edge.get('kind')})",
+                edge)
+
+    # ---- investigation structure --------------------------
+    if present("investigation.json") and inv_doc is None:
+        record("investigation.json parses", "fail",
+               "investigation.json is not valid JSON")
+    if isinstance(inv_doc, dict):
+        counts = inv_doc.get("counts")
+        if isinstance(counts, dict):
+            problems = []
+            for section in ("verified_facts",
+                            "unverified_findings", "paths",
+                            "hypotheses", "unknowns"):
+                if section not in counts:
+                    continue
+                if section not in inv_doc:
+                    if section == "unverified_findings" \
+                            and inv_legacy:
+                        continue
+                    problems.append(
+                        f"counts.{section} is recorded but "
+                        f"the section is absent")
+                elif counts.get(section) != \
+                        len(inv_doc.get(section) or []):
+                    problems.append(
+                        f"counts.{section} is "
+                        f"{counts.get(section)} but the "
+                        f"section has "
+                        f"{len(inv_doc.get(section) or [])}")
+            record(
+                "investigation counts reconcile",
+                "fail" if problems else "pass",
+                "; ".join(problems[:5]) if problems else
+                "counts match the section arrays")
+        else:
+            record(
+                "investigation counts reconcile", "warning",
+                "investigation.json carries no counts "
+                "block; nothing to reconcile (legacy shape)")
+        hyp_bad = []
+        for i, hyp in enumerate(
+                inv_doc.get("hypotheses") or []):
+            problems = _hypothesis_field_problems(hyp)
+            if problems:
+                ident = hyp.get("id") if isinstance(
+                    hyp, dict) else None
+                name = ident or f"hypotheses[{i}]"
+                subject = hyp.get("subject") \
+                    if isinstance(hyp, dict) else None
+                hyp_bad.append(
+                    f"{name} (subject={subject!r}): "
+                    + "; ".join(problems))
+        record(
+            "investigation hypotheses carry basis + "
+            "confirm + refute",
+            ("fail" if hyp_bad and not inv_legacy else
+             "warning" if hyp_bad else "pass"),
+            "; ".join(hyp_bad[:5]) if hyp_bad else
+            f"{len(inv_doc.get('hypotheses') or [])} "
+            "hypotheses complete")
+        for section in ("verified_facts",
+                        "unverified_findings"):
+            for item in inv_doc.get(section) or []:
+                collect_refs(
+                    f"investigation.json {section} item "
+                    f"(subject="
+                    f"{item.get('subject')!r})"
+                    if isinstance(item, dict) else
+                    f"investigation.json {section} item",
+                    item)
+        for item in inv_doc.get("paths") or []:
+            collect_refs(
+                f"investigation.json path "
+                f"{item.get('rule_id') if isinstance(item, dict) else '?'}",
+                item)
+        for i, hyp in enumerate(
+                inv_doc.get("hypotheses") or []):
+            collect_refs(
+                f"investigation.json hypotheses[{i}]", hyp)
+        for item in inv_doc.get("unknowns") or []:
+            collect_refs(
+                "investigation.json unknown", item)
+
+    # ---- correlations counts -------------------------------
+    corr_doc = load("correlations.json") \
+        if present("correlations.json") else None
+    if present("correlations.json") and corr_doc is None:
+        record("correlations.json parses", "fail",
+               "correlations.json is not valid JSON")
+    if isinstance(corr_doc, dict):
+        counts = corr_doc.get("counts")
+        mapping = {
+            "jni_matched": ("jni_bindings", "matched"),
+            "jni_declaration_only":
+                ("jni_bindings", "declaration-only"),
+            "jni_export_only": ("jni_bindings", "export-only"),
+            "components_matched": ("components", "matched"),
+            "components_declaration_only":
+                ("components", "declaration-only"),
+            "components_implementation_only":
+                ("components", "implementation-only"),
+            "endpoints_code_referenced":
+                ("endpoints", "code-referenced"),
+            "endpoints_no_code_reference":
+                ("endpoints", "no-code-reference"),
+            "network_libraries_matched":
+                ("network_libraries", "matched"),
+            "network_libraries_only":
+                ("network_libraries", "library-only"),
+        }
+        if isinstance(counts, dict):
+            problems = []
+            for key, (section, status) in mapping.items():
+                if key not in counts:
+                    continue
+                actual = sum(
+                    1 for e in corr_doc.get(section) or []
+                    if isinstance(e, dict)
+                    and e.get("status") == status)
+                if counts.get(key) != actual:
+                    problems.append(
+                        f"counts.{key} is {counts.get(key)} "
+                        f"but {actual} {section} entries "
+                        f"have status {status}")
+            record(
+                "correlations counts reconcile",
+                "fail" if problems else "pass",
+                "; ".join(problems[:5]) if problems else
+                "counts match the correlation arrays")
+        else:
+            record(
+                "correlations counts reconcile", "warning",
+                "correlations.json carries no counts "
+                "block; nothing to reconcile (legacy shape)")
+
+    # ---- evidence reference resolution ---------------------
+    if refs:
+        doc_bad, path_bad = [], []
+        for owner, ev in refs:
+            doc_name = ev.get("document")
+            field_path = ev.get("field_path")
+            if not doc_name or not isinstance(
+                    field_path, str):
+                doc_bad.append(
+                    f"{owner}: malformed evidence "
+                    f"reference (document={doc_name!r}, "
+                    f"field_path={field_path!r})")
+                continue
+            if not present(doc_name):
+                doc_bad.append(
+                    f"{owner}: cited document {doc_name} "
+                    "is missing from the case")
+                continue
+            target = load(doc_name)
+            if target is None:
+                doc_bad.append(
+                    f"{owner}: cited document {doc_name} "
+                    "is not valid JSON")
+            elif not _resolve_evidence_path(
+                    target, field_path):
+                path_bad.append(
+                    f"{owner}: field path {field_path} "
+                    f"does not resolve in {doc_name}")
+        record(
+            "evidence references name documents present "
+            "in the case",
+            ref_status if doc_bad else "pass",
+            "; ".join(doc_bad[:5]) if doc_bad else
+            f"{len(refs)} evidence references cite "
+            "existing documents")
+        record(
+            "evidence field paths resolve in their "
+            "documents",
+            ref_status if path_bad else "pass",
+            "; ".join(path_bad[:5]) if path_bad else
+            f"{len(refs)} evidence field paths resolve")
+    elif not present("graph.json") and not present(
+            "investigation.json"):
+        notes.append(
+            "no graph.json / investigation.json in this "
+            "case; evidence-integrity checks not "
+            "applicable")
+
+    return {"ok": not failures, "checks": checks,
+            "failures": failures, "warnings": warnings,
+            "notes": notes}
 
 
 def verify_case(case_dir):
@@ -1768,10 +2771,19 @@ def verify_case(case_dir):
     its recorded path), the bundle manifest when present
     (every file's hash + size), and the stage-cache
     integrity keys (recomputed from the case's recorded
-    input hash + its recorded NAR version + stage name).
-    Returns {ok, checks, failures, notes} — a check that
-    cannot run is a note, never a silent pass."""
-    checks, failures, notes = [], [], []
+    input hash + its recorded NAR version + stage name),
+    plus the evidence-integrity section (2.6.2,
+    Workstream F): companion presence/schema/version
+    against the report's companion list, graph structure,
+    count reconciliation, hypothesis completeness, and
+    evidence-reference resolution over graph.json /
+    investigation.json / correlations.json when present.
+    Returns {ok, checks, failures, notes, warnings,
+    evidence_integrity} — a check that cannot run is a
+    note, never a silent pass; warnings never affect ok
+    (see the hard-failure vs warning policy above
+    _verify_evidence_integrity)."""
+    checks, failures, notes, warnings = [], [], [], []
 
     def check(name, ok, detail=""):
         checks.append({"check": name, "ok": bool(ok),
@@ -1779,15 +2791,43 @@ def verify_case(case_dir):
         if not ok:
             failures.append(f"{name}: {detail}")
 
+    empty_section = {
+        "ok": False, "checks": [], "failures": [],
+        "warnings": [],
+        "notes": ["evidence-integrity checks could not "
+                  "run: no readable case.json"]}
     case_json = os.path.join(case_dir, "case.json")
     if not os.path.isfile(case_json):
         check("case.json present", False, "case.json missing")
         return {"ok": False, "checks": checks,
-                "failures": failures, "notes": notes}
+                "failures": failures, "notes": notes,
+                "warnings": warnings,
+                "evidence_integrity": empty_section}
     check("case.json present", True)
-    with open(case_json, encoding="utf-8") as fh:
-        case_doc = json.load(fh)
+    try:
+        with open(case_json, encoding="utf-8") as fh:
+            case_doc = json.load(fh)
+    except ValueError as e:
+        check("case.json parses", False,
+              f"case.json is not valid JSON: {e}")
+        return {"ok": False, "checks": checks,
+                "failures": failures, "notes": notes,
+                "warnings": warnings,
+                "evidence_integrity": empty_section}
+    if not isinstance(case_doc, dict):
+        # A case record that parses but is not an object
+        # is a FAILED verification, not a traceback
+        # (stability audit C-08 — verify itself crashed
+        # on malformed case/manifest shapes).
+        check("case.json parses", False,
+              "case.json is not a JSON object")
+        return {"ok": False, "checks": checks,
+                "failures": failures, "notes": notes,
+                "warnings": warnings,
+                "evidence_integrity": empty_section}
     inp = case_doc.get("input") or {}
+    if not isinstance(inp, dict):
+        inp = {}
     input_sha = inp.get("sha256")
     check("input hash recorded", bool(input_sha))
     input_path = inp.get("path")
@@ -1803,21 +2843,68 @@ def verify_case(case_dir):
                      "(normal for an imported case)")
     manifest_path = os.path.join(case_dir, BUNDLE_MANIFEST)
     if os.path.isfile(manifest_path):
-        with open(manifest_path, encoding="utf-8") as fh:
-            manifest = json.load(fh)
-        check("bundle input hash matches case record",
-              manifest.get("input_sha256") == input_sha)
-        bad = []
-        for entry in manifest.get("files", []):
-            full = os.path.join(case_dir, entry["path"])
-            if not os.path.isfile(full):
-                bad.append(f"{entry['path']} missing")
-            elif sha256_of(full) != entry["sha256"] or \
-                    os.path.getsize(full) != entry["size_bytes"]:
-                bad.append(f"{entry['path']} hash/size mismatch")
-        check("bundle manifest: every file intact", not bad,
-              "; ".join(bad[:5]) if bad else
-              f"{len(manifest.get('files', []))} files verified")
+        try:
+            with open(manifest_path, encoding="utf-8") as fh:
+                manifest = json.load(fh)
+            if not isinstance(manifest, dict):
+                raise ValueError("manifest is not an object")
+        except ValueError as e:
+            check("bundle manifest parses", False, str(e))
+            manifest = None
+        if manifest is not None:
+            check("bundle input hash matches case record",
+                  manifest.get("input_sha256") == input_sha)
+            bad = []
+            listed_paths = set()
+            entries = manifest.get("files", [])
+            if not isinstance(entries, list):
+                entries = []
+                bad.append("manifest files is not a list")
+            for entry in entries:
+                if not isinstance(entry, dict) or \
+                        not entry.get("path"):
+                    bad.append("manifest entry without a "
+                               "path")
+                    continue
+                listed_paths.add(entry["path"])
+                try:
+                    full = _contained_join(case_dir,
+                                           entry["path"])
+                except ValueError:
+                    # A manifest path is data, not a
+                    # trusted route: it must stay inside
+                    # the case directory (C-18).
+                    bad.append(
+                        f"{entry['path']} escapes the case "
+                        "directory")
+                    continue
+                if not os.path.isfile(full):
+                    bad.append(f"{entry['path']} missing")
+                elif sha256_of(full) != entry.get(
+                        "sha256") or os.path.getsize(
+                        full) != entry.get("size_bytes"):
+                    bad.append(
+                        f"{entry['path']} hash/size mismatch")
+            check("bundle manifest: every file intact",
+                  not bad,
+                  "; ".join(bad[:5]) if bad else
+                  f"{len(entries)} files verified")
+            # Files present but NOT in the manifest were
+            # previously invisible to verify (C-07: the
+            # manifest check was one-directional). They
+            # are a warning, not a failure — a case dir
+            # can legitimately gain notes — but they are
+            # never silent.
+            on_disk = {rel for rel, _full in
+                       _case_files(case_dir)}
+            extra = sorted(on_disk - listed_paths
+                           - {BUNDLE_MANIFEST})
+            if extra:
+                warnings.append(
+                    "files present in the case but not "
+                    "listed in the bundle manifest: "
+                    + ", ".join(extra[:10])
+                    + (" …" if len(extra) > 10 else ""))
     else:
         notes.append("no bundle manifest in this case "
                      "(not an imported bundle); manifest "
@@ -1825,7 +2912,23 @@ def verify_case(case_dir):
     cache_dir = os.path.join(case_dir, "cache")
     if os.path.isdir(cache_dir) and input_sha:
         case_version = case_doc.get("nar_version") or NAR_VERSION
+        # Legacy container era (stability audit S-01):
+        # before the fix, stage cache keys for CONTAINER
+        # targets (xapk/apks/aab) were derived from the
+        # EXTRACTED base APK's hash, which the case does
+        # not record. Those keys cannot be recomputed
+        # from case data — a mismatch in that era proves
+        # nothing either way, so it is a warning with the
+        # reason stated, never a hard failure and never
+        # silently passed. Unparsable cache JSON remains
+        # a hard failure in every era.
+        input_ext = os.path.splitext(
+            (inp.get("path") or ""))[1].lower()
+        legacy_container = _version_lt(
+            case_version, "2.6.2") and input_ext in (
+                ".xapk", ".apks", ".aab")
         bad = []
+        legacy_key_notes = []
         checked = 0
         for name in sorted(os.listdir(cache_dir)):
             if not name.endswith(".json"):
@@ -1844,7 +2947,10 @@ def verify_case(case_dir):
             ).hexdigest()
             checked += 1
             if recorded != expected:
-                bad.append(f"{stage}: cache key mismatch")
+                if legacy_container:
+                    legacy_key_notes.append(stage)
+                else:
+                    bad.append(f"{stage}: cache key mismatch")
             try:
                 with open(os.path.join(cache_dir, name),
                           encoding="utf-8") as fh:
@@ -1854,16 +2960,40 @@ def verify_case(case_dir):
         check("stage cache integrity keys", not bad,
               "; ".join(bad[:5]) if bad else
               f"{checked} cache entries verified")
+        if legacy_key_notes:
+            warnings.append(
+                "stage cache keys not recomputed for "
+                + ", ".join(sorted(legacy_key_notes))
+                + ": this pre-2.6.2 container case derived"
+                " its keys from the extracted base APK's"
+                " hash, which the case does not record"
+                " (S-01); the keys are unverifiable from"
+                " case data, neither passed nor failed")
     stages = case_doc.get("stages") or {}
+    if not isinstance(stages, dict):
+        stages = {}
     failed = [s for s, v in stages.items()
-              if v.get("status") not in ("ok", "cached")]
+              if not isinstance(v, dict)
+              or v.get("status") not in ("ok", "cached")]
     if failed:
         notes.append("stages recorded as not-ok in this "
                      f"case: {', '.join(sorted(failed))} "
                      "(integrity is unaffected; the case "
                      "records its own degraded stages)")
+    section = _verify_evidence_integrity(case_dir, case_doc)
+    for entry in section["checks"]:
+        checks.append({
+            "check": entry["check"],
+            "ok": entry["status"] != "fail",
+            "detail": entry["detail"],
+            "status": entry["status"]})
+    failures.extend(section["failures"])
+    warnings.extend(section["warnings"])
+    notes.extend(section["notes"])
     return {"ok": not failures, "checks": checks,
-            "failures": failures, "notes": notes}
+            "failures": failures, "notes": notes,
+            "warnings": warnings,
+            "evidence_integrity": section}
 
 
 def main(argv=None):
@@ -1957,9 +3087,17 @@ def main(argv=None):
                     min_conf = float(min_conf)
                 except ValueError:
                     pass  # a level name such as "high"
-            doc = _graph.query_graph(
-                doc, kind=args.kind, edge_kind=args.edge_kind,
-                min_confidence=min_conf, text=args.text)
+            try:
+                doc = _graph.query_graph(
+                    doc, kind=args.kind,
+                    edge_kind=args.edge_kind,
+                    min_confidence=min_conf, text=args.text)
+            except ValueError as e:
+                # An unknown --min-confidence level name is
+                # a usage error (exit 2), not a traceback
+                # (C-18 companion to the graph.py fix).
+                print(f"nar-analyze: {e}", file=sys.stderr)
+                return 2
         else:
             if _investigation is None:
                 print("nar-analyze: investigation module "
@@ -1978,7 +3116,12 @@ def main(argv=None):
                 print("nar-analyze: --export needs --bundle FILE",
                       file=sys.stderr)
                 return 2
-            summary = export_case(args.export, args.bundle)
+            try:
+                summary = export_case(args.export, args.bundle)
+            except (ValueError, OSError) as e:
+                print(f"nar-analyze: export failed: {e}",
+                      file=sys.stderr)
+                return 1
             print(json.dumps(summary, indent=2) if args.json
                   else f"exported {summary['files']} files to "
                        f"{summary['bundle']}")
@@ -2007,8 +3150,13 @@ def main(argv=None):
             print(f"case verify: "
                   f"{'OK' if result['ok'] else 'FAILED'}")
             for c in result["checks"]:
-                print(f"  [{'ok' if c['ok'] else 'FAIL'}] "
+                mark = "FAIL" if not c["ok"] else \
+                    "warn" if c.get("status") == "warning" \
+                    else "ok"
+                print(f"  [{mark}] "
                       f"{c['check']} {c['detail']}")
+            for w in result.get("warnings", []):
+                print(f"  warning: {w}")
             for n in result["notes"]:
                 print(f"  note: {n}")
         return 0 if result["ok"] else 1

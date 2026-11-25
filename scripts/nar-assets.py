@@ -369,7 +369,7 @@ def inventory(target):
     for a in assets:
         by_category[a["category"]] = \
             by_category.get(a["category"], 0) + 1
-    return {"tool": "nar-assets", "version": "2.6.1",
+    return {"tool": "nar-assets", "version": "2.6.2",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "assets": assets, "total_assets": len(assets),
@@ -412,7 +412,8 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         report = inventory(args.target)
-    except (FileNotFoundError, zipfile.BadZipFile) as e:
+    except (FileNotFoundError, IsADirectoryError,
+            zipfile.BadZipFile) as e:
         print(f"nar-assets: {e}", file=sys.stderr)
         return 2
     if args.json:

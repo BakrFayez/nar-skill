@@ -23,6 +23,10 @@ Sections:
   evidence and a confidence). A path is advice, not a fact.
 - hypotheses: clearly separated, each labeled hypothesis
   with its basis and what would confirm / refute it.
+  Enforced at build time (2.6.2): a candidate hypothesis
+  without a basis evidence reference or without either
+  criterion is NOT emitted; the suppression is recorded
+  in the document notes (see _hypothesis_problems).
 - unknowns: material questions static data cannot answer.
 
 The layer is optional: nar-analyze skips it when disabled
@@ -59,6 +63,56 @@ def _ev(stage, document, field_path):
             "field_path": field_path}
 
 
+def _hypothesis_problems(hyp):
+    """Return the list of ways a candidate hypothesis is
+    incomplete (empty list = emittable). Investigation
+    semantics (2.6.2, Workstream F): a hypothesis must
+    carry a statement, a supporting-evidence basis (an
+    evidence reference with stage / document /
+    field_path), and BOTH a confirmation criterion and a
+    refutation criterion. A rule that cannot state what
+    would confirm and what would refute its hypothesis
+    does not emit one — an unfalsifiable hypothesis is
+    not investigation output. Hypotheses are never
+    promoted to facts anywhere: this gate only decides
+    emission, and emitted hypotheses stay in the
+    hypotheses section under their label."""
+    problems = []
+    if not isinstance(hyp, dict):
+        return ["not an object"]
+    if not str(hyp.get("statement") or "").strip():
+        problems.append("missing statement")
+    basis = hyp.get("basis")
+    if not isinstance(basis, dict) or not all(
+            str(basis.get(k) or "").strip()
+            for k in ("stage", "document", "field_path")):
+        problems.append(
+            "missing basis evidence reference "
+            "(stage/document/field_path)")
+    if not str(hyp.get("confirm") or "").strip():
+        problems.append("missing confirm criterion")
+    if not str(hyp.get("refute") or "").strip():
+        problems.append("missing refute criterion")
+    return problems
+
+
+def _emit_hypothesis(hypotheses, suppressed, hyp):
+    """Append hyp to hypotheses only when it is complete
+    (see _hypothesis_problems); otherwise record the
+    suppression so the builder's notes say what was held
+    back and why, instead of silently dropping it."""
+    problems = _hypothesis_problems(hyp)
+    if problems:
+        suppressed.append(
+            f"hypothesis suppressed at build time "
+            f"(subject={hyp.get('subject')!r}): "
+            + "; ".join(problems))
+        return False
+    hyp.setdefault("label", "hypothesis")
+    hypotheses.append(hyp)
+    return True
+
+
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2,
               "low": 3, "informational": 4}
 
@@ -67,9 +121,10 @@ def build_investigation(dex_data=None, native_data=None,
                         perms_data=None, network_data=None,
                         security_data=None,
                         correlations_data=None,
-                        engines_data=None, version="2.6.1"):
+                        engines_data=None, version="2.6.2"):
     facts, paths, hypotheses, unknowns = [], [], [], []
     unverified = []
+    suppressed_hypotheses = []
     notes = []
     for label, data in (
             ("dex", dex_data), ("native", native_data),
@@ -83,10 +138,19 @@ def build_investigation(dex_data=None, native_data=None,
                 "depending on it did not run")
 
     # ---- facts: security findings, split by status -------
-    # A finding whose verification_status is UNVERIFIED
-    # (or absent, which defaults to UNVERIFIED) is
-    # reported under unverified_findings, never as a
-    # verified fact (2.6.1 deep-audit remediation).
+    # Promotion to verified_facts is an ALLOWLIST
+    # (stability audit C-04): only a status the producers
+    # use for evidence-backed claims — CONFIRMED or
+    # STRONGLY_INDICATED — makes a fact. Everything else
+    # (UNVERIFIED, POTENTIAL, CONTRADICTED, an absent or
+    # null status, or any string a malformed stage
+    # document invents) lands in unverified_findings.
+    # The previous test was a one-string denylist, so
+    # POTENTIAL and even CONTRADICTED findings were
+    # promoted to verified facts.
+    def _is_verified(status):
+        return status in ("CONFIRMED", "STRONGLY_INDICATED")
+
     findings = (security_data or {}).get("findings") or []
     for i, f in enumerate(findings):
         item = {
@@ -100,17 +164,17 @@ def build_investigation(dex_data=None, native_data=None,
                 "security", "security-findings.json",
                 f"findings[{i}]"),
         }
-        if item["verification_status"] == "UNVERIFIED":
-            unverified.append(item)
-        else:
+        if _is_verified(item["verification_status"]):
             facts.append(item)
+        else:
+            unverified.append(item)
 
     # ---- verified facts + paths from correlations --------
     corr = correlations_data or {}
     for i, e in enumerate(corr.get("jni_bindings") or []):
         status = e.get("status")
         if status == "matched":
-            facts.append({
+            item = {
                 "fact": "JNI binding matched between DEX "
                         "declaration and native export",
                 "kind": "jni_binding", "subject": e.get("symbol"),
@@ -120,7 +184,13 @@ def build_investigation(dex_data=None, native_data=None,
                 "evidence": _ev("correlations",
                                 "correlations.json",
                                 f"jni_bindings[{i}]"),
-            })
+            }
+            # A "matched" join whose own verification
+            # status is not verified-grade is not a fact
+            # (C-04: the status field alone used to
+            # promote it).
+            (facts if _is_verified(item["verification_status"])
+             else unverified).append(item)
         elif status == "declaration-only":
             paths.append({
                 "rule_id": "INV-JNI-DECL-ONLY",
@@ -137,7 +207,7 @@ def build_investigation(dex_data=None, native_data=None,
                     "correlations", "correlations.json",
                     f"jni_bindings[{i}]"),
             })
-            hypotheses.append({
+            _emit_hypothesis(hypotheses, suppressed_hypotheses, {
                 "label": "hypothesis",
                 "statement": (
                     "The declared native method may be bound "
@@ -174,7 +244,7 @@ def build_investigation(dex_data=None, native_data=None,
     for i, e in enumerate(corr.get("components") or []):
         status = e.get("status")
         if status == "matched":
-            facts.append({
+            item = {
                 "fact": "Component declared in the manifest "
                         "and implemented in DEX",
                 "kind": "component", "subject": e.get("component"),
@@ -184,7 +254,9 @@ def build_investigation(dex_data=None, native_data=None,
                 "evidence": _ev("correlations",
                                 "correlations.json",
                                 f"components[{i}]"),
-            })
+            }
+            (facts if _is_verified(item["verification_status"])
+             else unverified).append(item)
         elif status in ("declaration-only",
                         "implementation-only"):
             paths.append({
@@ -204,7 +276,7 @@ def build_investigation(dex_data=None, native_data=None,
 
     for i, e in enumerate(corr.get("endpoints") or []):
         if e.get("status") == "code-referenced":
-            facts.append({
+            item = {
                 "fact": "Endpoint is referenced from code",
                 "kind": "endpoint", "subject": e.get("url"),
                 "detail": ", ".join(
@@ -214,7 +286,9 @@ def build_investigation(dex_data=None, native_data=None,
                 "evidence": _ev("correlations",
                                 "correlations.json",
                                 f"endpoints[{i}]"),
-            })
+            }
+            (facts if _is_verified(item["verification_status"])
+             else unverified).append(item)
         elif e.get("status") == "no-code-reference":
             paths.append({
                 "rule_id": "INV-ENDPOINT-NO-CODE-REF",
@@ -364,6 +438,15 @@ def build_investigation(dex_data=None, native_data=None,
                               str(p.get("subject"))))
     for idx, p in enumerate(paths):
         p["rank"] = idx + 1
+
+    # Defense in depth (2.6.2, Workstream F): re-gate the
+    # final hypothesis list, so a future rule that appends
+    # directly still cannot emit an incomplete hypothesis.
+    kept = []
+    for hyp in hypotheses:
+        _emit_hypothesis(kept, suppressed_hypotheses, hyp)
+    hypotheses = kept
+    notes = notes + suppressed_hypotheses
 
     return {
         "tool": "nar-analyze", "version": version,

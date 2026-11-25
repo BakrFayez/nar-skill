@@ -83,6 +83,10 @@ def parse_pck(data):
             # Format 3 header is 104 bytes and the directory sits
             # at the recorded offset (the end of the pack), not
             # right after the header.
+            if len(data) < 40:
+                raise PckError(
+                    "truncated format-3 header (directory "
+                    "offset field incomplete)")
             dir_offset = struct.unpack_from("<Q", data, 32)[0]
             report["directory_offset"] = dir_offset
         else:
@@ -136,7 +140,13 @@ def parse_pck(data):
             path = raw.rstrip(b"\x00").decode("utf-8")
         except UnicodeDecodeError as e:
             raise PckError(f"directory path does not decode: {e}") from e
-        if pos + 32 > len(data):
+        # Entry record: offset+size+MD5 = 32 bytes, plus a
+        # 4-byte flags word in format >= 2 — the guard must
+        # cover the flags read too (a directory truncated
+        # at exactly 32–35 bytes used to leak struct.error
+        # instead of PckError; stability audit B-05).
+        need = 36 if fmt >= 2 else 32
+        if pos + need > len(data):
             raise PckError("directory is truncated at entry data")
         off, size = struct.unpack_from("<QQ", data, pos)
         pos += 16
@@ -293,6 +303,12 @@ def tool_listing(pck_path):
                               capture_output=True, text=True, timeout=300)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"GodotPckTool did not run: {e}"
+    if proc.returncode != 0:
+        # A failed run's stdout is not a listing, however
+        # parseable its lines look (stability audit B-10).
+        return None, (f"GodotPckTool exited "
+                      f"{proc.returncode}: "
+                      f"{(proc.stderr or '').strip()[:200]}")
     files = []
     for line in proc.stdout.splitlines():
         path, sep, size = line.rpartition(" size: ")
@@ -492,7 +508,13 @@ def inspect(target):
         sub = inspect_pck_bytes(data, os.path.basename(target))
         report["is_godot"] = "parse_error" not in sub
         report["pck"] = sub
-        if "parse_error" in sub:
+        if "parse_error" in sub or "listing_error" in sub:
+            # The fallback the module docstring promises
+            # covers the listing_error outcomes too
+            # (encrypted directory, unsupported format) —
+            # it previously triggered only on parse_error,
+            # so exactly the packs that need the tool most
+            # never got it (B-10).
             files, err = tool_listing(target)
             if files is not None:
                 sub["files"] = files
@@ -532,7 +554,14 @@ def inspect(target):
             data = zf.read(pcks[0])
             sub = inspect_pck_bytes(data, pcks[0])
             report["pck"] = sub
-            if "parse_error" in sub:
+            if len(pcks) > 1:
+                # Only the first embedded pack is parsed;
+                # say so and name the rest (B-20).
+                sub["packs_not_parsed"] = pcks[1:]
+                sub["packs_note"] = (
+                    f"{len(pcks)} embedded .pck files; "
+                    "only the first was parsed")
+            if "parse_error" in sub or "listing_error" in sub:
                 # Temp dir is removed on BOTH the success and
                 # failure paths (Phase 10 temp audit: this
                 # mkdtemp previously leaked on every run).

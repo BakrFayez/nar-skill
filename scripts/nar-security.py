@@ -20,7 +20,7 @@ protective controls that ARE present are listed as
 positive observations, not findings.
 
 Checks: debuggable builds, backup posture, cleartext
-traffic (manifest + NSC + confirmed http endpoints),
+traffic (manifest + NSC + DEX-string http endpoints),
 credentials embedded in endpoint URLs, exported components
 without permission guards, dangerous-permission surface,
 v1-only signing, outdated target/min SDK, dynamic code
@@ -51,6 +51,12 @@ def run_json_tool(script, args, timeout=1800):
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout)
+        if proc.returncode != 0:
+            # A failed tool's stdout is an error document,
+            # not a result: returning it let a bad target
+            # produce an empty-but-successful report
+            # downstream (stability audit D-02).
+            return None
         return json.loads(proc.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
@@ -87,6 +93,14 @@ def review(target, deep=False, work_dir=None):
     network = run_json_tool("nar-network.py", network_args)
     findings = Findings()
     positives = []
+    skipped = []
+    if network is None:
+        # A missing sub-result must never read as "no
+        # network findings" (stability audit D-13).
+        skipped.append(
+            "network checks (sensitive endpoints, "
+            "cleartext, network security config) skipped: "
+            "nar-network.py did not return a result")
     app = perms.get("application") or {}
     manifest = "AndroidManifest.xml"
 
@@ -121,8 +135,13 @@ def review(target, deep=False, work_dir=None):
             "migration may accept this risk.",
             verification_status="CONFIRMED")
     # Exported components without permission guards.
+    # "activity-alias" is a real component kind (nar-perms
+    # COMPONENT_TAGS includes it): an exported alias
+    # exposes its target activity, and omitting it here
+    # was a silent false negative (stability audit D-07).
     components = perms.get("components") or {}
-    for kind in ("activity", "service", "receiver", "provider"):
+    for kind in ("activity", "activity-alias", "service",
+                 "receiver", "provider"):
         exposed = [c for c in components.get(kind, [])
                    if c.get("exported") and not c.get("permission")]
         if not exposed:
@@ -218,13 +237,13 @@ def review(target, deep=False, work_dir=None):
                 "live credentials; verify before rotating.",
                 verification_status="STRONGLY_INDICATED")
         cleartext = [e for e in network.get("endpoints", [])
-                     if e["classification"] == "confirmed"
+                     if e["classification"] == "dex-string"
                      and e["url"].startswith("http://")]
         if cleartext:
             findings.add(
                 "Cleartext HTTP endpoints in code", "medium",
                 "high", "network", "DEX string tables",
-                f"{len(cleartext)} confirmed http:// endpoint"
+                f"{len(cleartext)} DEX-string http:// endpoint"
                 f"(s), e.g. {cleartext[0]['url'][:120]}",
                 "Cleartext traffic can be read and modified "
                 "on the network path.",
@@ -265,6 +284,11 @@ def review(target, deep=False, work_dir=None):
         positives.append("debuggable explicitly disabled")
     if deep:
         dex = run_json_tool("nar-dex.py", [target])
+        if dex is None:
+            skipped.append(
+                "deep DEX checks (dynamic code loading, "
+                "WebView bridges) skipped: nar-dex.py did "
+                "not return a result")
         if dex:
             loaders = set()
             js_bridge = False
@@ -312,10 +336,11 @@ def review(target, deep=False, work_dir=None):
                     "The bridge may only serve first-party "
                     "bundled pages.",
                     verification_status="STRONGLY_INDICATED")
-    return {"tool": "nar-security", "version": "2.6.1",
+    return {"tool": "nar-security", "version": "2.6.2",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "findings": findings.items,
+            "checks_skipped": skipped,
             "positive_observations": positives,
             "severity_counts": {
                 s: sum(1 for f in findings.items
@@ -338,6 +363,8 @@ def human(report):
         print(f"    remediation: {f['remediation'][:150]}")
     for pos in report["positive_observations"]:
         print(f"positive: {pos}")
+    for skipped_check in report.get("checks_skipped", []):
+        print(f"skipped: {skipped_check}")
     if not report["findings"]:
         print("No findings from the static rule set.")
 

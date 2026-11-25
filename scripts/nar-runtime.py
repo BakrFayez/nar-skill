@@ -55,6 +55,8 @@ Usage:
                             [--session-out DIR]
     python3 nar-runtime.py [--json] diagnose [--serial S]
                             [--package PKG] [--recover]
+    python3 nar-runtime.py validate [--serial S]
+                            [--package PKG] [--json PATH]
     python3 nar-runtime.py [--json] timeline-template
 
 Part of NAR (Nirous Android Reversing). Research by Bakr Fayez.
@@ -176,7 +178,20 @@ CAPABILITY_PROPS = (
 )
 
 _EMULATOR_HARDWARE = ("ranchu", "goldfish", "vbox86", "emulator",
-                      "ttvm", "nox", "intel")
+                      "ttvm", "nox")
+# "intel" used to sit in the strong list: Intel is a
+# legitimate physical hardware vendor (x86 phones and
+# tablets shipped), so an Intel hardware string is at
+# most a WEAK emulator hint (stability audit D-11).
+_EMULATOR_HARDWARE_WEAK = ("intel",)
+# Identity properties whose presence makes a property
+# set rich enough for a "physical" verdict by absence
+# of markers; a sparser set is "unknown", never
+# physical-by-default (D-11).
+_IDENTITY_PROPS = ("ro.product.model", "ro.product.brand",
+                   "ro.product.manufacturer",
+                   "ro.product.device",
+                   "ro.build.fingerprint", "ro.hardware")
 _FRIDA_SERVER_DIR = "/data/local/tmp"
 
 
@@ -264,6 +279,9 @@ def classify_device(props, serial=None):
     if hw and any(h in hw for h in _EMULATOR_HARDWARE):
         add("ro.hardware", props.get("ro.hardware"),
             "emulator", "strong")
+    elif hw and any(h in hw for h in _EMULATOR_HARDWARE_WEAK):
+        add("ro.hardware", props.get("ro.hardware"),
+            "emulator", "weak")
     model = (props.get("ro.product.model") or "")
     if re.search(r"(?i)sdk|emulator|android sdk built for",
                  model):
@@ -280,14 +298,22 @@ def classify_device(props, serial=None):
             "emulator", "weak")
     strong = [e for e in evidence if e["strength"] == "strong"]
     weak = [e for e in evidence if e["strength"] == "weak"]
+    identity_present = sum(1 for p in _IDENTITY_PROPS
+                           if props.get(p))
     if strong or len(weak) >= 2:
         kind = "emulator"
     elif not props:
         kind = "unknown"
     elif evidence:
         kind = "unknown"
-    else:
+    elif identity_present >= 3:
         kind = "physical"
+    else:
+        # A near-empty property set (one or two unrelated
+        # values) used to earn "physical" by absence of
+        # markers — absence of evidence on a sparse set
+        # is not evidence of a physical device (D-11).
+        kind = "unknown"
     return {"kind": kind, "evidence": evidence,
             "basis": ("strong emulator marker(s): "
                       + ", ".join(e["property"] for e in strong)
@@ -297,6 +323,9 @@ def classify_device(props, serial=None):
                       "no property data was readable"
                       if kind == "unknown" and not props else
                       "weak emulator evidence only; not decisive"
+                      if kind == "unknown" and evidence else
+                      "property set too sparse to classify "
+                      "(fewer than 3 identity properties)"
                       if kind == "unknown" else
                       "property set populated, no emulator "
                       "markers present")}
@@ -315,6 +344,7 @@ def device_capabilities(adb_path, serial, runner=None,
         "model": props.get("ro.product.model"),
         "android": props.get("ro.build.version.release"),
         "api_level": None,
+        "fingerprint": props.get("ro.build.fingerprint"),
         "abi": props.get("ro.product.cpu.abi"),
         "abilist": [a for a in (props.get(
             "ro.product.cpu.abilist") or "").split(",") if a],
@@ -363,11 +393,209 @@ def device_capabilities(adb_path, serial, runner=None,
             if m:
                 server_version = ".".join(str(p) for p in m)
     caps["frida_server"] = {
-        "present": bool(names), "files": names,
+        # Presence means a BINARY candidate exists: the
+        # unfiltered prefix list also matches sidecar
+        # files (frida-server.log), which previously made
+        # a lone log file report the server "present"
+        # (stability audit D-06).
+        "present": bool(candidates), "files": names,
         "version": server_version,
         "compatibility": frida_compatibility(
             frida_host_version, server_version)}
+    caps["statuses"] = capability_statuses(caps)
     return caps
+
+
+# ------------------------------------------------------------------
+# 2.6.2 (WS-B): explicit capability status vocabulary.
+#
+# Every capability/property a capability record reports carries
+# exactly one status from CAPABILITY_STATUSES:
+#
+#   detected     the value was read from the device (a property
+#                or a directory listing answered) but no active
+#                probe confirmed it end to end.
+#   verified     an active probe confirmed the value: adb
+#                answered for this serial, the `id` probe read
+#                the adbd uid, or the frida-server binary itself
+#                executed and reported a version that matches
+#                the host.
+#   unsupported  the value was read, but the toolchain cannot
+#                serve it: a Frida version mismatch, or a device
+#                ABI with no frida-server build.
+#   unavailable  a device answered, but this value could not
+#                be read (missing property, unprobeable server
+#                version, no frida-server present).
+#   not_tested   nothing was attempted: no capability record
+#                exists (no device), so no claim is made.
+#
+# The mapping is a pure function of an already-gathered
+# capability record (plus the adb device state when the caller
+# knows it), so it is unit-testable against recorded outputs.
+# Emulator-vs-physical classification is NOT re-derived here:
+# it stays with classify_device() and its multi-marker
+# discipline (one strong marker, or two weak ones); the status
+# vocabulary only describes how well each value is established.
+# ------------------------------------------------------------------
+
+CAPABILITY_STATUSES = ("detected", "verified", "unsupported",
+                       "unavailable", "not_tested")
+
+# Device ABI -> the frida-server build architecture that serves
+# it. An ABI absent from this map has no frida-server build and
+# is reported unsupported for Frida work (the ABI itself is
+# still detected on the device).
+_FRIDA_ARCH_FOR_ABI = {"arm64-v8a": "arm64",
+                       "armeabi-v7a": "arm", "armeabi": "arm",
+                       "x86": "x86", "x86_64": "x86_64"}
+
+
+def frida_arch_for_abi(abi):
+    """frida-server build arch for a device ABI, or None when
+    no frida-server build exists for that ABI."""
+    return _FRIDA_ARCH_FOR_ABI.get(abi or "")
+
+
+def frida_server_arch(filename):
+    """Build arch named by a frida-server file name
+    ('frida-server-17.27.4-android-x86_64' -> 'x86_64'); None
+    for the bare 'frida-server' name, which carries no arch."""
+    m = re.search(r"-android-([A-Za-z0-9_]+)$", filename or "")
+    return m.group(1) if m else None
+
+
+def capability_statuses(caps, adb_state=None):
+    """Map one device_capabilities() record (or None) onto the
+    status vocabulary. Returns {field: {status, value, detail}}
+    for: adb_connectivity, api_level, android_version,
+    build_fingerprint, device_model, abi_primary, abi_list
+    (with a per-ABI 'entries' list), root_status and
+    frida_compatibility. With caps=None every field is
+    not_tested: no device means no claim."""
+    out = {}
+
+    def add(field, status, value, detail, **extra):
+        entry = {"status": status, "value": value,
+                 "detail": detail}
+        entry.update(extra)
+        out[field] = entry
+
+    if caps is None:
+        for field in ("adb_connectivity", "api_level",
+                      "android_version", "build_fingerprint",
+                      "device_model", "abi_primary", "abi_list",
+                      "root_status", "frida_compatibility"):
+            add(field, "not_tested", None,
+                "no device capability record was gathered")
+        return out
+    props = caps.get("properties") or {}
+    populated = bool(props)
+    if adb_state == "device" or (adb_state is None and populated):
+        add("adb_connectivity",
+            "verified" if adb_state == "device" else "detected",
+            caps.get("serial"),
+            "adb answered for this serial and properties were "
+            "read" if adb_state == "device" else
+            "properties were read over adb; the adb device "
+            "state was not recorded by the caller")
+    elif adb_state:
+        add("adb_connectivity", "unavailable", caps.get("serial"),
+            f"adb reports this device as '{adb_state}', which "
+            "is not usable; authorize it or wait for it to "
+            "return to state 'device'")
+    else:
+        add("adb_connectivity", "unavailable", caps.get("serial"),
+            "no properties could be read over adb")
+
+    def prop_status(field, value, label):
+        if value is not None:
+            add(field, "detected", value,
+                f"{label} read from the device properties")
+        elif populated:
+            add(field, "unavailable", None,
+                f"{label} was not present in the device "
+                "property dump")
+        else:
+            add(field, "not_tested", None,
+                "no device properties could be read")
+
+    prop_status("api_level", caps.get("api_level"), "API level")
+    prop_status("android_version", caps.get("android"),
+                "Android version")
+    prop_status("build_fingerprint", caps.get("fingerprint"),
+                "build fingerprint")
+    prop_status("device_model", caps.get("model"), "device model")
+    prop_status("abi_primary", caps.get("abi"), "primary ABI")
+    entries = []
+    for abi in caps.get("abilist") or []:
+        arch = frida_arch_for_abi(abi)
+        if arch:
+            entries.append({
+                "abi": abi, "status": "detected",
+                "frida_arch": arch,
+                "detail": f"device lists {abi}; a frida-server "
+                          f"{arch} build serves this ABI"})
+        else:
+            entries.append({
+                "abi": abi, "status": "unsupported",
+                "frida_arch": None,
+                "detail": f"device lists {abi}; no frida-server "
+                          "build exists for this ABI"})
+    if entries:
+        add("abi_list",
+            "unsupported" if all(e["status"] == "unsupported"
+                                 for e in entries) else "detected",
+            caps.get("abilist"),
+            "per-ABI support in 'entries': an ABI is "
+            "unsupported only for Frida work when no "
+            "frida-server build exists for it",
+            entries=entries)
+    elif populated:
+        add("abi_list", "unavailable", [],
+            "the device reported no ABI list", entries=[])
+    else:
+        add("abi_list", "not_tested", None,
+            "no device properties could be read", entries=[])
+    root = caps.get("root") or {}
+    if root.get("evidence"):
+        add("root_status", "verified", root.get("adbd_uid0"),
+            "the `id` probe answered: adbd runs as uid=0 "
+            "(root)" if root.get("adbd_uid0") else
+            "the `id` probe answered: adbd does not run as "
+            "uid=0 (not root)")
+    elif populated:
+        add("root_status", "unavailable", None,
+            "the `id` probe did not answer; root state is "
+            "unknown, not guessed")
+    else:
+        add("root_status", "not_tested", None,
+            "no device properties could be read")
+    server = caps.get("frida_server") or {}
+    compat = server.get("compatibility") or {}
+    if compat.get("status") == "match":
+        add("frida_compatibility", "verified",
+            server.get("version"),
+            "the frida-server binary executed on the device "
+            "and its version agrees with the host on "
+            "major.minor")
+    elif compat.get("status") == "mismatch":
+        add("frida_compatibility", "unsupported",
+            server.get("version"), compat.get("message", ""))
+    elif server.get("present"):
+        add("frida_compatibility", "detected",
+            server.get("version"),
+            "a frida-server binary is present on the device "
+            "but its version could not be probed (zero or "
+            "several binary candidates, or the probe did not "
+            "answer)")
+    elif populated:
+        add("frida_compatibility", "unavailable", None,
+            "no frida-server binary is present in "
+            "/data/local/tmp")
+    else:
+        add("frida_compatibility", "not_tested", None,
+            "no device properties could be read")
+    return out
 
 
 def app_installed(adb_path, serial, package, runner=None):
@@ -395,6 +623,14 @@ FAIL_FRIDA_HOST_MISSING = "FRIDA_HOST_NOT_FOUND"
 FAIL_FRIDA_SERVER_MISSING = "FRIDA_SERVER_NOT_ON_DEVICE"
 FAIL_FRIDA_MISMATCH = "FRIDA_VERSION_MISMATCH"
 FAIL_FRIDA_UNKNOWN = "FRIDA_VERSION_UNKNOWN"
+FAIL_DEVICE_UNAUTHORIZED = "DEVICE_UNAUTHORIZED"
+FAIL_DEVICE_OFFLINE = "DEVICE_OFFLINE"
+FAIL_FRIDA_ABI_MISMATCH = "FRIDA_SERVER_ABI_MISMATCH"
+FAIL_FRIDA_ABI_UNKNOWN = "FRIDA_SERVER_ABI_UNKNOWN"
+FAIL_ABI_UNSUPPORTED = "DEVICE_ABI_UNSUPPORTED"
+FAIL_ENUMERATION = "FRIDA_ENUMERATION_FAILED"
+FAIL_ATTACH = "FRIDA_ATTACH_FAILED"
+FAIL_DETACH = "FRIDA_DETACH_FAILED"
 
 
 def diagnostics_from(adb, frida, caps_list, states=None,
@@ -549,6 +785,473 @@ def recover_connection(adb_path, serial=None, max_attempts=3,
                     "did not return to state 'device'"}
 
 
+# ------------------------------------------------------------------
+# 2.6.2 (WS-B): runtime compatibility validation.
+#
+# `validate` goes one step past `diagnose`: diagnose validates
+# the environment from properties; validate also exercises the
+# live Frida path — process enumeration, a real attach of a
+# marker script to a running test process, and a clean detach
+# (the target must still be alive afterwards). Every check
+# keeps diagnose's shape {check, status, reason, detail,
+# action} with a named failure reason and a concrete remedy.
+# The assessment (validation_from) is pure; the live gathering
+# (validate) is the only part that touches a device, and every
+# probe it runs is read-only observation of a test process the
+# caller named with --package.
+# ------------------------------------------------------------------
+
+ATTACH_MARKER = "[nar-validate] attach-ok"
+
+
+def parse_frida_ps(text):
+    """Parse `frida-ps -U` output into [{pid, name}]. The
+    header row ('PID  Name') and separator are skipped; rows
+    that do not start with a numeric pid are ignored."""
+    procs = []
+    for line in (text or "").splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            procs.append({"pid": int(parts[0]),
+                          "name": parts[1]})
+    return procs
+
+
+def validation_from(adb, frida, caps_list, states=None,
+                    serial=None, package=None, installed=None,
+                    enumeration=None, attach=None, detach=None):
+    """Structured runtime validation from already-gathered
+    facts (pure). Checks: adb_available, device_authorized,
+    frida_host_version, frida_server_presence,
+    frida_server_version, frida_version_match,
+    frida_abi_match, process_enumeration, attach_capability,
+    clean_detach. A probe the caller did not run is reported
+    skip with the reason in the detail — never pass."""
+    checks = []
+
+    def add(check, status, reason, detail, action=""):
+        checks.append({"check": check, "status": status,
+                       "reason": reason, "detail": detail,
+                       "action": action})
+
+    if adb and adb.get("available"):
+        add("adb_available", "pass", None,
+            f"adb at {adb.get('path')} ({adb.get('version')})")
+    else:
+        add("adb_available", "fail", FAIL_ADB_MISSING,
+            "adb was not found by the capability registry",
+            "install Android SDK platform-tools or set "
+            "ANDROID_HOME")
+    states = states or {}
+    caps = caps_list[0] if caps_list else None
+    if serial is not None:
+        state = states.get(serial)
+        if state == "device":
+            add("device_authorized", "pass", None,
+                f"device {serial} is in state 'device' "
+                "(authorized and reachable)")
+        elif state == "unauthorized":
+            add("device_authorized", "fail",
+                FAIL_DEVICE_UNAUTHORIZED,
+                f"device {serial} is 'unauthorized': adb "
+                "cannot run commands on it",
+                "unlock the device and accept the USB "
+                "debugging authorization prompt for this host, "
+                "then re-run validate")
+        elif state == "offline":
+            add("device_authorized", "fail", FAIL_DEVICE_OFFLINE,
+                f"device {serial} is 'offline': it was seen "
+                "but is not answering",
+                "run diagnose --recover for one bounded "
+                "reconnect pass, or restart the emulator / "
+                "replug the device")
+        elif state is None:
+            add("device_authorized", "fail", FAIL_NO_DEVICE,
+                f"adb does not enumerate a device with serial "
+                f"{serial}",
+                "attach the device or start the emulator, "
+                "then re-run validate")
+        else:
+            add("device_authorized", "fail",
+                FAIL_DEVICE_NOT_READY,
+                f"device {serial} is in state '{state}'",
+                "wait for the device to reach state 'device'")
+    elif caps is not None:
+        add("device_authorized", "pass", None,
+            f"device {caps['serial']} is in state 'device' "
+            "(authorized and reachable)")
+    elif states:
+        add("device_authorized", "fail", FAIL_DEVICE_NOT_READY,
+            "device(s) present but none is ready: "
+            + ", ".join(f"{s}={st}" for s, st in states.items()),
+            "authorize the device (unauthorized) or run "
+            "diagnose --recover (offline)")
+    else:
+        add("device_authorized", "fail", FAIL_NO_DEVICE,
+            "adb enumerates no device",
+            "attach a device or start an emulator")
+    if frida and frida.get("available") \
+            and parse_version(frida.get("version")):
+        add("frida_host_version", "pass", None,
+            f"host frida {frida.get('version')} at "
+            f"{frida.get('path')}")
+    elif frida and frida.get("available"):
+        add("frida_host_version", "warn", FAIL_FRIDA_UNKNOWN,
+            "host frida CLI was found but its version could "
+            "not be parsed, so no version comparison is "
+            "possible")
+    else:
+        add("frida_host_version", "fail",
+            FAIL_FRIDA_HOST_MISSING,
+            "host frida CLI was not found by the registry",
+            "pip install frida-tools into a venv (see the "
+            "registry install hint)")
+    if caps is None:
+        for check in ("frida_server_presence",
+                      "frida_server_version",
+                      "frida_version_match", "frida_abi_match"):
+            add(check, "skip", None, "no device to check")
+    else:
+        server = caps.get("frida_server") or {}
+        if server.get("present"):
+            add("frida_server_presence", "pass", None,
+                "frida-server present in /data/local/tmp: "
+                + ", ".join(server.get("files") or []))
+        else:
+            add("frida_server_presence", "fail",
+                FAIL_FRIDA_SERVER_MISSING,
+                "no frida-server binary in /data/local/tmp",
+                "push the frida-server build matching the "
+                "host frida version and the device ABI to "
+                "/data/local/tmp and start it as root")
+        if not server.get("present"):
+            add("frida_server_version", "skip", None,
+                "no frida-server to read a version from")
+            add("frida_version_match", "skip", None,
+                "no frida-server to compare versions with")
+            add("frida_abi_match", "skip", None,
+                "no frida-server to compare ABIs with")
+        else:
+            if server.get("version"):
+                add("frida_server_version", "pass", None,
+                    f"frida-server reports version "
+                    f"{server.get('version')}")
+            else:
+                add("frida_server_version", "warn",
+                    FAIL_FRIDA_UNKNOWN,
+                    "frida-server is present but its version "
+                    "could not be probed (zero or several "
+                    "binary candidates, or --version did not "
+                    "answer)",
+                    "keep exactly one frida-server binary in "
+                    "/data/local/tmp so its version can be "
+                    "probed")
+            compat = server.get("compatibility") or {}
+            if compat.get("status") == "match":
+                add("frida_version_match", "pass", None,
+                    compat.get("message", ""))
+            elif compat.get("status") == "mismatch":
+                add("frida_version_match", "fail",
+                    FAIL_FRIDA_MISMATCH,
+                    compat.get("message", ""))
+            else:
+                add("frida_version_match", "warn",
+                    FAIL_FRIDA_UNKNOWN,
+                    compat.get("message", ""))
+            want = frida_arch_for_abi(caps.get("abi"))
+            archs = {a for a in (frida_server_arch(f)
+                                 for f in server.get("files")
+                                 or []) if a}
+            if want is None:
+                add("frida_abi_match", "fail",
+                    FAIL_ABI_UNSUPPORTED,
+                    f"device primary ABI {caps.get('abi')} "
+                    "has no frida-server build",
+                    "use a device or emulator whose ABI has a "
+                    "frida-server build (arm64, arm, x86, "
+                    "x86_64)")
+            elif not archs:
+                add("frida_abi_match", "warn",
+                    FAIL_FRIDA_ABI_UNKNOWN,
+                    "the frida-server file name carries no "
+                    "build arch, so its ABI cannot be "
+                    "confirmed from the listing",
+                    "push the arch-named build "
+                    f"(frida-server-<version>-android-{want}) "
+                    "so the ABI match is verifiable")
+            elif want in archs:
+                add("frida_abi_match", "pass", None,
+                    f"frida-server build arch {want} matches "
+                    f"the device primary ABI {caps.get('abi')}")
+            else:
+                add("frida_abi_match", "fail",
+                    FAIL_FRIDA_ABI_MISMATCH,
+                    f"frida-server build arch "
+                    f"{', '.join(sorted(archs))} does not "
+                    f"serve the device primary ABI "
+                    f"{caps.get('abi')} (needs {want})",
+                    f"push frida-server-<version>-android-"
+                    f"{want} to /data/local/tmp")
+    if enumeration is None:
+        add("process_enumeration", "skip", None,
+            "process enumeration was not attempted (no ready "
+            "device or no host frida)")
+    elif enumeration.get("ok"):
+        add("process_enumeration", "pass", None,
+            f"frida-ps enumerated "
+            f"{len(enumeration.get('processes') or [])} "
+            "processes on the device")
+    else:
+        add("process_enumeration", "fail", FAIL_ENUMERATION,
+            "frida-ps could not enumerate device processes: "
+            + str(enumeration.get("error") or "no output"),
+            "confirm frida-server is running on the device "
+            "(start it as root) and that host and server "
+            "versions match, then re-run validate")
+    if attach is None:
+        add("attach_capability", "skip", None,
+            "no attach probe was run"
+            + ("" if package else
+               " (no --package test target was named)"))
+    elif attach.get("ok"):
+        add("attach_capability", "pass", None,
+            attach.get("detail")
+            or "marker script attached and reported back")
+    else:
+        add("attach_capability", "fail", FAIL_ATTACH,
+            attach.get("detail")
+            or "the marker script did not attach",
+            "confirm the test app is running, frida-server "
+            "is up, and the process is debuggable or the "
+            "server runs as root; then re-run validate")
+    if detach is None:
+        add("clean_detach", "skip", None,
+            "no attach session was opened, so there is "
+            "nothing to detach")
+    elif detach.get("ok"):
+        add("clean_detach", "pass", None,
+            detach.get("detail")
+            or "session ended and the target stayed alive")
+    else:
+        add("clean_detach", "fail", FAIL_DETACH,
+            detach.get("detail")
+            or "the session did not end cleanly",
+            "check whether the target process survived; a "
+            "killed target means the detach (or the server) "
+            "is at fault, not the app")
+    failures = [c["reason"] for c in checks
+                if c["status"] == "fail"]
+    return {"ok": not failures, "checks": checks,
+            "failure_reasons": failures}
+
+
+def validate(serial=None, package=None, json_path=None,
+             runner=None):
+    """Live runtime compatibility validation: environment
+    checks plus Frida process enumeration, a marker-script
+    attach to the --package test process (launched via monkey
+    when installed but not running), and a clean-detach check.
+    With json_path, the full report is also written there."""
+    runner = runner or _run
+    adb = probe_tool("adb")
+    frida = probe_tool("frida")
+    report = {"tool": "nar-runtime", "version": "2.6.2",
+              "serial": serial, "package": package,
+              "capabilities": [], "checks": [],
+              "validation": None}
+    if not adb.get("available"):
+        report["validation"] = validation_from(
+            adb, frida, [], states={})
+        report["checks"] = report["validation"]["checks"]
+        report["ok"] = False
+        if json_path:
+            _write_json(report, json_path)
+        return report
+    states, _err = adb_device_states(adb["path"], runner=runner)
+    if serial is not None:
+        target = serial if states.get(serial) == "device" \
+            else None
+    else:
+        target = next((s for s, st in states.items()
+                       if st == "device"), None)
+    caps_list = []
+    installed = None
+    enumeration = None
+    attach = None
+    detach = None
+    if target is not None:
+        caps = device_capabilities(
+            adb["path"], target, runner=runner,
+            frida_host_version=(frida.get("version")
+                                if frida.get("available")
+                                else None))
+        caps["statuses"] = capability_statuses(
+            caps, adb_state="device")
+        caps_list.append(caps)
+        report["serial"] = target
+        if package:
+            installed = app_installed(adb["path"], target,
+                                      package, runner=runner)
+    frida_path = frida.get("path") if frida.get("available") \
+        else None
+    if target is not None and frida_path:
+        ps_path = os.path.join(os.path.dirname(frida_path),
+                               "frida-ps")
+        if not os.path.isfile(ps_path):
+            ps_path = "frida-ps"
+        # One bounded retry: a single enumeration attempt can
+        # be cancelled by a slow transport (observed live on
+        # a software-emulated target) while the server is in
+        # fact up; the retry distinguishes that from a server
+        # that is really down.
+        for _attempt in range(2):
+            try:
+                proc = runner([ps_path, "-U"], timeout=60)
+                out = (proc.stdout or "") + (proc.stderr or "")
+                procs = parse_frida_ps(out)
+                enumeration = {
+                    "ok": proc.returncode == 0 and bool(procs),
+                    "processes": procs,
+                    "error": None if procs else
+                             out.strip()[:200] or "no processes "
+                             "were listed"}
+            except (OSError, subprocess.TimeoutExpired) as e:
+                enumeration = {"ok": False, "processes": [],
+                               "error": str(e)}
+            if enumeration.get("ok"):
+                break
+            time.sleep(2)
+    if target is not None and frida_path and package \
+            and installed is False and enumeration \
+            and enumeration.get("ok"):
+        attach = {"ok": False,
+                  "detail": f"{package} is not installed on "
+                            "the device, so there is no test "
+                            "process to attach to"}
+    if target is not None and frida_path and package \
+            and installed is not False and enumeration \
+            and enumeration.get("ok") and attach is None:
+        # A `pm` answer of None means pm did not answer (seen
+        # live when the package service is slow under
+        # emulation); it is not evidence about installation.
+        # A running or launchable process is stronger proof,
+        # so the attach probe proceeds on pid evidence alone.
+        pid = _package_pid(adb["path"], target, package,
+                           runner=runner)
+        if pid is None:
+            adb_shell(adb["path"], target,
+                      ["monkey", "-p", package, "-c",
+                       "android.intent.category.LAUNCHER", "1"],
+                      timeout=60, runner=runner)
+            for _ in range(10):
+                pid = _package_pid(adb["path"], target, package,
+                                   runner=runner)
+                if pid is not None:
+                    break
+                time.sleep(3)
+        if pid is None:
+            attach = {"ok": False,
+                      "detail": f"no running process for "
+                                f"{package} could be found or "
+                                "launched"
+                                + (" (pm also did not answer; "
+                                   "install state is unknown)"
+                                   if installed is None else "")}
+        else:
+            # One bounded retry on a timeout-shaped failure:
+            # under software emulation the agent sync-up can
+            # exceed Frida's internal attach timeout while
+            # the target is healthy (observed live: a first
+            # attempt failed with 'Failed to attach: timeout
+            # was reached' and an identical manual attach
+            # immediately after succeeded). A non-timeout
+            # failure is never retried.
+            for _attempt in range(2):
+                out = ""
+                try:
+                    proc = runner(
+                        [frida_path, "-U", "-p", str(pid), "-q",
+                         "-t", "10", "-e",
+                         f"console.log('{ATTACH_MARKER}')"],
+                        timeout=150)
+                    out = (proc.stdout or "") \
+                        + (proc.stderr or "")
+                    if ATTACH_MARKER in out:
+                        attach = {"ok": True,
+                                  "detail": f"marker script "
+                                            f"attached to pid "
+                                            f"{pid} and "
+                                            "reported back"}
+                        alive = _package_pid(
+                            adb["path"], target, package,
+                            runner=runner)
+                        detach = {
+                            "ok": alive == pid
+                                  and proc.returncode == 0,
+                            "detail": f"frida session ended "
+                                      f"(exit "
+                                      f"{proc.returncode}); "
+                                      f"target pid {pid} "
+                                      + ("is still running"
+                                         if alive == pid else
+                                         "did not survive")}
+                    else:
+                        attach = {"ok": False,
+                                  "detail": "marker script "
+                                            "did not report "
+                                            "back: "
+                                            + (out.strip()[:200]
+                                               or "no output")}
+                except subprocess.TimeoutExpired:
+                    attach = {"ok": False,
+                              "detail": "the frida attach "
+                                        "probe did not finish "
+                                        "within its timeout"}
+                    out = "timeout"
+                except OSError as e:
+                    attach = {"ok": False, "detail": str(e)}
+                if attach.get("ok") \
+                        or "timeout" not in out.lower():
+                    break
+                time.sleep(3)
+    report["validation"] = validation_from(
+        adb, frida, caps_list, states=states, serial=serial,
+        package=package, installed=installed,
+        enumeration=enumeration, attach=attach, detach=detach)
+    report["capabilities"] = caps_list
+    report["checks"] = report["validation"]["checks"]
+    report["ok"] = report["validation"]["ok"]
+    if json_path:
+        _write_json(report, json_path)
+        report["report_path"] = json_path
+    return report
+
+
+def _package_pid(adb_path, serial, package, runner=None):
+    out = adb_shell(adb_path, serial, ["pidof", package],
+                    runner=runner)
+    for tok in (out or "").split():
+        if tok.isdigit():
+            return int(tok)
+    # Fallback for images without pidof: parse the `ps`
+    # listing (USER PID ... NAME columns).
+    out = adb_shell(adb_path, serial, ["ps"], runner=runner)
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[-1] == package \
+                and parts[1].isdigit():
+            return int(parts[1])
+    return None
+
+
+def _write_json(doc, path):
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=1)
+    return path
+
+
 def status():
     adb = probe_tool("adb")
     frida = probe_tool("frida")
@@ -566,6 +1269,8 @@ def status():
             frida_host_version=(frida.get("version")
                                 if frida.get("available")
                                 else None))
+        caps["statuses"] = capability_statuses(
+            caps, adb_state="device")
         caps_list.append(caps)
         device_info.append({
             "serial": serial,
@@ -574,7 +1279,7 @@ def status():
             "capabilities": caps})
     verified = bool(devices)
     return {
-        "tool": "nar-runtime", "version": "2.6.1",
+        "tool": "nar-runtime", "version": "2.6.2",
         "adb": adb, "frida": frida,
         "devices": device_info,
         "device_error": err,
@@ -602,7 +1307,7 @@ def diagnose(serial=None, package=None, recover=False):
     recovery = None
     if not adb["available"]:
         diag = diagnostics_from(adb, frida, [], states={})
-        return {"tool": "nar-runtime", "version": "2.6.1",
+        return {"tool": "nar-runtime", "version": "2.6.2",
                 "diagnostics": diag, "recovery": None,
                 "capabilities": []}
     states, _err = adb_device_states(adb["path"])
@@ -621,12 +1326,14 @@ def diagnose(serial=None, package=None, recover=False):
             frida_host_version=(frida.get("version")
                                 if frida.get("available")
                                 else None))
+        caps["statuses"] = capability_statuses(
+            caps, adb_state="device")
         caps_list.append(caps)
         if package:
             installed = app_installed(adb["path"], s, package)
     diag = diagnostics_from(adb, frida, caps_list, states=states,
                             package=package, installed=installed)
-    return {"tool": "nar-runtime", "version": "2.6.1",
+    return {"tool": "nar-runtime", "version": "2.6.2",
             "diagnostics": diag, "recovery": recovery,
             "capabilities": caps_list}
 
@@ -663,7 +1370,7 @@ def plan(apk_path):
          "evidence": "app-private file inventory for the "
                      "case workspace"},
     ]
-    return {"tool": "nar-runtime", "version": "2.6.1",
+    return {"tool": "nar-runtime", "version": "2.6.2",
             "target": os.path.abspath(apk_path),
             "package_hint": package_hint,
             "verification_status": st["verification_status"],
@@ -689,7 +1396,7 @@ def new_session(kind, st, target=None):
     carried through unchanged."""
     started = ev_mod.now_iso()
     record = {
-        "tool": "nar-runtime", "version": "2.6.1",
+        "tool": "nar-runtime", "version": "2.6.2",
         "session_id": "nar-rt-" + uuid.uuid4().hex[:12],
         "kind": kind,
         "started_at": started, "stopped_at": None,
@@ -764,6 +1471,23 @@ def main(argv=None):
                         help="first run one bounded adb "
                              "reconnect pass if no device is "
                              "ready")
+    val_p = sub.add_parser(
+        "validate",
+        help="validate runtime compatibility end to end: "
+             "environment checks plus Frida process "
+             "enumeration, a marker-script attach to the "
+             "--package test process, and a clean-detach "
+             "check; every failure names its reason and "
+             "remedy")
+    val_p.add_argument("--serial", metavar="S",
+                       help="limit checks to this device serial")
+    val_p.add_argument("--package", metavar="PKG",
+                       help="test package to attach the "
+                            "marker script to (launched when "
+                            "installed but not running)")
+    val_p.add_argument("--json", metavar="PATH",
+                       help="also write the full validation "
+                            "report as JSON to PATH")
     sub.add_parser("timeline-template")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
@@ -782,6 +1506,9 @@ def main(argv=None):
     elif args.cmd == "diagnose":
         out = diagnose(serial=args.serial, package=args.package,
                        recover=args.recover)
+    elif args.cmd == "validate":
+        out = validate(serial=args.serial, package=args.package,
+                       json_path=args.json)
     elif args.cmd == "plan":
         out = plan(args.apk)
         if getattr(args, "session_out", None):
@@ -829,10 +1556,37 @@ def main(argv=None):
                   f"root_adbd={caps['root']['adbd_uid0']}")
         if out.get("recovery"):
             print(f"recovery: {out['recovery']}")
+    elif args.cmd == "validate":
+        val = out["validation"]
+        print("runtime compatibility: "
+              + ("OK" if val["ok"] else "NOT READY"))
+        for c in val["checks"]:
+            line = f"- {c['check']}: {c['status']}"
+            if c["reason"]:
+                line += f" [{c['reason']}]"
+            print(line + f" — {c['detail']}")
+            if c["action"]:
+                print(f"    action: {c['action']}")
+        for caps in out["capabilities"]:
+            cls = caps["classification"]
+            print(f"device {caps['serial']}: {cls['kind']} "
+                  f"({cls['basis']}); abi={caps['abi']} "
+                  f"api={caps['api_level']}")
+        if out.get("report_path"):
+            print(f"report: {out['report_path']}")
     else:
         print(json.dumps(out, indent=2))
     if session_path and not args.json:
         print(f"session record: {session_path}")
+    # Exit-code discipline (stability audit D-15): a
+    # diagnose/validate run whose verdict is NOT READY
+    # exits 1, so scripts can gate on it; the
+    # informational subcommands (status/plan/timeline)
+    # keep exit 0.
+    if args.cmd == "diagnose" and not out["diagnostics"]["ok"]:
+        return 1
+    if args.cmd == "validate" and not out["validation"]["ok"]:
+        return 1
     return 0
 
 

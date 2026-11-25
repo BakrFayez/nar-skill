@@ -57,6 +57,17 @@ BUNDLE_CANDIDATES = ("assets/index.android.bundle",)
 # beyond any real bundle/DEX is refused with a note in
 # the report instead of being decompressed unbounded
 # into memory. Inputs under the caps are unaffected.
+try:
+    from narlib.budget import ResourceBudget as _ResourceBudget
+    #: The RN member-read policy as a budget instance (2.6.2):
+    #: both reads are per-member caps, so they map cleanly onto
+    #: max_file_bytes. The MAX_* names below are aliases of the
+    #: budget fields and are read at call time (tests patch them).
+    RN_READ_BUDGET = _ResourceBudget(
+        max_file_bytes=256 * 1024 * 1024,
+        max_total_bytes=256 * 1024 * 1024)
+except Exception:  # pragma: no cover - narlib always ships it
+    RN_READ_BUDGET = None
 MAX_BUNDLE_READ_BYTES = 256 * 1024 * 1024
 MAX_DEX_READ_BYTES = 256 * 1024 * 1024
 
@@ -105,6 +116,13 @@ def classify_bundle_head(head):
 
 def parse_hermes_header(data):
     """Hermes BytecodeFileHeader fields at fixed offsets."""
+    if len(data) < 72:
+        # The fields below span offsets 8..72; a shorter
+        # bundle leaked a bare struct.error to the CLI
+        # (stability audit D-10).
+        raise ValueError(
+            f"Hermes bundle truncated: {len(data)} bytes, "
+            "the header fields need at least 72")
     version, = struct.unpack_from("<I", data, 8)
     fields = struct.unpack_from("<10I", data, 32)
     keys = ("file_length", "global_code_index", "function_count",
@@ -479,7 +497,11 @@ def inspect(apk_path, work_dir):
     if kind == "hermes":
         report["engine"] = "Hermes"
         report["is_hermes"] = True
-        header = parse_hermes_header(data)
+        try:
+            header = parse_hermes_header(data)
+        except ValueError as e:
+            report["hermes"] = {"error": str(e)}
+            return report
         report["hermes"] = header
         info, err = hbc_cross_check(out_path)
         report["hermes_dec"] = info if info else {"ran": False,

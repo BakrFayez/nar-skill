@@ -11,6 +11,14 @@ set -u
 
 JSON=0
 if [ "${1:-}" = "--json" ]; then JSON=1; fi
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  # --help previously ran the full check (D-15).
+  echo "Usage: bash nar-doctor.sh [--json]"
+  echo "Check that the NAR toolchain is installed and usable."
+  echo "Exit 0 when all CORE tools are present, 1 otherwise."
+  echo "Optional tools never fail the check."
+  exit 0
+fi
 
 # Candidate locations for SDK tools that are often not on PATH.
 SDK_CANDIDATES="${ANDROID_HOME:-} ${ANDROID_SDK_ROOT:-} $HOME/Android/Sdk $HOME/workspace/android-sdk $HOME/android-sdk /opt/android-sdk /usr/lib/android-sdk"
@@ -156,11 +164,24 @@ ZIPALIGN_DETAIL=""
 [ -n "$ZIPALIGN_BIN" ] && ZIPALIGN_DETAIL="zipalign ($ZIPALIGN_BIN)"
 check "zipalign" "core" "$ZIPALIGN_BIN" "$ZIPALIGN_DETAIL" "Install Android SDK build-tools and set ANDROID_HOME"
 
-# --- python3 (core, 3.9+) ---
+# --- python3 (core, 3.10+: the pyproject floor; the
+# doctor previously accepted any python3 while the
+# docs disagreed with pyproject about the floor —
+# E-12) ---
 PY_BIN="$(command -v python3 || true)"
 PY_DETAIL=""
-[ -n "$PY_BIN" ] && PY_DETAIL="python3 $(python3 --version 2>&1) ($PY_BIN)"
-check "python3" "core" "$PY_BIN" "$PY_DETAIL" "Install Python 3.9+: https://www.python.org/downloads/"
+PY_HINT="Install Python 3.10+: https://www.python.org/downloads/"
+if [ -n "$PY_BIN" ]; then
+  PY_VER="$("$PY_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")"
+  PY_MAJOR="${PY_VER%%.*}"; PY_MINOR="${PY_VER##*.}"
+  if [ "${PY_MAJOR:-0}" -gt 3 ] 2>/dev/null || { [ "${PY_MAJOR:-0}" -eq 3 ] 2>/dev/null && [ "${PY_MINOR:-0}" -ge 10 ] 2>/dev/null; }; then
+    PY_DETAIL="python3 $(python3 --version 2>&1) ($PY_BIN)"
+  else
+    PY_HINT="Python 3.10+ required (pyproject floor), found $PY_VER. Install Python 3.10+: https://www.python.org/downloads/"
+    PY_BIN=""
+  fi
+fi
+check "python3" "core" "$PY_BIN" "$PY_DETAIL" "$PY_HINT"
 
 # --- adb (optional) ---
 ADB_BIN="$(command -v adb || find_sdk_tool adb || true)"
@@ -310,23 +331,30 @@ if [ -n "$PY_BIN" ]; then
   # __pycache__ next to every script in the tree.
   PYC_DIR="$(mktemp -d 2>/dev/null || echo "")"
   NAR_SCRIPTS_COUNT=0
-  for script_path in "$SCRIPT_DIR"/*.py; do
+  NARLIB_COUNT=0
+  # The narlib package is compiled too (D-08): a broken
+  # narlib module previously left the doctor READY while
+  # every pipeline stage that imports it failed.
+  for script_path in "$SCRIPT_DIR"/*.py "$SCRIPT_DIR"/narlib/*.py; do
     [ -f "$script_path" ] || continue
     s="$(basename "$script_path")"
-    NAR_SCRIPTS_COUNT=$((NAR_SCRIPTS_COUNT + 1))
+    case "$script_path" in
+      */narlib/*) NARLIB_COUNT=$((NARLIB_COUNT + 1)); rel="narlib/$s" ;;
+      *) NAR_SCRIPTS_COUNT=$((NAR_SCRIPTS_COUNT + 1)); rel="scripts/$s" ;;
+    esac
     if [ -n "$PYC_DIR" ]; then
-      COMPILE_OK="$("$PY_BIN" -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' "$script_path" "$PYC_DIR/$s.pyc" 2>/dev/null && echo 1)"
+      COMPILE_OK="$("$PY_BIN" -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' "$script_path" "$PYC_DIR/$(echo "$rel" | tr / _).pyc" 2>/dev/null && echo 1)"
     else
       COMPILE_OK="$("$PY_BIN" -m py_compile "$script_path" 2>/dev/null && echo 1)"
     fi
     if [ -z "$COMPILE_OK" ]; then
-      NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="scripts/$s does not compile"; break
+      NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="$rel does not compile"; break
     fi
   done
   if [ "$NAR_SCRIPTS_COUNT" -eq 0 ]; then
     NAR_SCRIPTS_OK=""; NAR_SCRIPTS_DETAIL="no bundled scripts found under scripts/"
   elif [ -n "$NAR_SCRIPTS_OK" ]; then
-    NAR_SCRIPTS_DETAIL="all bundled scripts compile ($NAR_SCRIPTS_COUNT scripts)"
+    NAR_SCRIPTS_DETAIL="all bundled scripts compile ($NAR_SCRIPTS_COUNT scripts + $NARLIB_COUNT narlib modules)"
   fi
   [ -n "$PYC_DIR" ] && rm -rf "$PYC_DIR"
 fi

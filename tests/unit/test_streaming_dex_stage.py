@@ -145,6 +145,62 @@ def test_copy_minus_trailing_newline():
         assert out.getvalue() == want
 
 
+def test_windowed_reader_matches_bytes(tmp_path):
+    """2.6.2 WS-D1: the windowed reader must present the
+    file's bytes exactly — int indexing, slices inside a
+    window, slices spanning windows, and a tiny window
+    forcing constant reloads."""
+    data = bytes(range(256)) * 40  # 10240 bytes
+    path = tmp_path / "blob.bin"
+    path.write_bytes(data)
+    with az._WindowedReader(str(path), window_size=4096) as r:
+        assert len(r) == len(data)
+        assert r[0] == data[0] and r[-1] == data[-1]
+        assert r[4095] == data[4095] and r[4096] == data[4096]
+        assert r[100:200] == data[100:200]
+        assert r[4000:5000] == data[4000:5000]  # spans windows
+        assert r[:] == data
+        assert r[9000:] == data[9000:]
+
+
+def test_windowed_reader_never_holds_whole_file(tmp_path):
+    data = b"x" * (3 * 1024 * 1024)
+    path = tmp_path / "big.bin"
+    path.write_bytes(data)
+    with az._WindowedReader(str(path)) as r:
+        assert r._window_size == 1 << 20
+        _ = r[0]
+        assert len(r._wdata) <= r._window_size
+        _ = r[len(data) - 1]
+        assert len(r._wdata) <= r._window_size
+
+
+def test_windowed_projection_and_companion(tmp_path):
+    """Projection extraction and the indent=1 companion
+    over the windowed reader must equal the classic
+    in-memory results on a document larger than the
+    window (built with a small window to force spans)."""
+    doc = {"tool": "nar-dex", "totals": {"classes": 3},
+           "dex_files": [{
+               "name": "classes.dex", "class_count": 3,
+               "kotlin": {"detected": True},
+               "classes": [{"class": f"L{'x' * 5000}{i};"}
+                           for i in range(3)],
+               "native_methods": [], "entry_points": [],
+               "string_references": [],
+               "call_edges": [{"from": "a", "to": "b"}]}]}
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps(doc))
+    slim = az._dex_projection_from_file(str(cache))
+    assert slim["totals"] == {"classes": 3}
+    assert slim["dex_files"][0]["class_count"] == 3
+    assert "call_edges" not in slim["dex_files"][0]
+    companion = tmp_path / "dex.json"
+    az._dex_companion_from_cache(str(cache), str(companion))
+    assert companion.read_bytes() == json.dumps(
+        doc, indent=1).encode()
+
+
 def test_streamed_stage_end_to_end(tmp_path):
     """analyze() on a zip-only target degrades the DEX
     stage exactly like the classic path (no JSON from the

@@ -70,6 +70,13 @@ def _uleb128(data, off):
                 f"ULEB128 at {off:#x} runs past end of data")
         byte = data[off]
         off += 1
+        # A fifth byte may carry payload above bit 31:
+        # tolerated BY DESIGN (2.6.1 decision, pinned by
+        # test_deep_audit_remediation — the cap is on
+        # encoding LENGTH; every consumer range-checks
+        # the decoded value against the file's real
+        # extents before use). Re-checked in the
+        # stability audit (A-15) and left as designed.
         result |= (byte & 0x7F) << shift
         if not byte & 0x80:
             return result, off
@@ -105,8 +112,19 @@ class Dex:
     """One parsed DEX file (tables + lazily scanned code)."""
 
     def __init__(self, data, name="classes.dex"):
-        if len(data) < 112 or not data.startswith(b"dex\n"):
+        if len(data) < 112 or data[:4] != b"dex\n":
             raise DexError(f"{name}: not a DEX file")
+        # The endian tag (0x28) declares the file's byte
+        # order. A reverse-endian file (tag bytes
+        # 12 34 56 78) parsed as little-endian would yield
+        # garbage tables with no error; refuse it by name
+        # instead (stability audit A-15). The standard tag
+        # (0x12345678) and uninitialized tags in synthetic
+        # files are unaffected.
+        if struct.unpack_from("<I", data, 0x28)[0] == 0x78563412:
+            raise DexError(
+                f"{name}: reverse-endian DEX (endian tag "
+                "0x78563412) is not parsed by this reader")
         self.name = name
         self.data = data
         self.version = data[4:7].decode("ascii", "replace")
@@ -204,52 +222,70 @@ class Dex:
                 strings[name_idx] if name_idx < len(strings) else "?")
 
     # -- class defs ----------------------------------------------
+    def _class_def_at(self, i, types):
+        vals = struct.unpack_from(
+            "<IIIIIIII", self.data, self.class_defs_off + i * 32)
+        (class_idx, _access, super_idx, interfaces_off,
+         _source, _annotations, class_data_off,
+         _static_values) = vals
+        interfaces = []
+        if interfaces_off:
+            # interfaces_off is class-def data, not a
+            # header table: the header extent check in
+            # __init__ cannot cover it. Validate the
+            # type_list extent here so a corrupt offset
+            # raises DexError, never a bare struct.error
+            # (2.6.1 deep-audit remediation).
+            if interfaces_off + 4 > len(self.data):
+                raise DexError(
+                    f"{self.name}: interfaces_off "
+                    f"{interfaces_off:#x} outside file")
+            size = struct.unpack_from(
+                "<I", self.data, interfaces_off)[0]
+            if size > (len(self.data) - interfaces_off
+                       - 4) // 2:
+                raise DexError(
+                    f"{self.name}: interface list ({size} "
+                    f"entries at {interfaces_off:#x}) "
+                    "extends past end of file")
+            for j in range(size):
+                tidx = struct.unpack_from(
+                    "<H", self.data,
+                    interfaces_off + 4 + j * 2)[0]
+                if tidx < len(types):
+                    interfaces.append(types[tidx])
+        return {
+            "class": types[class_idx] if class_idx < len(types)
+            else "?",
+            "superclass": types[super_idx]
+            if super_idx != 0xFFFFFFFF and super_idx < len(types)
+            else None,
+            "interfaces": interfaces,
+            "annotations_off": _annotations,
+            "class_data_off": class_data_off,
+        }
+
     def class_defs(self):
-        out = []
         types = self.types()
+        return [self._class_def_at(i, types)
+                for i in range(self.class_defs_size)]
+
+    def class_defs_tolerant(self):
+        """(defs, failures): like class_defs(), but a
+        corrupt def is skipped and recorded as
+        {"index", "error"} instead of aborting the whole
+        table. Whole-DEX aggregators use this so one bad
+        class cannot destroy the aggregate for the entire
+        file (stability audit A-10); class_defs() keeps
+        its strict contract for everyone else."""
+        types = self.types()
+        out, failures = [], []
         for i in range(self.class_defs_size):
-            vals = struct.unpack_from(
-                "<IIIIIIII", self.data, self.class_defs_off + i * 32)
-            (class_idx, _access, super_idx, interfaces_off,
-             _source, _annotations, class_data_off,
-             _static_values) = vals
-            interfaces = []
-            if interfaces_off:
-                # interfaces_off is class-def data, not a
-                # header table: the header extent check in
-                # __init__ cannot cover it. Validate the
-                # type_list extent here so a corrupt offset
-                # raises DexError, never a bare struct.error
-                # (2.6.1 deep-audit remediation).
-                if interfaces_off + 4 > len(self.data):
-                    raise DexError(
-                        f"{self.name}: interfaces_off "
-                        f"{interfaces_off:#x} outside file")
-                size = struct.unpack_from(
-                    "<I", self.data, interfaces_off)[0]
-                if size > (len(self.data) - interfaces_off
-                           - 4) // 2:
-                    raise DexError(
-                        f"{self.name}: interface list ({size} "
-                        f"entries at {interfaces_off:#x}) "
-                        "extends past end of file")
-                for j in range(size):
-                    tidx = struct.unpack_from(
-                        "<H", self.data,
-                        interfaces_off + 4 + j * 2)[0]
-                    if tidx < len(types):
-                        interfaces.append(types[tidx])
-            out.append({
-                "class": types[class_idx] if class_idx < len(types)
-                else "?",
-                "superclass": types[super_idx]
-                if super_idx != 0xFFFFFFFF and super_idx < len(types)
-                else None,
-                "interfaces": interfaces,
-                "annotations_off": _annotations,
-                "class_data_off": class_data_off,
-            })
-        return out
+            try:
+                out.append(self._class_def_at(i, types))
+            except DexError as e:
+                failures.append({"index": i, "error": str(e)})
+        return out, failures
 
     def class_fields(self, class_data_off):
         """Yield (name, type_descriptor, access_flags, kind)
@@ -434,11 +470,20 @@ class Dex:
         return info
 
     # -- annotations (encoded values, @Metadata) ------------------
-    def _encoded_value(self, off):
+    # Encoded arrays/annotations nest; a crafted payload can
+    # nest thousands of levels in a few KB and drive the
+    # recursive decoder into a RecursionError, which is not a
+    # DexError. Real @Metadata payloads nest a handful of
+    # levels; 64 is far above legitimate use (2.6.2).
+    _ENCODED_MAX_DEPTH = 64
+
+    def _encoded_value(self, off, _depth=0):
         """Decode one encoded_value. Returns (value, new_off).
         References resolve through the DEX's own tables:
         strings and types to their text, fields/methods/enums
         to (kind, owner, name) tuples."""
+        if _depth > self._ENCODED_MAX_DEPTH:
+            raise DexError("encoded_value nesting too deep")
         data = self.data
         if off >= len(data):
             raise DexError("encoded_value outside file")
@@ -495,20 +540,22 @@ class Dex:
             size, off = _uleb128(data, off)
             values = []
             for _ in range(size):
-                value, off = self._encoded_value(off)
+                value, off = self._encoded_value(off, _depth + 1)
                 values.append(value)
             return values, off
         if vtype == 0x1D:  # nested annotation
-            return self._encoded_annotation(off)
+            return self._encoded_annotation(off, _depth + 1)
         if vtype == 0x1E:
             return None, off
         if vtype == 0x1F:
             return bool(arg), off
         raise DexError(f"unknown encoded_value type {vtype:#x}")
 
-    def _encoded_annotation(self, off):
+    def _encoded_annotation(self, off, _depth=0):
         """Decode one encoded_annotation at off. Returns
         ({type, elements}, new_off)."""
+        if _depth > self._ENCODED_MAX_DEPTH:
+            raise DexError("encoded_annotation nesting too deep")
         data = self.data
         type_idx, off = _uleb128(data, off)
         size, off = _uleb128(data, off)
@@ -516,7 +563,7 @@ class Dex:
         elements = {}
         for _ in range(size):
             name_idx, off = _uleb128(data, off)
-            value, off = self._encoded_value(off)
+            value, off = self._encoded_value(off, _depth)
             name = strings[name_idx] if name_idx < len(strings) \
                 else "?"
             elements[name] = value
@@ -540,8 +587,15 @@ class Dex:
         if not class_set_off or class_set_off + 4 > len(data):
             return []
         size = struct.unpack_from("<I", data, class_set_off)[0]
+        # The set's offset table must fit in the file: a size
+        # claiming more entries than the remaining bytes can
+        # hold is corrupt. Bound the walk to the entries that
+        # actually fit and mark the directory truncated --
+        # reading the table unchecked leaked a bare
+        # struct.error here (2.6.2 fuzz finding).
+        available = (len(data) - class_set_off - 4) // 4
         out = []
-        for i in range(min(size, 4096)):
+        for i in range(min(size, available, 4096)):
             item_off = struct.unpack_from(
                 "<I", data, class_set_off + 4 + i * 4)[0]
             if not item_off or item_off + 1 > len(data):
@@ -556,6 +610,15 @@ class Dex:
                 continue
             annotation["visibility"] = visibility
             out.append(annotation)
+        if size > min(available, 4096):
+            # The walk stopped early — either the table does
+            # not physically fit or the 4096-entry cap cut
+            # it. Both are truncations of the directory and
+            # both get the marker the docstring promises;
+            # the cap alone used to pass silently
+            # (stability audit A-06).
+            out.append({"type": "?", "visibility": 0,
+                        "elements": {}, "truncated": True})
         return out
 
     # -- code scan -------------------------------------------------
@@ -653,8 +716,12 @@ def assemble_call_graph(dex_entries, xref_pattern=None,
     """
     defined = {}          # key -> {"dex": name, "label": str}
     caller_code = []      # (key, dex_name, code_off, Dex)
+    def_failures = []     # corrupt class defs, skipped (A-10)
     for dex_name, dex in dex_entries:
-        for cdef in dex.class_defs():
+        defs, failures = dex.class_defs_tolerant()
+        for f in failures:
+            def_failures.append({"dex": dex_name, **f})
+        for cdef in defs:
             for midx, _name, _flags, code_off, _kind in \
                     dex.class_methods_indexed(
                         cdef["class_data_off"]):
@@ -713,6 +780,7 @@ def assemble_call_graph(dex_entries, xref_pattern=None,
                  else "single-dex",
         "dex_files": [name for name, _ in dex_entries],
         "node_count": len(defined),
+        "class_def_failures": def_failures,
         "edge_count": edge_count,
         "resolved_edge_count": resolved,
         "unresolved_edge_count": unresolved,
@@ -839,7 +907,8 @@ def identifier_shape_stats(dex):
     class_names = []
     method_names = []
     field_names = []
-    for cdef in dex.class_defs():
+    defs, def_failures = dex.class_defs_tolerant()
+    for cdef in defs:
         class_names.append(_simple_name(cdef["class"]))
         for _midx, name, _f, _c, _k in \
                 dex.class_methods_indexed(cdef["class_data_off"]):
@@ -861,4 +930,5 @@ def identifier_shape_stats(dex):
 
     return {"classes": shape(class_names),
             "methods": shape(method_names),
-            "fields": shape(field_names)}
+            "fields": shape(field_names),
+            "class_def_failures": def_failures}

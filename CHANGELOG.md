@@ -2,6 +2,157 @@
 
 ## Unreleased
 
+## 2.6.2 — stability & certification campaign (2026-11-25)
+
+The unpublished 2.6.2 tree was hardened in place under
+a feature freeze (owner-confirmed: no version bump).
+No new features, modules, or subsystems; no
+backward-compatibility breaks. A full code-level audit
+(5 slices, every module) produced a register of 3 P0,
+21 P1, and ~50 P2/P3 findings — all P0/P1 fixed, each
+with a regression test (43 new tests in
+tests/unit/test_stability_campaign.py). Headlines:
+
+- Security: IoStore zlib inflation capped at the
+  TOC-promised size (decompression bomb); extraction
+  containment in nar-analyze and nar-pak proven with
+  realpath (pre-existing symlink escape closed);
+  nar-network credential redaction rewritten
+  structurally (prefixed names, fragment credentials,
+  path parameters, userinfo); shared capped archive
+  member reader (256 MiB) applied across nar-dex,
+  nar-strings, nar-native, nar-flutter, nar-triage —
+  a hostile 598 KB APK that drove 819 MB peak RSS now
+  peaks at ≈21 MB with labeled refusals.
+- Evidence integrity: stage documents schema-validated
+  before write; cache writes atomic (key last); a
+  corrupt stage cache is a miss, not a crash; case
+  import is staged and verified before the destination
+  is touched; investigation verified-facts promotion is
+  an allowlist (CONTRADICTED/POTENTIAL no longer
+  promote); verify's manifest check is two-directional.
+- Compatibility: stage cache keys derive from the case
+  target hash (container-built cases falsely failed
+  integrity); pre-2.6.2 cases validate under era
+  handling for both the container keys and the retired
+  endpoint label; all 15 retained cases re-verified
+  (14 OK; one legacy harness artifact fails on its own
+  recorded manifest inconsistency, correctly detected).
+- Accuracy: correlations no longer crash on targets
+  with a detected network library (producer/consumer
+  shape mismatch, masked by empty lists); registry
+  probe counts a tool available only when its version
+  command really runs; registry and doctor discovery
+  now agree; nar-security covers activity-alias
+  components and records skipped check families.
+- Parsers: ELF section extents validated (fabricated
+  symbols eliminated); dexdis error contract restored;
+  dotnetmeta named-error contract restored; Unity
+  bundle counting uncapped (only the deep-scan list is
+  capped, with truncation flags); classic pak entry
+  extents validated; Godot truncated-pack guards.
+- Schemas/docs/CI: comparison schema rewritten to the
+  producer shape (a real comparison failed the old
+  one); permissions.json gained a schema and verify
+  coverage; the bundled validator implements `const`;
+  capability matrix and test matrix claims aligned
+  with measured reality; all 9 CI jobs executed from a
+  clean extraction (fuzz-smoke gained the pytest
+  install its harness requires).
+- Final battery: pytest 653 passed; e2e private
+  68/68, public 15 passed / 0 failed / 48 skipped;
+  doctor READY; DEX fuzz smoke 500 iterations,
+  0 failures; accuracy corpora reproduce the recorded
+  2.6.2 values exactly; Zen real-corpus sweep
+  reconciles exactly (2,644 packages, 7,736 edges,
+  0 unresolved, 13,911 Oodle refusals); Frida runtime
+  suite 28/28 on the emulator. Physical-device
+  validation: NOT RUN.
+- Full record: NAR_STABILITY_AUDIT.md,
+  NAR_SECURITY_AUDIT.md, NAR_ACCURACY_REPORT.md,
+  NAR_PERFORMANCE_REPORT.md,
+  NAR_COMPATIBILITY_REPORT.md,
+  NAR_RUNTIME_VALIDATION_REPORT.md,
+  NAR_FINAL_VERIFICATION_REPORT.md.
+
+## 2.6.2 (2026-11-24)
+
+Verification, security and integrity round: no new
+feature surface beyond what the workstreams name.
+Every claim below is backed by an executed test or
+run; anything not executed is labeled NOT RUN.
+Full record: NAR_2.6.2_VERIFICATION_REPORT.md.
+Research by Bakr Fayez.
+
+- Security: one validated ResourceBudget abstraction
+  (narlib/budget.py) now backs the archive limits;
+  safearchive consumes it without behavior change,
+  and the analyzer / React Native / IL2CPP caps are
+  expressed as named budget instances. New regression
+  coverage: Windows-style traversal, duplicate member
+  names, malformed central directories, declared-size
+  mismatches, compression bombs, nested archives,
+  interrupted extraction, budget exhaustion.
+- DEX/ELF robustness: a deterministic stdlib
+  mutation-fuzz harness (tests/fuzz/) with a seed
+  corpus and crash-artifact preservation; the
+  fuzzer-found annotation-table bound defect and the
+  audit-found encoded-value recursion bound are
+  fixed, and a 30,000-case sweep runs clean. ELF
+  entry-size and EI_DATA validation hardened.
+- Runtime: device capability status vocabulary
+  (detected / verified / unsupported / unavailable /
+  not_tested), a `nar-runtime validate` surface with
+  actionable diagnostics, and a Frida validation
+  suite over the four bundled scripts — 28/28 checks
+  PASS live on the emulator. Physical-device
+  validation: NOT RUN (no device attached).
+- Unreal Zen: relationship pipeline and graph join
+  verified on three real IoStore container sets
+  (2,644 real Zen packages, exact oracle
+  reconciliation). A real defect is fixed: Zen
+  export references that cannot resolve now carry
+  the unresolved note instead of joining the graph
+  at high confidence. Classic output byte-identical.
+- Performance: the DEX stage document is read
+  through a bounded window (no memory map) with
+  byte-identical case outputs (hard gate, control
+  comparison first). Headline peak on the 273 MB
+  fixture is unchanged within noise (1,545,367,552 B
+  vs 2.6.1's 1,536,069,632 B) — the peak is now set
+  by per-element parse transients, stated plainly.
+  A benchmark regression gate (memory fails,
+  timing warns) ships in tests/benchmarks/.
+- Accuracy: labeled corpora (synthetic builders +
+  cross-labeled real fixtures) with per-analyzer
+  precision/recall/F1 and confusion matrices. Real
+  engine identification: 1.0 on 30 samples (real
+  precision measured for the first time); real
+  protection attribution: 1.0 on 26 samples.
+  Endpoint classification (real), native-library
+  identification and security-finding classification:
+  NOT MEASURED — no defensible ground truth.
+- Calibration: nar-network's endpoint label
+  `confirmed` overstated string-presence evidence;
+  renamed to `dex-string` everywhere it is produced
+  or consumed, with regression tests.
+- Case integrity: `nar case verify` now enforces
+  evidence integrity (every graph/investigation
+  evidence reference resolves; endpoints exist; no
+  duplicates or orphans; counts reconcile;
+  hypotheses carry basis/confirm/refute) with
+  structured failure reasons, and investigation
+  hypotheses are gated at build time. Pre-2.6.1
+  cases verify with warnings for the older
+  pipeline's own known citation defects; tampering
+  fails in every era.
+- CI (prepared, applied via the web UI at
+  publication): the workflow expands to nine jobs —
+  unit, syntax, schema validation, CLI smoke,
+  security regression, docs consistency, public
+  E2E, fuzz smoke, and an informational benchmark
+  smoke.
+
 ## 2.6.1 (2026-11-24)
 
 Verification and security-remediation round: no new

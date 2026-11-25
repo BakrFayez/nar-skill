@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import sys
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import formats, safearchive  # noqa: E402
@@ -54,6 +55,11 @@ def cmd_extract(args):
 
 def cmd_duplicates(args):
     paths = list(args.files or [])
+    if args.dir and not os.path.isdir(args.dir):
+        # A nonexistent scan directory previously
+        # reported "scanned 0" with exit 0 (D-15).
+        raise FileNotFoundError(
+            f"no such directory: {args.dir}")
     if args.dir:
         for root, _dirs, files in os.walk(args.dir):
             for name in files:
@@ -146,6 +152,12 @@ def main(argv=None):
     except FileNotFoundError as e:
         print(f"nar-input: {e}", file=sys.stderr)
         return 2
+    except zipfile.BadZipFile as e:
+        # A non-archive target for extract is a usage
+        # error (exit 2), not a traceback (C-13).
+        print(f"nar-input: not a readable archive: {e}",
+              file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(data, indent=2))
     else:
@@ -153,8 +165,14 @@ def main(argv=None):
     if args.command == "validate":
         return 0 if data["valid"] else 1
     if args.command == "extract":
-        return 1 if any(r["entry"] == "(whole archive)"
-                        for r in data["rejected"]) else 0
+        if any(r["entry"] == "(whole archive)"
+               for r in data["rejected"]):
+            return 1
+        if data["rejected"] and not data["extracted"]:
+            # Every entry rejected: the extraction
+            # produced nothing, which is a failure, not
+            # a success with notes (C-13).
+            return 1
     return 0
 
 

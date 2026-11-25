@@ -49,15 +49,74 @@ def _find_sdk_tool(name):
     return None
 
 
+_JAVA_HOME_GLOBS = ("workspace/jdk-*/bin/java",
+                    "workspace/tools/rea-engines/jdk*/bin/java",
+                    "/usr/lib/jvm/*/bin/java")
+
+
+def _child_env():
+    """Environment for version probes: when JAVA_HOME is
+    unset, point it at the first JDK the doctor's own
+    discovery would find, so Java-launched tools (jadx,
+    apktool jars) can start during their probe exactly as
+    they do under the doctor (which puts the found JDK on
+    PATH for its later checks)."""
+    env = dict(os.environ)
+    if not env.get("JAVA_HOME"):
+        home = os.path.expanduser("~")
+        for pattern in _JAVA_HOME_GLOBS:
+            full = pattern if os.path.isabs(pattern) \
+                else os.path.join(home, pattern)
+            for cand in sorted(glob.glob(full)):
+                if _executable_file(cand):
+                    env["JAVA_HOME"] = os.path.dirname(
+                        os.path.dirname(cand))
+                    return env
+    return env
+
+
+def _find_java():
+    """java for launching jar tools: PATH, then JAVA_HOME,
+    then the doctor's JDK globs (D-04)."""
+    found = shutil.which("java")
+    if found:
+        return found
+    home_var = os.environ.get("JAVA_HOME")
+    if home_var:
+        cand = os.path.join(home_var, "bin", "java")
+        if _executable_file(cand):
+            return cand
+    home = os.path.expanduser("~")
+    for pattern in _JAVA_HOME_GLOBS:
+        full = pattern if os.path.isabs(pattern) \
+            else os.path.join(home, pattern)
+        for cand in sorted(glob.glob(full)):
+            if _executable_file(cand):
+                return cand
+    return None
+
+
 def _run_version(argv, timeout=20):
+    """First output line of a version command — ONLY when
+    the command exits 0. The pre-audit form returned the
+    first line regardless of exit code, so a launcher's
+    error banner ("ERROR: JAVA_HOME is not set…") was
+    recorded as the tool's version and the tool probed
+    available (stability audit D-03)."""
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
-                              timeout=timeout)
+                              timeout=timeout, env=_child_env())
+        if proc.returncode != 0:
+            return None
         out = (proc.stdout or "") + (proc.stderr or "")
         lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
         return lines[0] if lines else None
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+
+def _executable_file(path):
+    return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
 def probe(entry):
@@ -91,7 +150,7 @@ def probe(entry):
     path = None
     env_override = os.environ.get(
         "NAR_" + entry["name"].upper().replace("-", "_") + "_PATH")
-    if env_override and os.path.exists(env_override):
+    if env_override and _executable_file(env_override):
         path = env_override
     elif entry.get("env_var") and os.environ.get(entry["env_var"]):
         base = os.environ[entry["env_var"]]
@@ -108,6 +167,27 @@ def probe(entry):
             if found:
                 path = found
                 break
+    if not path and entry.get("env_home"):
+        # Home-variable discovery (e.g. JAVA_HOME/bin/java),
+        # mirroring nar-doctor.sh (stability audit D-04).
+        home_var = os.environ.get(entry["env_home"])
+        if home_var:
+            for rel in entry.get("env_home_candidates", []):
+                cand = os.path.join(home_var, rel)
+                if _executable_file(cand):
+                    path = cand
+                    break
+    if not path and entry.get("home_globs"):
+        home = os.path.expanduser("~")
+        for pattern in entry["home_globs"]:
+            full = pattern if os.path.isabs(pattern) \
+                else os.path.join(home, pattern)
+            for cand in sorted(glob.glob(full)):
+                if _executable_file(cand):
+                    path = cand
+                    break
+            if path:
+                break
     if not path and entry.get("sdk_tool"):
         for cand_name in entry.get("candidates", []):
             path = _find_sdk_tool(cand_name)
@@ -119,10 +199,23 @@ def probe(entry):
             base = os.path.join(home, "workspace", sub)
             for cand_name in entry.get("candidates", []):
                 cand = os.path.join(base, cand_name)
-                if os.path.isfile(cand):
+                if _executable_file(cand):
                     path = cand
                     break
             if path:
+                break
+    if not path and entry.get("jar_env_var"):
+        jar = os.environ.get(entry["jar_env_var"])
+        if jar and os.path.isfile(jar):
+            path = "jar:" + jar
+    if not path and entry.get("jar_globs"):
+        home = os.path.expanduser("~")
+        for pattern in entry["jar_globs"]:
+            full = pattern if os.path.isabs(pattern) \
+                else os.path.join(home, pattern)
+            hits = sorted(glob.glob(full))
+            if hits:
+                path = "jar:" + hits[-1]
                 break
     if not path and kind == "jar":
         home = os.path.expanduser("~")
@@ -143,12 +236,11 @@ def probe(entry):
     if not path:
         result["note"] = "not found"
         return result
-    result["available"] = True
     result["path"] = path
     argv = entry.get("version_argv")
     if argv:
-        if kind == "jar" and path.startswith("jar:"):
-            java = shutil.which("java")
+        if path.startswith("jar:"):
+            java = _find_java()
             if java:
                 result["version"] = _run_version(
                     [java, "-jar", path[4:]] + argv)
@@ -156,6 +248,27 @@ def probe(entry):
             result["version"] = None  # probed by execution instead
         else:
             result["version"] = _run_version([path] + argv)
+    # Availability is a real-start claim, not a path
+    # sighting (D-03): an entry with a version command is
+    # available only when that command actually ran and
+    # exited 0. Entries without one (e.g. adb, whose
+    # validation is a devices probe) are available on an
+    # executable path.
+    if argv and kind != "dotnet" and result["version"] is None:
+        result["note"] = (
+            "found but its version command did not run "
+            "successfully; not counted as available")
+        return result
+    min_major = entry.get("min_version_major")
+    if min_major and result["version"]:
+        m = re.search(r"(\d+)\.", result["version"])
+        if m and int(m.group(1)) < min_major:
+            result["note"] = (
+                f"version {result['version']} is below "
+                f"the required major {min_major}")
+            result["version"] = None
+            return result
+    result["available"] = True
     return result
 
 

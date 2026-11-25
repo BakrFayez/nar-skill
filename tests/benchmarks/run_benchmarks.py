@@ -341,6 +341,173 @@ def format_synthetic_metrics():
             "per_file": per_file}
 
 
+# ------------------------------------------------------------------
+# Benchmark matrix (2.6.2 WS-D2): full nar-analyze runs over
+# the local corpus by role / size class. Each case runs in a
+# fresh driver process so its RUSAGE_CHILDREN peak is its
+# own; the driver also re-runs the case against the same
+# case directory to observe the stage cache (hit/miss from
+# the case's execution-log.json). Peak RSS is the headline
+# metric; wall time is recorded but load-dependent.
+
+MATRIX_ROLES = [
+    # (role label, manifest key or None for the demo path,
+    #  kind tag)
+    ("demo", None, "small synthetic demo"),
+    ("FIX_APP", "FIX_APP", "app"),
+    ("FIX_JAVA", "FIX_JAVA", "app"),
+    ("FIX_XAPK", "FIX_XAPK", "container (xapk)"),
+    ("FIX_UNITY", "FIX_UNITY", "unity engine fixture"),
+    ("FIX_GAME_UNREAL", "FIX_GAME_UNREAL", "unreal engine fixture"),
+    ("FIX_FLUTTER", "FIX_FLUTTER", "native-heavy fixture"),
+    ("FIX_UNITY_BUNDLES", "FIX_UNITY_BUNDLES",
+     "large fixture, multi-DEX"),
+]
+
+_MATRIX_DRIVER = r"""
+import json, os, resource, subprocess, sys, time
+target, out, work, scripts = sys.argv[1:5]
+started = time.time()
+proc = subprocess.run(
+    [sys.executable, os.path.join(scripts, "nar-analyze.py"),
+     target, "--out", out, "--work", work],
+    capture_output=True, text=True, timeout=3600)
+peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+print(json.dumps({
+    "exit_code": proc.returncode,
+    "wall_seconds": round(time.time() - started, 2),
+    "peak_rss_bytes": int(peak) * 1024}))
+"""
+
+
+def _size_class(size_bytes):
+    if size_bytes < 16 * 1024 * 1024:
+        return "small"
+    if size_bytes <= 80 * 1024 * 1024:
+        return "medium"
+    return "large"
+
+
+def _matrix_case(role, kind, path):
+    size = os.path.getsize(path)
+    case = {"fixture_role": role, "kind": kind,
+            "size_class": _size_class(size),
+            "size_bytes": size, "status": "not_run"}
+    out = tempfile.mkdtemp(prefix="nar-matrix-case-")
+    work = tempfile.mkdtemp(prefix="nar-matrix-work-")
+    try:
+        def drive(out_dir, work_dir):
+            proc = subprocess.run(
+                [sys.executable, "-c", _MATRIX_DRIVER,
+                 path, out_dir, work_dir, SCRIPTS],
+                capture_output=True, text=True, timeout=3600)
+            try:
+                return json.loads(proc.stdout.strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                return None
+        first = drive(out, work)
+        if first is None:
+            case["status"] = "driver_failed"
+            return case
+        case.update({"wall_seconds": first["wall_seconds"],
+                     "peak_rss_bytes": first["peak_rss_bytes"],
+                     "exit_code": first["exit_code"],
+                     "status": "completed"
+                     if first["exit_code"] == 0 else "failed"})
+        log_path = os.path.join(out, "execution-log.json")
+
+        def _log_entries():
+            with open(log_path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+            if isinstance(doc, dict):
+                return doc.get("entries") or []
+            return doc if isinstance(doc, list) else []
+
+        stages = {}
+        if os.path.isfile(log_path):
+            try:
+                for entry in _log_entries():
+                    stages[entry.get("stage")] = {
+                        "duration_s": entry.get("duration_s"),
+                        "status": entry.get("status")}
+            except (OSError, ValueError):
+                pass
+        case["stages"] = stages
+        total_out = 0
+        for dirpath, _dirs, files in os.walk(out):
+            for name in files:
+                try:
+                    total_out += os.path.getsize(
+                        os.path.join(dirpath, name))
+                except OSError:
+                    pass
+        case["output_size_bytes"] = total_out
+        # Second run against the same case directory: the
+        # stage cache should serve the 2.0 stages.
+        work2 = tempfile.mkdtemp(prefix="nar-matrix-work2-")
+        try:
+            second = drive(out, work2)
+            if second is not None:
+                case["second_wall_seconds"] = second["wall_seconds"]
+                cached = 0
+                total = 0
+                if os.path.isfile(log_path):
+                    try:
+                        entries = _log_entries()
+                        total = len(entries)
+                        cached = sum(
+                            1 for e in entries
+                            if e.get("status") == "cached")
+                    except (OSError, ValueError):
+                        pass
+                case["cache"] = {
+                    "second_run_stages": total,
+                    "second_run_cached": cached,
+                    "second_run_executed": total - cached}
+        finally:
+            shutil.rmtree(work2, ignore_errors=True)
+        return case
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def measure_matrix(env):
+    cases = []
+    demo = os.path.join(FIXTURES, "demo", "NarDemo.apk")
+    for role, key, kind in MATRIX_ROLES:
+        path = demo if key is None else env.get(key)
+        if not path or not os.path.isfile(path):
+            cases.append({"fixture_role": role, "kind": kind,
+                          "status": "not_run",
+                          "reason": "fixture not bound locally"})
+            continue
+        case = _matrix_case(role, kind, path)
+        cases.append(case)
+        print(f"matrix: {role} [{case.get('size_class')}] "
+              f"status={case['status']} "
+              f"peak={case.get('peak_rss_bytes')} "
+              f"wall={case.get('wall_seconds')}s")
+    return cases
+
+
+def prior_baselines():
+    """Carry the 2.6.0 / 2.6.1 comparison figures in from
+    the sibling baseline files (memory blocks verbatim)."""
+    out = {}
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("baseline-2.6.0.json", "baseline-2.6.1.json"):
+        path = os.path.join(here, name)
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+                out[name] = {"memory": doc.get("memory")}
+            except (OSError, ValueError):
+                pass
+    return out
+
+
 def compute_metrics(env):
     return {
         "corpora_note": "role labels only; synthetic and "
@@ -372,6 +539,9 @@ def main(argv=None):
                    help="timings only (skip accuracy metrics)")
     p.add_argument("--no-memory", action="store_true",
                    help="skip the peak-memory measurement")
+    p.add_argument("--no-matrix", action="store_true",
+                   help="skip the 2.6.2 benchmark matrix "
+                        "(full analyze runs by role/size class)")
     args = p.parse_args(argv)
     env = manifest_env()
     results = {"machine": os.uname().sysname + " " +
@@ -400,6 +570,23 @@ def main(argv=None):
                 "exit_code": rc})
             print(f"{role:28s} {module:22s} {seconds:8.2f}s "
                   f"(exit {rc})")
+    if not args.no_matrix:
+        results["benchmark_matrix"] = measure_matrix(env)
+        results["prior_baselines"] = prior_baselines()
+        results["methodology"] = (
+            "Benchmark matrix (2.6.2): full nar-analyze runs "
+            "per fixture role/size class, each in a fresh "
+            "driver process; peak RSS is the driver's "
+            "RUSAGE_CHILDREN maximum for that case's "
+            "nar-analyze child (stage subprocess peaks are "
+            "grandchildren and excluded, the same scope as "
+            "the headline memory block). Per-stage durations "
+            "and second-run cache counts come from the "
+            "case's own execution-log.json. Wall time is "
+            "recorded but is load-dependent on this shared "
+            "box and is never the headline metric; peak RSS "
+            "is. Prior-baseline memory blocks are carried in "
+            "verbatim for comparison.")
     if not args.no_metrics:
         results["metrics"] = compute_metrics(env)
         m = results["metrics"]

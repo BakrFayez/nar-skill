@@ -98,6 +98,12 @@ def run_json_tool(script, args, timeout=1800):
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout)
+        if proc.returncode != 0:
+            # A failed tool's stdout is an error document,
+            # not a result: returning it let a bad target
+            # produce an empty-but-successful report
+            # downstream (stability audit D-02).
+            return None
         return json.loads(proc.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
@@ -284,7 +290,7 @@ def fuse(apk_path, deep=False, work_dir=None):
             if v["engine"] == "React Native" and v["detected"]:
                 v["variant"] = "new architecture (Fabric/TurboModules)"
     verdicts.sort(key=lambda v: -v["score"])
-    return {"tool": "nar-engines", "version": "2.6.1",
+    return {"tool": "nar-engines", "version": "2.6.2",
             "target": os.path.abspath(apk_path),
             "target_sha256": sha256_of(apk_path),
             "verdicts": verdicts, "ambiguities": ambiguities}

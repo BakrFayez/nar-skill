@@ -20,6 +20,10 @@ subset the built-in validator in `narlib.evidence` checks).
 | `native.json` | native | ELF facts, JNI map, dependency graph (schema added in 2.5.1) |
 | `case.json` | case | case id, input hash, stage states, tool versions |
 | `execution-log.json` | execution-log | one entry per tool run: stage, status, duration |
+| `permissions.json` | permissions | the nar-perms document verbatim (schema added in the 2.6.2 stability campaign; the graph and investigation builders cite it as evidence) |
+| `correlations.json` | correlations | cross-module join records (JNI bindings, endpoint/component joins) with counts |
+| `graph.json` | graph | the unified evidence graph: nodes/edges with provenance and confidence |
+| `investigation.json` | investigation | verified/unverified findings separation, prioritized actions, hypotheses, unknowns |
 | `cache/` | — | per-stage cached documents + keys (resume) |
 | `application.json` | application | brief-named projection of the fingerprint's identity properties (provenance envelopes preserved) |
 | `manifest.json` | manifest | brief-named projection of the permission audit: counts, groups, dangerous set, component counts, flags |
@@ -104,7 +108,9 @@ attached still says IMPLEMENTED_BUT_UNVERIFIED.
 
 ## Endpoint classification
 
-`confirmed` (referenced from DEX code), `potential` (native
+`dex-string` (URL string present in DEX string data — not
+proof of a code reference; renamed from `confirmed` in the
+2.6.2 calibration audit), `potential` (native
 strings only), `unused-candidate` (assets/resources only),
 `third-party` (known SDK/service domain), `sensitive`
 (credentials/auth material in the URL), `unverified` (no
