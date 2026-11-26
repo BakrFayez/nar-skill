@@ -44,7 +44,8 @@ import tempfile
 import zipfile
 
 from .budget import ResourceBudget
-from .safearchive import raw_entry_name, safe_extract
+from .safearchive import (MEMBER_READ_CAP_BYTES, raw_entry_name,
+                          read_member_capped, safe_extract)
 
 #: Kinds that are containers of APKs (a resolution extracts a
 #: base APK out of them). "aab" is a bundle, not an APK
@@ -63,6 +64,15 @@ MAX_CONTAINER_DEPTH = 3
 #: materialized whole just to hash it.
 DUPLICATE_MEMBER_CAP_BYTES = 256 * 1024 * 1024
 
+#: Per-member cap for the container manifest read: the
+#: manifest member is materialized in memory, so it goes
+#: through safearchive's capped reader under this ceiling
+#: (the same MEMBER_READ_CAP_BYTES policy, not a parallel
+#: one). Resolution additionally tightens it to the shared
+#: budget's per-member cap when that is smaller. Read at
+#: call time so tests can patch it.
+MANIFEST_READ_CAP_BYTES = MEMBER_READ_CAP_BYTES
+
 _SPLIT_CONFIG_RE = re.compile(r"(^|[._-])config[._-]|^split[._-]",
                               re.IGNORECASE)
 _ABI_TOKENS = ("armeabi-v7a", "armeabi_v7a", "arm64-v8a",
@@ -80,22 +90,34 @@ def _traversal_name(name):
     return ".." in parts
 
 
-def container_manifest_of(zf):
-    """Identity from an XAPK/APKM container's manifest.json.
+def _manifest_and_refusal(zf, cap_bytes):
+    """(info, refusal) for a container's manifest.json.
 
-    Moved verbatim from nar-triage (which re-exports it):
-    package_name, version, SDK levels, permissions,
-    split_configs and split_apks ({file, id}) entries.
-    Returns a dict (possibly partial) or None."""
+    The member is read through safearchive's
+    :func:`read_member_capped` under ``cap_bytes``: the
+    declared size is checked BEFORE decompression and the
+    streamed count again while reading, so an oversized
+    manifest is never materialized whole. ``refusal`` is
+    the capped reader's named reason when the member
+    exceeds the cap, else None; ``info`` is the parsed
+    identity dict or None (absent, unreadable, over-cap
+    or non-dict manifest)."""
     if "manifest.json" not in zf.namelist():
-        return None
+        return None, None
     try:
-        data = json.loads(
-            zf.read("manifest.json").decode("utf-8", "replace"))
-    except (KeyError, OSError, zipfile.BadZipFile, ValueError):
-        return None
+        raw = read_member_capped(zf, "manifest.json", cap_bytes)
+    except ValueError as e:
+        # The capped reader raises ValueError only for the
+        # cap (declared or streamed size over the ceiling).
+        return None, str(e)
+    except (KeyError, OSError, RuntimeError, zipfile.BadZipFile):
+        return None, None
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        return None, None
     if not isinstance(data, dict):
-        return None
+        return None, None
     info = {}
     for src, dst in (("xapk_version", "xapk_version"),
                      ("package_name", "package"),
@@ -121,6 +143,23 @@ def container_manifest_of(zf):
                                "id": str(entry.get("id", ""))})
     if splits:
         info["split_apks"] = splits
+    return info, None
+
+
+def container_manifest_of(zf, cap_bytes=None):
+    """Identity from an XAPK/APKM container's manifest.json.
+
+    Moved verbatim from nar-triage (which re-exports it):
+    package_name, version, SDK levels, permissions,
+    split_configs and split_apks ({file, id}) entries.
+    Returns a dict (possibly partial) or None. The member
+    is read through safearchive's capped reader under
+    ``cap_bytes`` (default MANIFEST_READ_CAP_BYTES): a
+    manifest over the cap is refused (None), never
+    materialized whole (certification A1-05)."""
+    if cap_bytes is None:
+        cap_bytes = MANIFEST_READ_CAP_BYTES
+    info, _refusal = _manifest_and_refusal(zf, cap_bytes)
     return info
 
 
@@ -362,10 +401,22 @@ def resolve_target(path, merge_splits=True, budget=None,
     # are keyed by, so lookups below match on every
     # platform. Decisions (suffix, traversal) are made on
     # the normalised info.filename, unchanged.
+    manifest_cap = min(budget.max_file_bytes,
+                       MANIFEST_READ_CAP_BYTES)
     with zipfile.ZipFile(path) as zf:
         infos = {raw_entry_name(i): i for i in zf.infolist()}
         names = list(infos)
-        manifest = container_manifest_of(zf)
+        manifest, manifest_refusal = _manifest_and_refusal(
+            zf, manifest_cap)
+    if manifest_refusal:
+        # An over-cap manifest is refused, never silently
+        # dropped: the refusal rides the resolution's named
+        # skipped records and the identity falls back to the
+        # no-manifest rules below.
+        resolved.split_skipped.append({
+            "name": "manifest.json",
+            "reason": f"container manifest refused: "
+                      f"{manifest_refusal}"})
     package = (manifest or {}).get("package")
     resolved.package = package
     contained, refused = [], []
@@ -572,19 +623,25 @@ def resolve_target(path, merge_splits=True, budget=None,
     return resolved
 
 
-def resolution_block(path):
+def resolution_block(path, budget=None):
     """A no-extraction resolution summary for reporters
     (nar-triage): the shared-rule base pick and split set,
     computed from the container inventory alone. Returns
-    None for non-container inputs."""
+    None for non-container inputs. An over-cap container
+    manifest is refused under the same capped read as
+    :func:`resolve_target` and named in ``split_skipped``."""
     kind = detect_container(path)
     if kind not in CONTAINER_KINDS:
         return None
+    budget = ResourceBudget.from_safearchive_limits(budget)
+    manifest_cap = min(budget.max_file_bytes,
+                       MANIFEST_READ_CAP_BYTES)
     try:
         with zipfile.ZipFile(path) as zf:
             infos = {raw_entry_name(i): i
                      for i in zf.infolist()}
-            manifest = container_manifest_of(zf)
+            manifest, manifest_refusal = \
+                _manifest_and_refusal(zf, manifest_cap)
     except (zipfile.BadZipFile, OSError):
         return None
     contained = [{"name": n, "size_bytes": i.file_size}
@@ -600,11 +657,17 @@ def resolution_block(path):
                "kind": split_kind(c["name"]),
                "source_entry": c["name"]}
               for c in contained if c["name"] != base]
+    skipped = []
+    if manifest_refusal:
+        skipped.append({
+            "name": "manifest.json",
+            "reason": f"container manifest refused: "
+                      f"{manifest_refusal}"})
     return {"input_kind": kind,
             "base": os.path.basename(base) if base else None,
             "base_entry": base,
             "splits_merged": splits,
-            "split_skipped": []}
+            "split_skipped": skipped}
 
 
 def inventory_duplicates(roots, cap_bytes=DUPLICATE_MEMBER_CAP_BYTES,

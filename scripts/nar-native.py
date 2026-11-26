@@ -167,7 +167,18 @@ def analyze(target, only_lib=None, work_dir=None,
     finally:
         if resolved is not None:
             resolved.cleanup()
-    report["native_library_count"] = len(report["libraries"])
+    # Headline count is SUCCESSFULLY parsed libraries only
+    # (certification A1-01): entries that failed ELF parsing
+    # carry {"name", "error"} instead of the facts dict and
+    # must not inflate the count. Failures are not hidden --
+    # they stay in "libraries" and are counted separately in
+    # the additive native_library_failed_count field, so
+    # count + failed_count == len(libraries).
+    failed = sum(1 for lib in report["libraries"]
+                 if "error" in lib)
+    report["native_library_count"] = \
+        len(report["libraries"]) - failed
+    report["native_library_failed_count"] = failed
     _finish_report(report)
     return report
 

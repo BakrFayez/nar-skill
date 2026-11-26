@@ -35,12 +35,32 @@ def run_json_tool(script, args, timeout=1200):
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=timeout)
-        return json.loads(proc.stdout), None
-    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+    except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"{script}: {e}"
+    try:
+        return json.loads(proc.stdout), None
+    except ValueError:
+        # The subprocess failed before producing output (for
+        # example nar-triage rejecting a target that is not a
+        # file): its stderr carries the real failure. Surface
+        # that, not the decode error from its empty stdout.
+        detail = (proc.stderr or "").strip()
+        if detail:
+            return None, f"{script}: {detail}"
+        return None, (f"{script}: exited with status "
+                      f"{proc.returncode} and produced no output")
 
 
 def prop(value, provenance, confidence="high", fact_class="observed"):
+    if value is None:
+        # A null value is the absence of an observation: the
+        # underlying parse produced nothing for this property
+        # (for example an unparseable container), so it cannot
+        # carry an observed / high / CONFIRMED label. Mark it
+        # unknown; the shared mapping below then honestly
+        # yields UNVERIFIED.
+        confidence = "low"
+        fact_class = "unknown"
     # verification_status (Phase 8): derived from the fact
     # class by the shared mapping — a property never claims
     # more verification than its fact class supports.
@@ -52,6 +72,12 @@ def prop(value, provenance, confidence="high", fact_class="observed"):
 
 def fingerprint(apk_path):
     notes = []
+    if not os.path.isfile(apk_path):
+        # Name the input problem directly (the same wording
+        # nar-triage uses) instead of letting the triage
+        # subprocess's empty stdout surface downstream as a
+        # decode error.
+        raise FileNotFoundError(f"not a file: {apk_path}")
     triage, err = run_json_tool("nar-triage.py", [apk_path])
     if triage is None:
         raise RuntimeError(f"triage failed: {err}")

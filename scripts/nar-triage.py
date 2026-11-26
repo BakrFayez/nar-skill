@@ -792,6 +792,16 @@ def bundletool_manifest(aab_path):
     return info, "ok"
 
 
+#: Per-member cap for the fallback container-manifest read
+#: below: the same 256 MiB ceiling as
+#: narlib.safearchive.MEMBER_READ_CAP_BYTES /
+#: narlib.container.MANIFEST_READ_CAP_BYTES, defined locally
+#: because the fallback exists precisely when the narlib
+#: import failed, so it cannot import the shared constant.
+#: Read at call time so tests can patch it.
+MANIFEST_READ_CAP_BYTES = 256 * 1024 * 1024
+
+
 def container_manifest_of(zf):
     """Identity from an XAPK/APKM container's manifest.json, if present.
 
@@ -809,8 +819,30 @@ def container_manifest_of(zf):
         return _container_mod.container_manifest_of(zf)
     if "manifest.json" not in zf.namelist():
         return None
+    # Fallback (no narlib): the same capped discipline as
+    # narlib.safearchive.read_member_capped, implemented
+    # locally (certification A1-05) -- the declared size is
+    # checked BEFORE reading and the streamed count again
+    # while reading in bounded chunks, so an over-cap
+    # manifest is refused (None, exactly as for an absent
+    # or corrupt manifest) and never materialised whole.
+    cap_bytes = MANIFEST_READ_CAP_BYTES
     try:
-        data = json.loads(zf.read("manifest.json").decode("utf-8", "replace"))
+        if zf.getinfo("manifest.json").file_size > cap_bytes:
+            return None
+        chunks = []
+        total = 0
+        with zf.open("manifest.json") as fh:
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > cap_bytes:
+                    return None
+                chunks.append(chunk)
+        data = json.loads(
+            b"".join(chunks).decode("utf-8", "replace"))
     except (KeyError, OSError, zipfile.BadZipFile, ValueError):
         return None
     if not isinstance(data, dict):

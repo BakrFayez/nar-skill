@@ -39,6 +39,13 @@ def cmd_identify(args):
 def cmd_validate(args):
     verdict = formats.identify(args.target)
     notes = formats.validate_structure(args.target, verdict)
+    if verdict["format"] == "unknown":
+        # Nothing was identified, so nothing could be
+        # validated: a vacuous pass would assert validity
+        # for random bytes, an empty file, or junk under a
+        # container name (certification B-02).
+        notes.insert(0, "unidentifiable: no format was "
+                        "identified; nothing could be validated")
     result = {"target": args.target, "format": verdict["format"],
               "sha256": verdict["sha256"], "valid": not notes,
               "notes": notes}

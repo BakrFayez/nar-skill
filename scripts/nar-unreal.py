@@ -1816,6 +1816,16 @@ def main(argv=None):
                         "--max-names and the detail caps); "
                         "the report grows with every entry")
     args = p.parse_args(argv)
+    if os.path.isdir(args.target):
+        # Directory targets are an input error (exit 2) on
+        # every platform. This cannot be left to the open()
+        # below: POSIX raises IsADirectoryError for a
+        # directory open (caught under the try), but Windows
+        # raises PermissionError instead, which would escape
+        # as a traceback and the wrong exit code.
+        print(f"nar-unreal: is a directory: {args.target}",
+              file=sys.stderr)
+        return 2
     for flag in ("max_packages", "max_containers",
                  "max_chunks", "max_names"):
         if getattr(args, flag) < 0:
