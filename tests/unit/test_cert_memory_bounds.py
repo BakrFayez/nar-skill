@@ -50,7 +50,8 @@ How the bounds were set (measured 2026-11-26 on this tree,
 - nar-analyze on the synthetic oversized container:
   65.1 MB tree peak. Bound: 256 MiB.
 
-ru_maxrss is Linux/macOS semantics; on platforms without
+ru_maxrss is Linux/macOS semantics (KiB on Linux, bytes on
+macOS — the harness normalises); on platforms without
 it these tests skip rather than guess.
 """
 import io
@@ -109,9 +110,15 @@ try:
 except subprocess.TimeoutExpired:
     print(json.dumps({"timeout": True}))
     sys.exit(0)
-peak_kb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+peak_raw = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+# ru_maxrss units differ by platform: KiB on Linux, bytes on
+# macOS. Normalise to MiB accordingly.
+if sys.platform == "darwin":
+    peak_mb = peak_raw / (1024.0 * 1024.0)
+else:
+    peak_mb = peak_raw / 1024.0
 print(json.dumps({
-    "rc": rc, "peak_mb": peak_kb / 1024.0,
+    "rc": rc, "peak_mb": peak_mb,
     "out": out.decode("utf-8", "replace")[-4000:],
     "err": err.decode("utf-8", "replace")[-2000:]}))
 """

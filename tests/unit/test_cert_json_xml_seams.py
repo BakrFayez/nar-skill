@@ -148,6 +148,13 @@ class _Timeout:
         self.seconds = seconds
 
     def __enter__(self):
+        # SIGALRM is POSIX-only; on platforms without it the
+        # guard is a no-op (the parse properties under test do
+        # not depend on the timeout safety net).
+        self._armed = hasattr(signal, "SIGALRM")
+        if not self._armed:
+            return self
+
         def _raise(signum, frame):
             raise TimeoutError(
                 f"parse exceeded {self.seconds}s guard")
@@ -156,8 +163,9 @@ class _Timeout:
         return self
 
     def __exit__(self, *exc):
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, self._old)
+        if getattr(self, "_armed", False):
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, self._old)
         return False
 
 

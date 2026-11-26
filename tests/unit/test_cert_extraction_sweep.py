@@ -170,7 +170,11 @@ def test_sweep_safearchive_traversal_spellings(tmp_path, evil):
     report = safearchive.safe_extract(str(src), str(dest))
     assert [e["entry"] for e in report["extracted"]] == ["ok.txt"]
     assert len(report["rejected"]) == 1
-    assert report["rejected"][0]["entry"] == evil
+    # The recorded entry is the same name; its separator spelling
+    # follows the platform's path normalisation (Windows records
+    # the archive '/' form), so compare with separators folded.
+    assert (report["rejected"][0]["entry"].replace("\\", "/")
+            == evil.replace("\\", "/"))
     assert report["rejected"][0]["reason"]  # named refusal
     assert not (tmp_path / "evil.txt").exists()
     _assert_sentinel_untouched(outside)
@@ -285,15 +289,23 @@ def test_sweep_analyze_backslash_name_stays_contained(
         tmp_path, analyze_budget):
     """On POSIX a backslash is a filename character, not a
     separator: the write must land INSIDE root under the
-    literal name, never outside it."""
+    literal name, never outside it. On Windows a backslash IS
+    a separator, so the same name is an escape and the correct
+    outcome is the named rejection. Either way nothing is
+    written outside root."""
     root = tmp_path / "root"
     root.mkdir()
     src = _analyze_zip(tmp_path, [("payload.bin", b"data")])
     with zipfile.ZipFile(src) as zf:
         dest, rejection = nar_analyze.extract_entry_record(
             zf, "payload.bin", str(root), "..\\evil.txt")
-    assert rejection is None
-    assert Path(dest).parent == Path(os.path.realpath(root))
+    if os.name == "nt":
+        assert dest is None
+        assert rejection is not None
+        assert "escapes" in rejection["reason"]
+    else:
+        assert rejection is None
+        assert Path(dest).parent == Path(os.path.realpath(root))
     assert not (tmp_path / "evil.txt").exists()
 
 
