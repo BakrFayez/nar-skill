@@ -12,10 +12,12 @@ criteria, stated honestly:
        intents, >=3 frozen cases.
        HERE: 60 authored unseen questions (42 in the passing
        set, 18 recorded as newly-classified candidates) across
-       all 15 intents, on 1 frozen case.
+       all 15 intents, on 1 frozen case. NF-04 fix: all 18
+       candidates converted to the passing set (60/60).
   F-02 full: >=180 paraphrases (60 library questions x 3).
        HERE: 60 paraphrases (20 library questions x 3, 14
-       intent families); 30 pass, 30 are candidates.
+       intent families); 30 pass, 30 are candidates. NF-04
+       fix: all 30 candidates converted (60/60).
   F-05 full: >=4 planted cases + >=20 aimed questions.
        HERE: 5 planted cases + 14 aimed questions. Observed
        behaviour (probed BEFORE assertions were written):
@@ -218,14 +220,10 @@ F01_PASS = [
       ["Coins are kept in the wallet"]),
     E("Describe the wallet in detail.", "other",
       ["Coins are kept in the wallet"]),
-]
-
-# Newly-classified candidates exposed by the F-01 probe.
-# Classification for every entry: Accuracy Defect candidate
-# (P1 shape per Annex F F-02/F-05 reasoning: a misroute that
-# yields a confident, non-responsive answer counts double).
-# `observed` records the probed behaviour verbatim in short.
-F01_XFAIL = [
+    # Converted from F01_XFAIL by the NF-04 fix (general
+    # classifier lexicon/stem rules and the build_other
+    # stopword + relevance bar; no expected intent or fact
+    # was changed in the move).
     E("Which application am I looking at here?", "identity",
       ["com.example.synthetic"]),
     E("What was this constructed on top of?", "build",
@@ -267,6 +265,16 @@ F01_XFAIL = [
     E("Where does your knowledge of this target run out?",
       "gaps", ["50 coverage entries"]),
 ]
+
+# Newly-classified candidates exposed by the F-01 probe.
+# Classification for every entry: Accuracy Defect candidate
+# (P1 shape per Annex F F-02/F-05 reasoning: a misroute that
+# yields a confident, non-responsive answer counts double).
+# `observed` records the probed behaviour verbatim in short.
+# NF-04 FIX: all 18 candidates were converted into F01_PASS
+# above by general classifier/matcher rules; the registry is
+# empty and F01_OBSERVED is kept as the pre-fix record.
+F01_XFAIL = []
 F01_OBSERVED = {
     "Which application am I looking at here?":
         "intent other (identity facts via fallback, confirmed)",
@@ -340,74 +348,84 @@ F02 = [
       passing=[
           "Which game-making technology sits underneath "
           "this title?",
-          "Name the underlying runtime technology."],
-      xfail=["What powers this title under the hood?"]),
+          "Name the underlying runtime technology.",
+          "What powers this title under the hood?"],
+      xfail=[]),
     C("What language is it written in?", "build", ["Kotlin"],
       passing=[
           "Is this a Kotlin program or a Java program?",
           "Kotlin or Java \u2014 which one produced this "
-          "code?"],
-      xfail=["In which programming tongue was the code "
-             "authored?"]),
+          "code?",
+          "In which programming tongue was the code "
+          "authored?"],
+      xfail=[]),
     C("What is this app?", "identity",
       ["com.example.synthetic"],
       passing=[
           "Under what package identifier does this target "
-          "ship?"],
-      xfail=["Identify the program in front of you.",
-             "Give me the designation and identifier of "
-             "this software."]),
+          "ship?",
+          "Identify the program in front of you.",
+          "Give me the designation and identifier of "
+          "this software."],
+      xfail=[]),
     C("What version is this app?", "identity", ["1.0"],
       passing=[
           "What version is installed here, and what is "
-          "it called?"],
-      xfail=["Which release of the program is this?",
-             "State the release number carried by this "
-             "build."]),
+          "it called?",
+          "Which release of the program is this?",
+          "State the release number carried by this "
+          "build."],
+      xfail=[]),
     C("What screens does it have?", "screens",
       ["com.example.MainActivity"],
       passing=[
           "How many activities are declared, and which "
           "one launches first?",
           "List every activity the manifest declares, "
-          "starting with the launcher."],
-      xfail=["Enumerate the declared interface components "
-             "for me."]),
+          "starting with the launcher.",
+          "Enumerate the declared interface components "
+          "for me."],
+      xfail=[]),
     C("What is the main screen?", "screens",
       ["com.example.MainActivity"],
-      passing=["Which screen greets the user at launch?"],
-      xfail=["Name the entry-point view of the program.",
-             "What is the first page a user lands on?"]),
+      passing=["Which screen greets the user at launch?",
+               "Name the entry-point view of the program.",
+               "What is the first page a user lands on?"],
+      xfail=[]),
     C("Where are my coins?", "storage", ["SharedPreferences"],
       passing=[
           "Through which on-device repository does my "
           "money balance persist?",
           "In what form is the player's hoard stored "
-          "between launches?"],
-      xfail=["By what mechanism does the program keep the "
-             "player's balance between sessions?"]),
+          "between launches?",
+          "By what mechanism does the program keep the "
+          "player's balance between sessions?"],
+      xfail=[]),
     C("What database does it use?", "storage", ["SQLite"],
       passing=[
           "Does its persistence layer rest on SQLite "
-          "tables?"],
-      xfail=["Which SQL store backs this program's data?",
-             "Name the relational store embedded in the "
-             "program."]),
+          "tables?",
+          "Which SQL store backs this program's data?",
+          "Name the relational store embedded in the "
+          "program."],
+      xfail=[]),
     C("What does it talk to?", "network",
       ["api.example.com"], scope="either",
       passing=[
           "Name the remote host this software contacts.",
-          "What URLs are embedded in the binary?"],
-      xfail=["To which machine on the internet does this "
-             "program send its traffic?"]),
+          "What URLs are embedded in the binary?",
+          "To which machine on the internet does this "
+          "program send its traffic?"],
+      xfail=[]),
     C("What API does it call?", "network",
       ["api.example.com"], scope="either",
       passing=["What backend does it rely on for its "
-               "coin data?"],
-      xfail=["Which remote interface does the code invoke "
-             "for data?",
-             "List the web destinations the code reaches "
-             "out to."]),
+               "coin data?",
+               "Which remote interface does the code invoke "
+               "for data?",
+               "List the web destinations the code reaches "
+               "out to."],
+      xfail=[]),
     C("Is it protected?", "security", ["1 findings"],
       passing=[
           "Tell me the hardening posture of this binary.",
@@ -415,74 +433,83 @@ F02 = [
           "How safe is this binary from tampering?"]),
     C("How is it monetised?", "monetisation",
       ["billing/purchase"],
-      passing=["Are ads shown to players in this title?"],
-      xfail=["How does this program earn its keep?",
-             "Which purchasable-offer machinery is "
-             "embedded in the code?"]),
+      passing=["Are ads shown to players in this title?",
+               "How does this program earn its keep?",
+               "Which purchasable-offer machinery is "
+               "embedded in the code?"],
+      xfail=[]),
     C("Does it show ads?", "monetisation", ["advertising"],
-      xfail=["Does this title carry advertising?",
-             "Are commercial messages displayed inside "
-             "the program?",
-             "Is there advertising anywhere in this "
-             "title?"]),
+      passing=["Does this title carry advertising?",
+               "Are commercial messages displayed inside "
+               "the program?",
+               "Is there advertising anywhere in this "
+               "title?"],
+      xfail=[]),
     C("What assets does it contain?", "assets",
       ["2 inventoried assets"],
       passing=[
           "What media and data files does the package "
           "ship inside?",
           "Give me an inventory count of the packaged "
-          "resources."],
-      xfail=["How many bundled files were catalogued, "
-             "and how large are they together?"]),
+          "resources.",
+          "How many bundled files were catalogued, "
+          "and how large are they together?"],
+      xfail=[]),
     C("How is the character animated?", "animation",
       ["Animation-shaped assets identified: 1"],
       passing=[
           "Describe the animation setup for the hero "
           "sprite.",
           "Which skeletal system, if any, moves the "
-          "characters?"],
-      xfail=["What movement technology drives the hero "
-             "figure?"]),
+          "characters?",
+          "What movement technology drives the hero "
+          "figure?"],
+      xfail=[]),
     C("What can you not tell me?", "gaps",
       ["50 coverage entries"],
       passing=[
           "What is missing from your picture of this "
           "target?",
           "Summarise the limitations that bound this "
-          "analysis."],
-      xfail=["Where does your knowledge of this target "
-             "run out?"]),
+          "analysis.",
+          "Where does your knowledge of this target "
+          "run out?"],
+      xfail=[]),
     C("What changed between v1 and v2?", "compare",
       unknown="absent",
       passing=[
           "Has anything changed between the first release "
-          "and this one?"],
-      xfail=["What would differ if a newer release were "
-             "placed beside this one?",
-             "If I handed you a second build alongside "
-             "this one, could you contrast them?"]),
+          "and this one?",
+          "What would differ if a newer release were "
+          "placed beside this one?",
+          "If I handed you a second build alongside "
+          "this one, could you contrast them?"],
+      xfail=[]),
     C("What scripts does it ship?", "scripts",
       ["found no script-bearing files"],
       passing=[
           "Does the package embed any Lua code?",
           "Any sign of Hermes or WebAssembly in the "
-          "package?"],
-      xfail=["Are any interpreted-language programs "
-             "bundled with this target?"]),
+          "package?",
+          "Are any interpreted-language programs "
+          "bundled with this target?"],
+      xfail=[]),
     C("How do I rebuild this app?", "rebuild",
       ["Rebuild specification generated"],
       passing=[
           "Could you rebuild this software from its "
           "evidence, and in what order?",
           "What is the build order for reconstructing "
-          "the whole program?"],
-      xfail=["Walk me through recreating this program "
-             "from scratch."]),
+          "the whole program?",
+          "Walk me through recreating this program "
+          "from scratch."],
+      xfail=[]),
     C("How does login work?", "behaviour", unknown="absent",
-      xfail=["Walk me through the sign-in process step "
-             "by step.",
-             "In what way does a user authenticate here?",
-             "Explain the login mechanism in detail."]),
+      passing=["Walk me through the sign-in process step "
+               "by step.",
+               "In what way does a user authenticate here?",
+               "Explain the login mechanism in detail."],
+      xfail=[]),
 ]
 
 F02_PASS = [E(q, c["intent"], c["facts"], scope=c["scope"],
@@ -889,13 +916,7 @@ def test_f05_answers_still_contract_complete(f05_env, case):
 
 @pytest.mark.parametrize(
     "case,question",
-    [pytest.param(c, q, id=(c["id"] + " :: " + q[:40]),
-                  marks=pytest.mark.xfail(
-                      strict=True,
-                      reason="F-05 candidate (Accuracy Defect, "
-                             "P1 shape): aimed answer silently "
-                             "asserts one side of the planted "
-                             "contradiction"))
+    [pytest.param(c, q, id=(c["id"] + " :: " + q[:40]))
      for c in F05_CASES for q in c["questions"]])
 def test_f05_conflict_surfaced(f05_env, case, question):
     doc = f05_env["cases"][case["id"]]["docs"][question]

@@ -16,10 +16,12 @@ Nothing is silently skipped: the report lists every rejection
 with its reason. Extraction writes regular files only, under
 the destination directory, with sanitized relative paths.
 """
+import lzma
 import os
 import stat
 import time
 import zipfile
+import zlib
 
 from .budget import ResourceBudget
 
@@ -96,6 +98,24 @@ def _entry_problems(info, limits, totals):
 #: tool materializes in memory may exceed this.
 MEMBER_READ_CAP_BYTES = 256 * 1024 * 1024
 
+#: Exceptions a corrupt or header-lying member raises while
+#: being opened or decompressed -- one family per compression
+#: method zipfile supports, plus the container-level read
+#: failures: zlib.error (deflate), lzma.LZMAError (lzma),
+#: OSError (bzip2's "Invalid data stream"), zipfile.BadZipFile
+#: (bad local header, CRC mismatch at end of stream),
+#: RuntimeError (encrypted member; also NotImplementedError,
+#: its subclass, for an unsupported compression method) and
+#: EOFError (truncated stream). None of these is a
+#: programming error: each one means THIS member cannot be
+#: read. zlib.error and lzma.LZMAError are bare Exception
+#: subclasses named by no other layer contract, so before
+#: NF-02 they escaped this layer raw -- a deflate-corrupt
+#: entry aborted a whole extraction, and the capped reader
+#: leaked them to callers that only handle ValueError.
+_MEMBER_READ_ERRORS = (zipfile.BadZipFile, RuntimeError, EOFError,
+                       OSError, zlib.error, lzma.LZMAError)
+
 
 def read_member_capped(zf, name, cap_bytes=MEMBER_READ_CAP_BYTES):
     """Read one zip member fully, under a hard cap.
@@ -103,11 +123,20 @@ def read_member_capped(zf, name, cap_bytes=MEMBER_READ_CAP_BYTES):
     The declared size is checked BEFORE decompression
     and the streamed byte count is checked again while
     reading (a crafted central directory can understate
-    the size). Raises ValueError over the cap. Several
-    tools previously materialized members with a bare
-    zf.read() — a small hostile APK with a huge inflated
-    member drove hundreds of MB of peak RSS through the
-    analysis pipeline (stability audit D-05)."""
+    the size). Raises ValueError over the cap, and
+    ValueError again -- carrying an "unreadable or
+    corrupt" reason -- when the member cannot be read at
+    all (corrupt deflate/bzip2/lzma stream, bad CRC,
+    encrypted or unsupported member): callers treat
+    ValueError as this reader's named failure channel, so
+    a decompression error must surface through it, never
+    as a raw zlib.error / lzma.LZMAError (NF-02). A name
+    that is not in the archive still raises KeyError from
+    getinfo -- that is a caller error, not corruption.
+    Several tools previously materialized members with a
+    bare zf.read() — a small hostile APK with a huge
+    inflated member drove hundreds of MB of peak RSS
+    through the analysis pipeline (stability audit D-05)."""
     info = zf.getinfo(name)
     if info.file_size > cap_bytes:
         raise ValueError(
@@ -115,18 +144,23 @@ def read_member_capped(zf, name, cap_bytes=MEMBER_READ_CAP_BYTES):
             f"{info.file_size} bytes, over the "
             f"{cap_bytes}-byte member read cap")
     out = bytearray()
-    with zf.open(name) as fh:
-        while True:
-            chunk = fh.read(1 << 20)
-            if not chunk:
-                break
-            out += chunk
-            if len(out) > cap_bytes:
-                raise ValueError(
-                    f"archive member {name!r} exceeded "
-                    f"the {cap_bytes}-byte member read "
-                    "cap while streaming (declared size "
-                    "understated)")
+    try:
+        with zf.open(name) as fh:
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                out += chunk
+                if len(out) > cap_bytes:
+                    raise ValueError(
+                        f"archive member {name!r} exceeded "
+                        f"the {cap_bytes}-byte member read "
+                        "cap while streaming (declared size "
+                        "understated)")
+    except _MEMBER_READ_ERRORS as e:
+        raise ValueError(
+            f"archive member {name!r} is unreadable or "
+            f"corrupt: {e}") from e
     return bytes(out)
 
 
@@ -265,12 +299,16 @@ def safe_extract(zip_path, dest_dir, limits=None, _depth=0):
                                         "exceeds total size limit")
                             break
                         dst.write(chunk)
-            except (zipfile.BadZipFile, RuntimeError, EOFError,
-                    OSError) as e:
+            except _MEMBER_READ_ERRORS as e:
                 # A corrupt or header-lying entry (bad CRC,
-                # truncated stream, encrypted without a key)
+                # truncated stream, encrypted without a key,
+                # deflate/bzip2/lzma stream failing mid-read)
                 # rejects that entry alone; it must not abort
-                # the whole extraction (Phase 10 audit).
+                # the whole extraction (Phase 10 audit). The
+                # tuple is the full _MEMBER_READ_ERRORS family:
+                # omitting zlib.error / lzma.LZMAError let a
+                # corrupt entry escape raw and abort the
+                # extraction (NF-02).
                 overflow = f"entry unreadable: {e}"
             if overflow:
                 try:

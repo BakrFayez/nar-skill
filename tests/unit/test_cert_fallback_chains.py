@@ -293,16 +293,6 @@ def test_c05_triage_aab_identity_degrades_not_found(
     assert ".aab bundle" in text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="newly-classified defect candidate (Wave 3, "
-           "C-05): human() checks badging_status == "
-           "'not-found' before is_aab, so a bundletool-"
-           "absent .aab prints the aapt2 line although "
-           "aapt2 is never consulted for bundles; the "
-           "designed bundletool line is unreachable on "
-           "the absent path. Remove this marker when the "
-           "branch order / attribution is fixed.")
 def test_c05_triage_aab_human_line_names_bundletool(
         monkeypatch, tmp_path):
     monkeypatch.setattr(nar_triage, "_find_bundletool",

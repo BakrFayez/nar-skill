@@ -1834,11 +1834,11 @@ def human(report):
                              else i["name"] for i in b["implied_permissions"])
             lines.append("  of which implied by the platform, NOT declared"
                          f" in the manifest: {impl}")
-    elif report.get("badging_status") == "not-found":
-        lines.append("Package: unknown (aapt2 not found. See nar-doctor.sh)")
     elif report.get("is_aab"):
         lines.append("Package: unknown (bundletool could not read the .aab manifest;"
                      " see nar-doctor.sh)")
+    elif report.get("badging_status") == "not-found":
+        lines.append("Package: unknown (aapt2 not found. See nar-doctor.sh)")
     else:
         lines.append("Package: unknown (aapt2 could not read badging for this file)")
     lines += [

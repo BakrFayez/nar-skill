@@ -92,6 +92,9 @@ INTENT_RULES = [
         r"unknowns?\b", r"\bgaps?\b", r"limitations?",
         r"what is missing", r"what'?s missing",
         r"not tell me", r"cannot tell me", r"can'?t tell me",
+        r"knowledge\b.*\b(run|runs|ran) out\b",
+        r"where\b.*\bknowledge\b.*\b(ends?|stops?|limits?)\b",
+        r"limits? of (your|the) knowledge",
     ]),
     ("compare", [
         r"\bcompare\b", r"\bcomparison\b", r"\bdiff(erence|erences)?\b.*\bbetween\b",
@@ -99,11 +102,16 @@ INTENT_RULES = [
         r"\bbetween v\d", r"\bv1 and v2\b", r"\bversion diff",
         r"\bold and new\b", r"\bnewer version\b.*\bdifferent",
         r"\bdifferent between\b", r"\bhow do .* compare\b",
+        r"\bdiffer\b", r"\bcontrast\b",
+        r"\bsecond (build|version|release|artifact|copy)\b",
+        r"\b(beside|alongside)\b.*\b(one|this|it)\b",
+        r"\bside by side\b",
     ]),
     ("rebuild", [
-        r"\brebuild\b", r"\bre-?build\b", r"\brebuilding\b",
-        r"\brecreate\b",
-        r"\bre-?create\b", r"\breimplement", r"\bre-?implement",
+        r"\brebuild\w*", r"\bre-?build\w*",
+        r"\brecreat\w*",
+        r"\bre-?creat\w*", r"\breimplement", r"\bre-?implement",
+        r"\bfrom scratch\b",
         r"how (do|would|can) i build", r"build my own",
         r"build an equivalent", r"build a clone",
         r"\bclone (it|this|the app|the game)\b",
@@ -114,6 +122,10 @@ INTENT_RULES = [
         r"\bdragonbones\b", r"\bskeletal\b", r"\bbones?\b.*\banimat",
         r"\bkeyframe", r"\bsprite ?sheet\b.*\banimat",
         r"how is .* animated", r"how are .* animated",
+        r"\bmovement\b",
+        r"\b(hero|character|sprite|figure)s?\b.*"
+        r"\b(move|moves|moving|movement)\b",
+        r"\bhow\b.*\b(move|moves)\b.*\bon screen\b",
     ]),
     ("scripts", [
         r"\bscripts?\b", r"\bscripting\b", r"\blua(jit)?\b",
@@ -122,15 +134,19 @@ INTENT_RULES = [
         r"\bpython bytecode\b", r"\bsource ?maps?\b",
         r"\bsquirrel\b", r"\bangelscript\b", r"\bpawn\b",
         r"\bcil\b", r"\bdart\b.*\b(snapshot|kernel)",
-        r"\bsnapshot\b.*\bdart\b",
+        r"\bsnapshot\b.*\bdart\b", r"\binterpreted\b",
     ]),
     ("monetisation", [
         r"\bmonetis", r"\bmonetiz", r"\brevenue\b", r"\bpaywall\b",
         r"\bsubscription", r"\bin-?app purchas", r"\biap\b",
-        r"\bbilling\b", r"\bpurchas(e|es|ed|ing)\b",
+        r"\bbilling\b", r"\bpurchas\w*",
         r"\bad(s|vertising|vertisements)?\b.*\b(flow|sdk|network|shown|served)",
         r"how .* make(s)? money", r"\bpremium\b.*\b(unlock|tier|feature)",
         r"where is .* verified", r"\bads?\b",
+        r"\badvertis\w*", r"\bcommercials\b",
+        r"\bcommercial (messages?|breaks?|ads?)\b",
+        r"\bearn(s|ed|ing)?\b.*\b(keep|money|revenue|income)\b",
+        r"\bcharge(s|d|ing)? for\b",
     ]),
     ("security", [
         r"\bprotect", r"\bpacker\b", r"\bobfuscat", r"\brasp\b",
@@ -146,6 +162,10 @@ INTENT_RULES = [
         r"\bnetwork\b", r"\bhttps?\b", r"\bbackend\b",
         r"communicat\w+ with", r"\brequests?\b.*\b(make|send)",
         r"what does it connect to", r"\bconnect(s|ion)? to\b",
+        r"\binternet\b", r"\btraffic\b", r"\bdestinations?\b",
+        r"\bphones? home\b", r"\bremote\b",
+        r"\breach(es|ing)? out to\b",
+        r"\bsend(s|ing)?\b.*\btraffic\b",
     ]),
     ("storage", [
         r"\bstored\b", r"\bstorage\b", r"\bsaved\b", r"\bsave(s|d)?\b.*\b(progress|game|data|state)",
@@ -155,18 +175,28 @@ INTENT_RULES = [
         r"\broom\b.*\b(database|storage)", r"where .* kept",
         r"where .* stored", r"how is .* stored", r"how are .* stored",
         r"\bpersistence\b", r"\bpersist",
+        r"\bbalance\b", r"\bsql\b", r"\brelational\b",
+        r"\bbetween sessions\b",
     ]),
     ("screens", [
         r"\bscreens?\b", r"\bactivit", r"\bnavigation\b",
         r"\bdeep ?links?\b", r"how do i get to", r"\bget to\b.*\bscreen",
         r"\buser interface\b", r"\bui\b.*\b(screen|flow)",
         r"\bpages?\b.*\b(app|game|has|have)", r"\bmenus?\b",
+        r"\binterface components\b",
+        r"\bdeclared\b.*\bcomponents?\b",
+        r"\bcomponents?\b.*\bdeclared\b",
+        r"\bentry[- ]point\b", r"\bfirst page\b",
+        r"\blands on\b", r"\blanding page\b",
     ]),
     ("behaviour", [
         r"how does\b", r"how do\b", r"how is\b.*\b(work|done|handled|implemented)",
         r"\bhow\b.*\bwork(s|ing)?\b", r"what happens when",
         r"\bflow\b", r"\bbehaviou?r\b", r"\bfeature\b.*\bwork",
         r"trace\b.*\b(feature|flow)",
+        r"\blog[- ]?in\b", r"\blog[- ]?on\b",
+        r"\bsign[- ]?in\b", r"\bsign[- ]?on\b",
+        r"\bauthenticat\w*",
     ]),
     ("assets", [
         r"\bassets?\b", r"\btextures?\b", r"\bsprites?\b",
@@ -175,6 +205,8 @@ INTENT_RULES = [
         r"files? (does|in|inside|contained)", r"\bcontent\b.*\bcontain",
         r"\bfiles?\b.*\binside\b",
         r"what'?s inside", r"what is inside",
+        r"\bbundled\b.*\bfiles?\b", r"\bfiles?\b.*\bbundled\b",
+        r"\bcatalogued\b", r"\bhow many\b.*\bfiles?\b",
     ]),
     ("build", [
         r"\bengine\b", r"\blanguages?\b", r"\btoolchain\b",
@@ -183,6 +215,9 @@ INTENT_RULES = [
         r"what .* made (with|in)\b", r"\btechnology\b", r"\bstack\b",
         r"how (was|is) it built\b",
         r"\bil2cpp\b", r"\bmono\b.*\bor\b",
+        r"\bconstructed (on|with|from)\b", r"\bunder the hood\b",
+        r"\bpowers\b.*\b(title|app|game|program|software|this)\b",
+        r"\bprogramming (tongue|language)\b", r"\btongue\b",
     ]),
     ("identity", [
         r"what is this", r"what is it\b", r"\bpackage\b",
@@ -190,6 +225,12 @@ INTENT_RULES = [
         r"\bapp name\b", r"\bname of (the|this) (app|game)",
         r"\bsize\b", r"\bidentity\b", r"\blabel\b",
         r"which app is", r"which game is",
+        r"\bwhich (app|application|program|software)\b",
+        r"\bwhat (app|application|program|software)\b",
+        r"\bidentif\w*\b.*\b(program|app|software|application|target)\b",
+        r"\bdesignation\b", r"\bidentifier\b",
+        r"\bwhich release\b", r"\brelease number\b",
+        r"\brelease of (the|this)\b",
     ]),
 ]
 
@@ -439,10 +480,89 @@ def _tokens(text):
             if len(t) >= 3]
 
 
+#: Function words and generic question/imperative words that
+#: carry no topical signal. The other-intent fact matcher
+#: (NF-04) must never select a verified fact on the strength
+#: of one of these: the stored wallet fact's text contains
+#: "the", so without this discipline almost any English
+#: question "matched" it.
+_FACT_STOPWORDS = frozenset("""
+a an the and or of to in on for with by at from as is are was were
+be been being do does did done have has had can could will would
+shall should may might must what which who whom whose when where
+why how this that these those there here it its i you he she we
+they me him her us them my your his their our mine yours ours
+am not no yes if then than so such into about above after before
+between through during each other any some all both few more most
+very just also tell give show list name state describe explain
+""".split())
+
+
+def _content_tokens(text):
+    """_tokens minus the fact-matching stopwords."""
+    return {t for t in _tokens(text) if t not in _FACT_STOPWORDS}
+
+
+def _fact_matches(question_content, fact):
+    """Relevance bar for the other-intent fact matcher: a
+    fact is selected only on real topical overlap — either
+    at least two shared content tokens across the fact's
+    full text (fact + subject + detail), or a single shared
+    content token that belongs to the fact's headline
+    (fact + subject) and is at least four characters long.
+    A lone match on detail-only wording, or on any common
+    word, never selects a fact."""
+    full = _content_tokens("%s %s %s" % (fact.get("fact"),
+                                         fact.get("subject"),
+                                         fact.get("detail")))
+    shared = question_content & full
+    if len(shared) >= 2:
+        return True
+    if len(shared) == 1:
+        token = next(iter(shared))
+        headline = _content_tokens("%s %s" % (fact.get("fact"),
+                                              fact.get("subject")))
+        return len(token) >= 4 and token in headline
+    return False
+
+
 def _class_simple(descriptor):
     name = (descriptor or "").strip()
     name = name.lstrip("L[").rstrip(";")
     return name.rsplit("/", 1)[-1]
+
+
+# ------------------------------------------------------------------
+# Cross-companion consistency (NF-03): a fact that two
+# companions (or a companion's summary fields and its own item
+# list) state differently must never be asserted from one side
+# alone. Each builder below cross-checks the companions that
+# state the fact it answers; on a genuine disagreement it
+# surfaces BOTH sides with their evidence through this helper,
+# which names the disagreement, records why the confidence is
+# reduced, extends the boundary, and drops a "confirmed"
+# confidence below the confirmed band. On consistent cases the
+# helper is never called and answers are unchanged.
+# ------------------------------------------------------------------
+def _surface_conflict(answer, evidence, why, boundary,
+                      confidence, fact, detail,
+                      extra_evidence=()):
+    for ev in extra_evidence:
+        if ev not in evidence:
+            evidence.append(ev)
+    why.append("cross-companion consistency check: companions "
+               "disagree on %s, so both sides are cited and "
+               "the contradicted fact is not asserted at "
+               "confirmed confidence" % fact)
+    answer += (" Conflict: companions disagree on %s — %s. "
+               "Both sides are cited in the evidence; neither "
+               "side is asserted as settled." % (fact, detail))
+    boundary += ("; companion conflict on %s: the cited "
+                 "values on both sides bound this answer"
+                 % fact)
+    if confidence == "confirmed":
+        confidence = "strongly-indicated"
+    return answer, confidence, boundary
 
 
 # ------------------------------------------------------------------
@@ -467,6 +587,24 @@ def build_identity(q, case, ctx):
     evidence, why = [], []
     package = _prop(src, "package") or (manifest or {}).get(
         "package")
+    # Consistency check: the package is also stated by the
+    # manifest and permissions companions; collect every
+    # side before asserting any of them.
+    perms_doc = case.get("permissions.json")
+    package_sources = []
+    if app and _prop(app, "package"):
+        package_sources.append(
+            ("application.json", _prop(app, "package")))
+    if fp and _prop(fp, "package"):
+        package_sources.append(
+            ("fingerprint.json", _prop(fp, "package")))
+    if manifest and manifest.get("package"):
+        package_sources.append(
+            ("manifest.json", manifest.get("package")))
+    if perms_doc and perms_doc.get("package"):
+        package_sources.append(
+            ("permissions.json", perms_doc.get("package")))
+    package_conflict = len({v for _s, v in package_sources}) > 1
     label = _prop(src, "app_label")
     vname = _prop(src, "version_name")
     vcode = _prop(src, "version_code")
@@ -515,11 +653,22 @@ def build_identity(q, case, ctx):
     if case_doc and case_doc.get("container"):
         why.append("case.json records a container input; the "
                    "identity is the resolved base application")
-    return _answer(q, "identity", answer, evidence, "confirmed",
-                   why, _chain_text(case, False),
-                   "identity, version and SDK levels only; "
-                   "runtime behaviour and server-side state are "
-                   "not covered")
+    confidence = "confirmed"
+    boundary = ("identity, version and SDK levels only; "
+                "runtime behaviour and server-side state are "
+                "not covered")
+    if package_conflict:
+        detail = "; ".join(
+            "%s reports %s" % (src_name, value)
+            for src_name, value in package_sources)
+        extra = ["%s package = %s" % (src_name, value)
+                 for src_name, value in package_sources
+                 if src_name != "application.json"]
+        answer, confidence, boundary = _surface_conflict(
+            answer, evidence, why, boundary, confidence,
+            "the package", detail, extra)
+    return _answer(q, "identity", answer, evidence, confidence,
+                   why, _chain_text(case, False), boundary)
 
 
 def build_build(q, case, ctx):
@@ -530,6 +679,20 @@ def build_build(q, case, ctx):
     verdicts = (engines or {}).get("verdicts") or \
         (frameworks or {}).get("verdicts") or []
     detected = [v for v in verdicts if v.get("detected")]
+    # Consistency check: engines.json and frameworks.json
+    # each carry engine verdicts. The wholesale fallback
+    # above must not silently discard a frameworks verdict
+    # that names a different detected engine.
+    eng_detected = [v for v in
+                    (engines or {}).get("verdicts") or []
+                    if v.get("detected")]
+    fw_detected = [v for v in
+                   (frameworks or {}).get("verdicts") or []
+                   if v.get("detected")]
+    eng_names = {v.get("engine") for v in eng_detected}
+    fw_names = {v.get("engine") for v in fw_detected}
+    verdict_conflict = bool(eng_names and fw_names
+                            and eng_names != fw_names)
     markers = (frameworks or {}).get("markers") or {}
     fw_markers = markers.get("framework_markers") or \
         _prop(fp, "framework_markers") or []
@@ -603,12 +766,38 @@ def build_build(q, case, ctx):
         answer += " Toolchain versions: %s." % ", ".join(
             "%s=%s" % (k, v)
             for k, v in list(engine_versions.items())[:3])
+    boundary = ("engine, language and toolchain identity "
+                "only; source-level build settings (compiler "
+                "flags, signing config) are not in the "
+                "artifact")
+    if verdict_conflict:
+        def _verdict_text(companion, vs):
+            return "; ".join(
+                "%s verdict %s detected, confidence %s, "
+                "score %s" % (companion, v.get("engine"),
+                              v.get("confidence"), v.get("score"))
+                for v in vs)
+        extra = []
+        for v in fw_detected:
+            if v.get("engine") in eng_names:
+                continue
+            inds = "; ".join(
+                "%s: %s" % (i.get("kind"), i.get("detail"))
+                for i in (v.get("indicators") or [])[:3])
+            extra.append("frameworks.json verdict %s "
+                         "detected, confidence %s, score %s "
+                         "(%s)"
+                         % (v.get("engine"), v.get("confidence"),
+                            v.get("score"), inds or "no detail"))
+        detail = ("%s, while %s"
+                  % (_verdict_text("engines.json", eng_detected),
+                     _verdict_text("frameworks.json",
+                                   fw_detected)))
+        answer, confidence, boundary = _surface_conflict(
+            answer, evidence, why, boundary, confidence,
+            "the engine verdict", detail, extra)
     return _answer(q, "build", answer, evidence, confidence,
-                   why, _chain_text(case, False),
-                   "engine, language and toolchain identity "
-                   "only; source-level build settings (compiler "
-                   "flags, signing config) are not in the "
-                   "artifact")
+                   why, _chain_text(case, False), boundary)
 
 
 def _app_doc(case):
@@ -803,7 +992,58 @@ def build_screens(q, case, ctx):
                     "layouts, fragments); the exact "
                     "tap-by-tap navigation sequence is "
                     "runtime behaviour")
-    return _answer(q, "screens", answer, evidence, "confirmed",
+    # Consistency check: the component counts stated by
+    # permissions.json and manifest.json must agree with
+    # each other and with the component list they summarise.
+    perms_counts = (perms or {}).get("component_counts") or {}
+    manifest_counts = (manifest or {}).get(
+        "component_counts") or {}
+    count_kinds = ("activity", "service", "receiver",
+                   "provider")
+    counts_conflict = False
+    for kind in count_kinds:
+        listed = components.get(kind)
+        if perms_counts.get(kind) is not None \
+                and manifest_counts.get(kind) is not None \
+                and perms_counts[kind] != manifest_counts[kind]:
+            counts_conflict = True
+        if listed is not None:
+            if perms_counts.get(kind) is not None \
+                    and perms_counts[kind] != len(listed):
+                counts_conflict = True
+            if manifest_counts.get(kind) is not None \
+                    and manifest_counts[kind] != len(listed):
+                counts_conflict = True
+    confidence = "confirmed"
+    if counts_conflict:
+        detail_parts = []
+        if perms_counts.get("activity") is not None:
+            detail_parts.append(
+                "permissions.json component_counts reports "
+                "%s activities" % perms_counts["activity"])
+        if activities:
+            detail_parts.append(
+                "the component list in permissions.json "
+                "contains %d activity (component activity %s)"
+                % (len(activities), activities[0].get("name")))
+        if manifest_counts.get("activity") is not None:
+            detail_parts.append(
+                "manifest.json component_counts reports "
+                "an activity count of %s"
+                % manifest_counts["activity"])
+        extra = []
+        if manifest_counts:
+            extra.append("manifest.json component_counts = "
+                         "%s, permission_count = %s"
+                         % (manifest.get("component_counts"),
+                            manifest.get("permission_count")))
+        answer, confidence, boundary = _surface_conflict(
+            answer, evidence, why, boundary, confidence,
+            "the component counts",
+            "; ".join(detail_parts) or
+            "the stated counts and the component list differ",
+            extra)
+    return _answer(q, "screens", answer, evidence, confidence,
                    why, _chain_text(case, False), boundary)
 
 
@@ -1115,6 +1355,32 @@ def build_network(q, case, ctx):
             "static network surface only")
     eps = (endpoints or {}).get("endpoints") or []
     evidence, why = [], []
+    # Consistency check: endpoints.json and
+    # network-analysis.json each state classification
+    # counts; the analysis companion must not be consulted
+    # only for cleartext while its counts are discarded.
+    ep_counts = (endpoints or {}).get(
+        "classification_counts") or {}
+    na_counts = (analysis or {}).get(
+        "classification_counts") or {}
+    counts_conflict = bool(ep_counts and na_counts
+                           and ep_counts != na_counts)
+
+    def _network_conflict(answer, boundary, confidence):
+        detail = ("endpoints.json classification_counts "
+                  "reports %s, while network-analysis.json "
+                  "classification_counts reports %s"
+                  % (ep_counts, na_counts))
+        extra = [
+            "endpoints.json classification_counts = %s"
+            % ep_counts,
+            "network-analysis.json classification_counts = "
+            "%s" % na_counts]
+        return _surface_conflict(
+            answer, evidence, why, boundary, confidence,
+            "the endpoint classification counts", detail,
+            extra)
+
     subject = ctx.get("subject")
     named = None
     m = re.search(r"https?://[^\s\"']+|[a-z0-9.-]+\.[a-z]{2,}"
@@ -1142,12 +1408,17 @@ def build_network(q, case, ctx):
         why.append("the endpoint record is a direct companion "
                    "observation; its purpose classification "
                    "is a classified-pattern judgement")
+        confidence = "inferred"
+        boundary = ("purpose is classified from static "
+                    "patterns; the live request/response "
+                    "behaviour of the endpoint is runtime "
+                    "and server-side")
+        if counts_conflict:
+            answer, confidence, boundary = _network_conflict(
+                answer, boundary, confidence)
         return _answer(q, "network", answer, evidence,
-                       "inferred", why, _chain_text(case, False),
-                       "purpose is classified from static "
-                       "patterns; the live request/response "
-                       "behaviour of the endpoint is runtime "
-                       "and server-side")
+                       confidence, why,
+                       _chain_text(case, False), boundary)
     hosts = [h for h in (endpoints or {}).get("hosts") or []
              if "%" not in h][:10]
     for h in hosts[:6]:
@@ -1199,11 +1470,15 @@ def build_network(q, case, ctx):
     why.append("endpoints are extracted strings and "
                "classified patterns, so purposes are "
                "inferred, not observed traffic")
-    return _answer(q, "network", answer, evidence, "inferred",
-                   why, _chain_text(case, False),
-                   "static inventory only: which endpoints "
-                   "are actually called, with what payloads, "
-                   "is runtime and server-side behaviour")
+    confidence = "inferred"
+    boundary = ("static inventory only: which endpoints "
+                "are actually called, with what payloads, "
+                "is runtime and server-side behaviour")
+    if counts_conflict:
+        answer, confidence, boundary = _network_conflict(
+            answer, boundary, confidence)
+    return _answer(q, "network", answer, evidence, confidence,
+                   why, _chain_text(case, False), boundary)
 
 
 def build_security(q, case, ctx):
@@ -1434,13 +1709,48 @@ def build_assets(q, case, ctx):
                  assets.get("total_bytes"),
                  ", ".join("%s %d" % (t, n)
                            for t, n in top_types[:6])))
-    return _answer(q, "assets", answer, evidence, "confirmed",
-                   ["the inventory is a direct companion "
-                    "observation"],
-                   _chain_text(case, False),
-                   "inventory and typing only; the decoded "
-                   "content of each asset class is covered "
-                   "per-format by nar coverage")
+    why = ["the inventory is a direct companion observation"]
+    confidence = "confirmed"
+    boundary = ("inventory and typing only; the decoded "
+                "content of each asset class is covered "
+                "per-format by nar coverage")
+    # Consistency check: the companion's own totals must
+    # agree with the item list and category counts it
+    # carries; a totals-vs-list disagreement is surfaced,
+    # never silently itemised as if it agreed.
+    item_count = len(items)
+    item_bytes = sum(int(a.get("size_bytes") or 0)
+                     for a in items)
+    by_category = assets.get("by_category") or {}
+    totals_conflict = False
+    if assets.get("total_assets") is not None \
+            and assets.get("total_assets") != item_count:
+        totals_conflict = True
+    if assets.get("total_bytes") is not None \
+            and assets.get("total_bytes") != item_bytes:
+        totals_conflict = True
+    if by_category and assets.get("total_assets") is not None \
+            and sum(int(v) for v in by_category.values()) \
+            != assets.get("total_assets"):
+        totals_conflict = True
+    if totals_conflict:
+        detail = ("assets.json totals claim %s inventoried "
+                  "assets (%s bytes), but the item list in "
+                  "the same companion contains %d assets "
+                  "totalling %d bytes (By type: %s)"
+                  % (assets.get("total_assets"),
+                     assets.get("total_bytes"), item_count,
+                     item_bytes,
+                     ", ".join("%s %d" % (t, n)
+                               for t, n in top_types[:6])))
+        extra = ["assets.json item list: %d asset(s), %d "
+                 "bytes total (counted from the listed "
+                 "items)" % (item_count, item_bytes)]
+        answer, confidence, boundary = _surface_conflict(
+            answer, evidence, why, boundary, confidence,
+            "the asset totals", detail, extra)
+    return _answer(q, "assets", answer, evidence, confidence,
+                   why, _chain_text(case, False), boundary)
 
 
 _ANIM_NEEDLES = re.compile(
@@ -2166,12 +2476,8 @@ def build_gaps(q, case, ctx):
 def build_other(q, case, ctx):
     inv = case.get("investigation.json")
     facts = (inv or {}).get("verified_facts") or []
-    toks = _tokens(q)
-    hits = [f for f in facts
-            if any(t in ("%s %s %s" % (f.get("fact"),
-                                       f.get("subject"),
-                                       f.get("detail"))).lower()
-                   for t in toks)]
+    q_content = _content_tokens(q)
+    hits = [f for f in facts if _fact_matches(q_content, f)]
     if hits:
         evidence = ["investigation.json verified_fact [%s] "
                     "%s — %s"
@@ -2184,7 +2490,10 @@ def build_other(q, case, ctx):
         return _answer(q, "other", answer, evidence,
                        "strongly-indicated",
                        ["the question matched verified facts "
-                        "in investigation.json by keyword"],
+                        "in investigation.json on content "
+                        "keywords (stopwords excluded; a lone "
+                        "match must be a headline term of the "
+                        "fact)"],
                        _chain_text(case, False),
                        "keyword-matched facts only; a more "
                        "specific question shape routes to a "

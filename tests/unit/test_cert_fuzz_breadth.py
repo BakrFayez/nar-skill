@@ -6,14 +6,14 @@ systematic sweeps here.
 
 - D-05: the ZIP mutation harness (tests/fuzz/zip_fuzz.py)
   driven in-process for a bounded seeded set against the
-  safe-extraction layer (narlib.safearchive). STOPPED as a
-  finding candidate: the sweep found a real crash-class
-  defect (zlib.error escapes safe_extract /
-  read_member_capped on a deflate-corrupt entry; repro
-  preserved in ~/workspace/nar-cert-audit/fuzz-d05-crash/).
-  The sweep below is marked xfail(strict=True) at full
-  strength — it is not weakened, and it will XPASS-fail
-  once the product defect is fixed.
+  safe-extraction layer (narlib.safearchive). The sweep
+  found a real crash-class defect (NF-02: zlib.error
+  escaped safe_extract / read_member_capped on a
+  deflate-corrupt entry; repro preserved in
+  ~/workspace/nar-cert-audit/fuzz-d05-crash/). NF-02 is
+  fixed — both sites now refuse a corrupt member by name
+  (report rejection / ValueError) — and the sweep below
+  runs unpinned at full strength.
 - D-07: UAsset truncation + summary/import/export field
   blasts against narlib.uasset.parse_package.
 - D-08: PAK index-field sweep (entry count, blob length,
@@ -72,15 +72,6 @@ zip_fuzz = _load_fuzz("zip_fuzz")
 
 # ---------------------------------------------------------- D-05 ZIP
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D-05 finding candidate: zlib.error escapes "
-           "narlib.safearchive.safe_extract (line ~253) and "
-           "read_member_capped (line ~120) on a deflate-corrupt "
-           "entry — seed 20261126 iter 268, base synthetic-mixed, "
-           "strategy byte-flip; repro in "
-           "nar-cert-audit/fuzz-d05-crash/. Remove this marker "
-           "when the product fix lands.")
 def test_d05_zip_fuzz_sweep_no_crash_class(tmp_path):
     """300 seeded mutants through the harness's own mutate /
     exercise pair: zero crash-class outcomes."""

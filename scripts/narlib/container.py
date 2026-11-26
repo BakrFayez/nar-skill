@@ -99,16 +99,18 @@ def _manifest_and_refusal(zf, cap_bytes):
     streamed count again while reading, so an oversized
     manifest is never materialized whole. ``refusal`` is
     the capped reader's named reason when the member
-    exceeds the cap, else None; ``info`` is the parsed
-    identity dict or None (absent, unreadable, over-cap
-    or non-dict manifest)."""
+    exceeds the cap or is unreadable/corrupt, else None;
+    ``info`` is the parsed identity dict or None (absent,
+    unreadable, over-cap or non-dict manifest)."""
     if "manifest.json" not in zf.namelist():
         return None, None
     try:
         raw = read_member_capped(zf, "manifest.json", cap_bytes)
     except ValueError as e:
-        # The capped reader raises ValueError only for the
-        # cap (declared or streamed size over the ceiling).
+        # The capped reader's named failure channel is
+        # ValueError: the cap (declared or streamed size
+        # over the ceiling) or an unreadable/corrupt member
+        # (NF-02). Either way the reason is recorded.
         return None, str(e)
     except (KeyError, OSError, RuntimeError, zipfile.BadZipFile):
         return None, None
