@@ -14,7 +14,12 @@ tests make that class of drift fail loudly:
 - the project credit line appears exactly once in the
   whole tree, in the README Author section (owner-directed
   placement: tool outputs and document headers carry no
-  credit stamp).
+  credit stamp);
+- every CI job count stated in the current-release records
+  equals the expanded total derived from the workflow file
+  itself, and the README Documentation section's guide
+  count equals the top-level references/ tree (E-04: the
+  F-001 / E-01 drift class, guarded after the fact).
 """
 import json
 import os
@@ -342,6 +347,211 @@ class SupportedGuideTest(unittest.TestCase):
                     entry["id"], heading_tokens,
                     "supported %s entry %s has no section in %s"
                     % (section, entry["id"], guide))
+
+
+WORKFLOW_REL = os.path.join(".github", "workflows", "ci.yml")
+
+JOB_COUNT_GUARDED_FILES = [
+    "CHANGELOG.md",
+    os.path.join("docs", "NAR_3.0.0_UPDATE_REPORT.md"),
+    WORKFLOW_REL,
+]
+
+# Statement shapes pinned by the job-count guard (F-001): the
+# current-release records state the expanded hosted count as
+# "all N jobs pass / PASS / green". Scoping, deliberately
+# narrow: era-correct historical statements never match these
+# shapes — the 2.6.2-era counts are written as words ("nine
+# jobs", in the CHANGELOG, the final verification report and
+# the workflow header) or as "all 9 CI jobs executed" (an
+# intervening "CI" and a different verb, CHANGELOG 2.6.2
+# section), and files outside the guarded set are not scanned
+# at all. Only the three current-record files above can carry
+# the current count, so only they are guarded.
+JOB_COUNT_PATTERNS = [
+    re.compile(r"all (\d+) jobs\b"),
+    re.compile(r"(\d+) jobs (?:pass|PASS|green)\b"),
+]
+
+
+def parse_workflow_jobs(text):
+    """Stdlib-only structural read of ci.yml (no PyYAML: the
+    guard must run wherever the docs suite runs).
+
+    Returns {job_name: [os, ...] or None} for the job
+    definitions under the top-level `jobs:` mapping; a job's
+    list is its strategy.matrix.os entries (inline flow list
+    or block list), None when the job has no matrix."""
+    jobs = {}
+    in_jobs = False
+    current = None
+    os_indent = None
+    for line in text.splitlines():
+        if not in_jobs:
+            if re.match(r"^jobs:\s*$", line):
+                in_jobs = True
+            continue
+        if line and not line.startswith((" ", "#")):
+            break  # a later top-level key ends the jobs mapping
+        m = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if m:
+            current = m.group(1)
+            jobs[current] = None
+            os_indent = None
+            continue
+        if current is None:
+            continue
+        m = re.match(r"^(\s+)os:\s*\[(.*)\]\s*$", line)
+        if m:
+            jobs[current] = [item.strip() for item
+                             in m.group(2).split(",") if item.strip()]
+            os_indent = None
+            continue
+        m = re.match(r"^(\s+)os:\s*$", line)
+        if m:
+            jobs[current] = []
+            os_indent = len(m.group(1))
+            continue
+        if os_indent is not None:
+            m = re.match(r"^(\s+)-\s*(\S+)\s*$", line)
+            if m and len(m.group(1)) > os_indent:
+                jobs[current].append(m.group(2))
+            else:
+                os_indent = None
+    return jobs
+
+
+def expanded_job_total(root):
+    """(jobs, expanded total): each matrix job expands to one
+    run per OS in its list; a job without a matrix runs once."""
+    jobs = parse_workflow_jobs(_read(root, WORKFLOW_REL))
+    total = sum(len(os_list) if os_list else 1
+                for os_list in jobs.values())
+    return jobs, total
+
+
+def collect_job_count_statements(root):
+    """[(file, stated N)] for every pinned statement shape in
+    the guarded current-record files."""
+    found = []
+    for rel in JOB_COUNT_GUARDED_FILES:
+        text = _read(root, rel)
+        for pattern in JOB_COUNT_PATTERNS:
+            for m in pattern.finditer(text):
+                found.append((rel, int(m.group(1))))
+    return found
+
+
+def stated_documentation_guide_count(root):
+    """The guide count stated by the README Documentation
+    section's sentence (E-01), or None if the sentence's
+    phrasing has changed."""
+    m = re.search(r"The guides in `references/` \((\d+) guides,"
+                  r" one per topic\)", _read(root, "README.md"))
+    return int(m.group(1)) if m else None
+
+
+def actual_reference_guide_count(root):
+    return len([n for n in os.listdir(os.path.join(root, "references"))
+                if n.endswith(".md")])
+
+
+class CiJobCountGuardTest(unittest.TestCase):
+    """E-04 guard for F-001 and E-01: stated numbers in the
+    current-release records are pinned against the tree
+    itself — the CI job count against the workflow file's
+    structure, the Documentation-section guide count against
+    the references/ tree. The documents are never checked
+    against a hardcoded expectation; the only hardcoded
+    figure is a labelled parser sanity assert."""
+
+    def test_workflow_structure_derives_expanded_total(self):
+        jobs, total = expanded_job_total(ROOT)
+        # Parser sanity (labelled): today's workflow defines
+        # ten jobs. This asserts the PARSER read the file; the
+        # document checks below use the derived total, so a
+        # future workflow change moves the expectation with it.
+        self.assertEqual(len(jobs), 10,
+                         "workflow parse sanity: %r" % (jobs,))
+        matrix = {name: os_list for name, os_list in jobs.items()
+                  if os_list}
+        self.assertEqual(len(matrix), 4,
+                         "expected the four cross-platform matrix "
+                         "jobs: %r" % (jobs,))
+        self.assertGreater(total, len(jobs),
+                           "matrix expansion must add runs")
+
+    def test_stated_job_counts_match_derived_total(self):
+        _, total = expanded_job_total(ROOT)
+        statements = collect_job_count_statements(ROOT)
+        # Non-vacuous: every guarded file carries at least one
+        # pinned statement, so the guard cannot pass by
+        # finding nothing.
+        self.assertEqual({rel for rel, _ in statements},
+                         set(JOB_COUNT_GUARDED_FILES))
+        for rel, stated in statements:
+            self.assertEqual(
+                stated, total,
+                "%s states %d jobs; the workflow expands to %d"
+                % (rel, stated, total))
+
+    def test_readme_documentation_guide_count_matches_tree(self):
+        stated = stated_documentation_guide_count(ROOT)
+        self.assertIsNotNone(
+            stated, "README Documentation-section guide sentence "
+                    "not found; its phrasing changed, so re-pin "
+                    "the E-01 guard deliberately")
+        self.assertEqual(stated, actual_reference_guide_count(ROOT))
+
+    def test_planted_mismatch_is_detected(self):
+        tmp = tempfile.mkdtemp(prefix="nar-jobcount-plant-")
+        try:
+            for rel in JOB_COUNT_GUARDED_FILES + ["README.md"]:
+                dst = os.path.join(tmp, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copyfile(os.path.join(ROOT, rel), dst)
+            refs = os.path.join(tmp, "references")
+            os.makedirs(refs)
+            for name in os.listdir(os.path.join(ROOT, "references")):
+                if name.endswith(".md"):
+                    open(os.path.join(refs, name), "w").close()
+            # Plant the F-001 error back into the CHANGELOG.
+            # The wrong statement is built from parts, like the
+            # credit phrase above, so this file never contains
+            # the literal wrong count itself.
+            wrong = "all " + "17" + " jobs pass"
+            text = _read(tmp, "CHANGELOG.md")
+            planted = re.sub(r"all \d+ jobs pass",
+                             wrong, text, count=1)
+            self.assertNotEqual(planted, text,
+                                "plant must change the statement")
+            with open(os.path.join(tmp, "CHANGELOG.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(planted)
+            _, total = expanded_job_total(tmp)
+            mismatches = [(rel, n) for rel, n
+                          in collect_job_count_statements(tmp)
+                          if n != total]
+            self.assertTrue(mismatches,
+                            "planted 17-job statement must be "
+                            "detected against the derived total")
+            # Plant the E-01 error: 26 back into the README.
+            text = _read(tmp, "README.md")
+            planted = re.sub(r"\(\d+ guides, one per topic\)",
+                             "(26 guides, one per topic)",
+                             text, count=1)
+            self.assertNotEqual(planted, text,
+                                "plant must change the sentence")
+            with open(os.path.join(tmp, "README.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(planted)
+            self.assertNotEqual(
+                stated_documentation_guide_count(tmp),
+                actual_reference_guide_count(tmp),
+                "planted 26-guide statement must be detected "
+                "against the references/ tree")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
