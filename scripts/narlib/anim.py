@@ -1413,14 +1413,32 @@ def _parse_axml_tree(data):
 
 
 def _et_node(elem):
-    tag = elem.tag.rsplit("}", 1)[-1] \
-        if isinstance(elem.tag, str) else ""
-    attrs = {}
-    for key, val in elem.attrib.items():
-        attrs[key.rsplit("}", 1)[-1]] = val
-        attrs[key] = val
-    return {"tag": tag, "attrs": attrs,
-            "children": [_et_node(c) for c in elem]}
+    """Element -> {tag, attrs, children} node tree.
+
+    Built iteratively (explicit stack, the same shape as
+    _parse_axml_tree): the recursive form died with a
+    RecursionError on deeply nested text XML — a member
+    nested past the interpreter limit escaped
+    parse_android_view as a crash instead of decoding or
+    degrading (certification Phase 3, XML seams)."""
+    def _head(e):
+        tag = e.tag.rsplit("}", 1)[-1] \
+            if isinstance(e.tag, str) else ""
+        attrs = {}
+        for key, val in e.attrib.items():
+            attrs[key.rsplit("}", 1)[-1]] = val
+            attrs[key] = val
+        return {"tag": tag, "attrs": attrs, "children": []}
+
+    root = _head(elem)
+    stack = [(elem, root)]
+    while stack:
+        e, node = stack.pop()
+        for child in e:
+            child_node = _head(child)
+            node["children"].append(child_node)
+            stack.append((child, child_node))
+    return root
 
 
 def _parse_text_xml_tree(data):

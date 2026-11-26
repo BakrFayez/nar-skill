@@ -488,6 +488,28 @@ def resolve_target(path, merge_splits=True, budget=None,
                 "name": inner_entry,
                 "reason": "nested container extraction "
                           "refused by the archive budget"})
+    if base_entry is None and _depth >= MAX_CONTAINER_DEPTH:
+        # No direct APK members and the depth limit forbids
+        # following the nested container member: the limit
+        # IS the refusal, and it must be named — the
+        # pre-fix code returned the intermediate archive as
+        # the base with no record of why resolution stopped
+        # (certification D-02).
+        nested = [{"name": n, "size_bytes": infos[n].file_size}
+                  for n in names
+                  if infos[n].filename.lower().endswith(
+                      (".xapk", ".apkm", ".apks", ".zip"))
+                  and not _traversal_name(infos[n].filename)]
+        if nested:
+            nested.sort(key=lambda c: c["name"])
+            inner_entry = max(
+                nested, key=lambda c: c["size_bytes"])["name"]
+            resolved.split_skipped.append({
+                "name": inner_entry,
+                "reason": f"nested container depth limit "
+                          f"({MAX_CONTAINER_DEPTH}) reached; "
+                          "the nested container was not "
+                          "resolved"})
     if base_entry is None:
         for c in contained:
             resolved.split_skipped.append({
@@ -622,6 +644,28 @@ def resolve_target(path, merge_splits=True, budget=None,
             resolved.assets_roots = [resolved.base] + \
                 [s["path"] for s in resolved.splits]
             resolved.native_roots = list(resolved.assets_roots)
+    else:
+        # Depth limit reached: a base (or split) that is
+        # itself a container is left unopened — name the
+        # refusal instead of silently presenting the
+        # container file as the resolved target
+        # (certification D-02).
+        inner_targets = [("base", resolved.base,
+                          resolved.base_entry)] + \
+            [("split", s["path"],
+              s.get("source_entry") or s["name"])
+             for s in resolved.splits]
+        for _role, candidate, entry_name in inner_targets:
+            if detect_container(candidate) not in \
+                    CONTAINER_KINDS:
+                continue
+            resolved.split_skipped.append({
+                "name": entry_name
+                or os.path.basename(candidate),
+                "reason": f"nested container depth limit "
+                          f"({MAX_CONTAINER_DEPTH}) reached; "
+                          "the contained container was not "
+                          "resolved"})
     return resolved
 
 

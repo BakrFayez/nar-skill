@@ -29,6 +29,28 @@ systematic sweeps here.
   truncations / count blasts (Spine .skel, Aseprite, Cocos
   .ccb via narlib.anim.classify_and_parse).
 
+Phase 3 additions:
+
+- D-06: the ELF mutation harness (tests/fuzz/elf_fuzz.py)
+  driven in-process for a bounded seeded set against
+  narlib.elf -- the pre-harness coverage was four
+  hand-picked header shapes; the harness sweeps the full
+  header-field set, program/section entry fields,
+  string-table indices, truncations and flips over
+  ELF32/ELF64 seeds including a section/symbol/relocation
+  rich seed.
+- AXML / ARSC: the mutation harness
+  (tests/fuzz/axml_fuzz.py) driven in-process against
+  nar-perms' AXML reader, narlib.anim's AXML tree walk,
+  nar-flutter's embedding walk and nar-app's resources.arsc
+  string lookup. The ARSC sweep found a real crash-class
+  defect (bare struct.error escapes from the lookup on
+  truncated / offset-blasted packages); it is fixed -- a
+  malformed package is skipped and the lookup returns
+  None -- and pinned by
+  tests/unit/test_cert_axml_arsc_regressions.py; the sweep
+  below runs unpinned.
+
 Invariant everywhere: the named error type, an error record,
 an identified-only record, or a clean parse — never a bare
 IndexError / struct.error / traceback-class leak. All inputs
@@ -68,6 +90,8 @@ def _load_fuzz(name):
 
 
 zip_fuzz = _load_fuzz("zip_fuzz")
+elf_fuzz = _load_fuzz("elf_fuzz")
+axml_fuzz = _load_fuzz("axml_fuzz")
 
 
 # ---------------------------------------------------------- D-05 ZIP
@@ -100,6 +124,80 @@ def test_d05_zip_fuzz_harness_cli_clean(tmp_path):
     out = tmp_path / "out"
     rc = zip_fuzz.main(["--seed", "7", "--iterations", "40",
                         "--out", str(out)])
+    assert rc == 0
+    assert list(out.glob("crash-*")) == []
+
+
+# ---------------------------------------------------------- D-06 ELF
+
+def test_d06_elf_fuzz_sweep_no_crash_class():
+    """300 seeded mutants through the harness's own mutate /
+    exercise pair: zero crash-class outcomes."""
+    seeds = elf_fuzz.seed_corpus()
+    assert len(seeds) >= 3
+    rng = random.Random(20261126)
+    failures = []
+    strategies = set()
+    for i in range(300):
+        _name, seed_bytes = seeds[rng.randrange(len(seeds))]
+        mutant, strategy = elf_fuzz.mutate(rng, seed_bytes)
+        strategies.add(strategy)
+        failure = elf_fuzz.exercise(mutant)
+        if failure is not None:
+            failures.append((i, strategy, failure))
+    assert strategies >= {"header-field", "ident-byte",
+                          "truncate", "byte-flip"}
+    assert failures == []
+
+
+def test_d06_elf_fuzz_harness_cli_clean(tmp_path):
+    """The standalone harness itself: a short seeded run
+    exits 0 and writes no crash artifacts."""
+    out = tmp_path / "out"
+    rc = elf_fuzz.main(["--seed", "7", "--iterations", "40",
+                        "--out", str(out)])
+    assert rc == 0
+    assert list(out.glob("crash-*")) == []
+
+
+# --------------------------------------------------- AXML / ARSC fuzz
+
+def test_axml_fuzz_sweep_no_crash_class():
+    """150 seeded mutants per format through the harness's
+    own mutate / exercise pairs: zero crash-class
+    outcomes across all four parser entry points."""
+    axml_seeds, arsc_seeds = axml_fuzz.seed_corpus()
+    assert len(axml_seeds) >= 3 and len(arsc_seeds) >= 1
+    rng = random.Random(20261126)
+    failures = []
+    strategies = set()
+    for i in range(150):
+        _name, seed_bytes = \
+            axml_seeds[rng.randrange(len(axml_seeds))]
+        mutant, strategy = axml_fuzz.mutate_axml(rng, seed_bytes)
+        strategies.add(strategy)
+        failure = axml_fuzz.exercise_axml(mutant)
+        if failure is not None:
+            failures.append(("axml", i, strategy, failure))
+    for i in range(150):
+        _name, seed_bytes = \
+            arsc_seeds[rng.randrange(len(arsc_seeds))]
+        mutant, strategy = axml_fuzz.mutate_arsc(rng, seed_bytes)
+        strategies.add(strategy)
+        failure = axml_fuzz.exercise_arsc(mutant)
+        if failure is not None:
+            failures.append(("arsc", i, strategy, failure))
+    assert strategies >= {"chunk-header", "truncate",
+                          "byte-flip"}
+    assert failures == []
+
+
+def test_axml_fuzz_harness_cli_clean(tmp_path):
+    """The standalone harness itself: a short seeded run
+    exits 0 and writes no crash artifacts."""
+    out = tmp_path / "out"
+    rc = axml_fuzz.main(["--seed", "7", "--iterations", "25",
+                         "--out", str(out)])
     assert rc == 0
     assert list(out.glob("crash-*")) == []
 

@@ -821,63 +821,73 @@ def _arsc_lookup(data, res_id):
     if global_strings is None:
         return None
     for poff in packages:
-        if struct.unpack_from("<I", data, poff + 8)[0] != pkg_id \
-                and len(packages) > 1:
-            continue
-        phdr = struct.unpack_from("<H", data, poff + 2)[0]
-        psize = struct.unpack_from("<I", data, poff + 4)[0]
-        type_off = struct.unpack_from("<I", data, poff + 268)[0]
-        type_id_offset = struct.unpack_from(
-            "<I", data, poff + 284)[0] if phdr >= 288 else 0
         try:
-            type_names = perms._parse_string_pool(
-                data, poff + type_off)
-        except Exception:
+            if struct.unpack_from("<I", data, poff + 8)[0] != pkg_id \
+                    and len(packages) > 1:
+                continue
+            phdr = struct.unpack_from("<H", data, poff + 2)[0]
+            psize = struct.unpack_from("<I", data, poff + 4)[0]
+            type_off = struct.unpack_from("<I", data, poff + 268)[0]
+            type_id_offset = struct.unpack_from(
+                "<I", data, poff + 284)[0] if phdr >= 288 else 0
+            try:
+                type_names = perms._parse_string_pool(
+                    data, poff + type_off)
+            except Exception:
+                continue
+            candidates = []
+            sub = poff + phdr
+            pend = min(poff + psize, len(data))
+            while sub + 8 <= pend:
+                ctype, chdr, csize = struct.unpack_from(
+                    "<HHI", data, sub)
+                if csize < 8:
+                    break
+                if ctype == 0x0201 and sub + 20 <= pend:
+                    type_id = data[sub + 8] + type_id_offset
+                    entry_count = struct.unpack_from(
+                        "<I", data, sub + 12)[0]
+                    entries_start = struct.unpack_from(
+                        "<I", data, sub + 16)[0]
+                    name_idx = data[sub + 8] - 1
+                    if type_id == type_idx and entry_idx < entry_count \
+                            and 0 <= name_idx < len(type_names) \
+                            and type_names[name_idx] == "string":
+                        eoff = struct.unpack_from(
+                            "<I", data, sub + chdr + entry_idx * 4)[0]
+                        if eoff != 0xFFFFFFFF:
+                            epos = sub + entries_start + eoff
+                            esize, eflags = struct.unpack_from(
+                                "<HH", data, epos)
+                            if not eflags & 0x0001 and \
+                                    epos + esize + 8 <= len(data):
+                                _vs, _r0, dtype, value = \
+                                    struct.unpack_from(
+                                        "<HBBI", data, epos + esize)
+                                if dtype == 0x03 and \
+                                        value < len(global_strings):
+                                    cfg_size = struct.unpack_from(
+                                        "<I", data, sub + 20)[0]
+                                    cfg = data[sub + 20:
+                                               sub + 20 + cfg_size]
+                                    is_default = all(
+                                        b == 0 for b in cfg[4:])
+                                    candidates.append(
+                                        (is_default,
+                                         global_strings[value]))
+                sub += csize
+            if candidates:
+                candidates.sort(key=lambda c: not c[0])
+                return candidates[0][1]
+        except (struct.error, IndexError):
+            # A package chunk whose fixed fields or
+            # entry table run past the end of the blob is
+            # malformed input, not a parser failure: the
+            # lookup's contract is string-or-None (the
+            # Phase 3 ARSC fuzz sweep caught bare
+            # struct.error escapes here on truncated and
+            # offset-blasted packages). Skip the package.
             continue
-        candidates = []
-        sub = poff + phdr
-        pend = min(poff + psize, len(data))
-        while sub + 8 <= pend:
-            ctype, chdr, csize = struct.unpack_from(
-                "<HHI", data, sub)
-            if csize < 8:
-                break
-            if ctype == 0x0201 and sub + 20 <= pend:
-                type_id = data[sub + 8] + type_id_offset
-                entry_count = struct.unpack_from(
-                    "<I", data, sub + 12)[0]
-                entries_start = struct.unpack_from(
-                    "<I", data, sub + 16)[0]
-                name_idx = data[sub + 8] - 1
-                if type_id == type_idx and entry_idx < entry_count \
-                        and 0 <= name_idx < len(type_names) \
-                        and type_names[name_idx] == "string":
-                    eoff = struct.unpack_from(
-                        "<I", data, sub + chdr + entry_idx * 4)[0]
-                    if eoff != 0xFFFFFFFF:
-                        epos = sub + entries_start + eoff
-                        esize, eflags = struct.unpack_from(
-                            "<HH", data, epos)
-                        if not eflags & 0x0001 and \
-                                epos + esize + 8 <= len(data):
-                            _vs, _r0, dtype, value = \
-                                struct.unpack_from(
-                                    "<HBBI", data, epos + esize)
-                            if dtype == 0x03 and \
-                                    value < len(global_strings):
-                                cfg_size = struct.unpack_from(
-                                    "<I", data, sub + 20)[0]
-                                cfg = data[sub + 20:
-                                           sub + 20 + cfg_size]
-                                is_default = all(
-                                    b == 0 for b in cfg[4:])
-                                candidates.append(
-                                    (is_default,
-                                     global_strings[value]))
-            sub += csize
-        if candidates:
-            candidates.sort(key=lambda c: not c[0])
-            return candidates[0][1]
     return None
 
 

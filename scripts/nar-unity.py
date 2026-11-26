@@ -40,10 +40,23 @@ from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib.hashing import sha256_of  # noqa: E402
+from narlib.safearchive import (  # noqa: E402
+    MEMBER_READ_CAP_BYTES, read_member_capped)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UNITY_VERSION_RE = re.compile(rb"(20\d\d\.\d+\.\d+[abfp]\d+)")
 MAX_BUNDLE_SCAN = 200
+
+#: No archive member this tool materializes in memory (an
+#: Addressables catalog, an inspected bundle, the census
+#: bundle) may exceed the shared member read cap: a hostile
+#: oversized member was previously decompressed whole by a
+#: bare fh.read() / zf.read() with no byte cap at all
+#: (certification audit A2-02). Over-cap or unreadable
+#: members degrade to a recorded error / skipped census,
+#: never a whole-blob read and never a raw decompression
+#: traceback.
+MEMBER_CAP_BYTES = MEMBER_READ_CAP_BYTES
 
 
 def parse_addressables_catalog(raw):
@@ -608,9 +621,18 @@ def analyze(target, work_dir=None):
         for name in names:
             if name.endswith("catalog.json") and \
                     ("/aa/" in name or
-                     name.startswith("assets/aa/")) and \
-                    zf.getinfo(name).file_size <= 268_435_456:
-                catalog = parse_addressables_catalog(zf.read(name))
+                     name.startswith("assets/aa/")):
+                try:
+                    raw_catalog = read_member_capped(
+                        zf, name, MEMBER_CAP_BYTES)
+                except ValueError:
+                    # Over the member read cap, or unreadable /
+                    # corrupt: this member is never materialized
+                    # whole; keep looking for another catalog
+                    # (the pre-cap search skipped over-size
+                    # catalogs the same way).
+                    continue
+                catalog = parse_addressables_catalog(raw_catalog)
                 catalog["path"] = name
                 break
         bundle_total = 0
@@ -674,8 +696,15 @@ def analyze(target, work_dir=None):
     if inspect_names:
         with zipfile.ZipFile(target) as zf:
             for bname in inspect_names:
-                with zf.open(bname) as fh:
-                    blob = fh.read()
+                try:
+                    blob = read_member_capped(
+                        zf, bname, MEMBER_CAP_BYTES)
+                except ValueError as e:
+                    inspections.append({
+                        "entry": bname,
+                        "format": "unityfs-bundle",
+                        "parsed": False, "error": str(e)})
+                    continue
                 try:
                     inspections.append(
                         parse_unityfs_bundle(blob, bname))
@@ -715,11 +744,21 @@ def analyze(target, work_dir=None):
     census_status, census = None, None
     if bundles:
         with zipfile.ZipFile(target) as zf:
-            with zf.open(bundles[0]) as fh:
+            try:
+                census_blob = read_member_capped(
+                    zf, bundles[0], MEMBER_CAP_BYTES)
+            except ValueError:
+                census_status, census = "over-cap", None
+            else:
                 census_status, census = unitypy_census(
-                    fh.read())
+                    census_blob)
     if census is not None:
         report["unitypy_census_first_bundle"] = census
+    elif census_status == "over-cap":
+        report["notes"] = [
+            f"the first bundle exceeds the {MEMBER_CAP_BYTES}-"
+            "byte member read cap (or is unreadable); bundle "
+            "object census skipped."]
     elif census_status == "unavailable":
         report["notes"] = [
             "UnityPy is not importable in this interpreter; "

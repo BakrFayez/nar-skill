@@ -32,6 +32,7 @@ MIT License. See LICENSE in the repo root.
 import argparse
 import hashlib
 import json
+import lzma
 import os
 import re
 import shutil
@@ -40,6 +41,7 @@ import sys
 import tempfile
 import time
 import zipfile
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL_TIMEOUT = 1800
@@ -496,6 +498,26 @@ def run_json_tool(script, args, timeout=TOOL_TIMEOUT):
         return None, f"{script} could not start: {e}"
     try:
         data = json.loads(proc.stdout)
+        if not isinstance(data, dict):
+            # A stage document must be a JSON object (the
+            # C-02 discipline the stage path applies to its
+            # documents). A child that emits valid JSON of
+            # any other shape — a string, a list, a number,
+            # null — is malformed stage output in the same
+            # sense as non-JSON: without this guard the
+            # direct consumers in analyze() (triage, perms,
+            # strings) dereferenced it with .get and the
+            # whole analysis died on an AttributeError
+            # traceback (certification D-03 seam).
+            EXEC_LOG.append({"stage": script, "module": script,
+                             "tool": script, "tool_version": None,
+                             "status": "failed",
+                             "duration_s": round(
+                                 time.time() - started, 3)})
+            return None, (f"{script} returned a non-object "
+                          f"JSON document "
+                          f"({type(data).__name__}); a stage "
+                          f"document must be a JSON object")
         # A child that exits non-zero but prints parseable
         # JSON (usually an in-band error document) is not
         # an unqualified success: the execution log said
@@ -699,12 +721,16 @@ def extract_entry(zf, name, root, *rel_parts):
             pass
         raise
     except (zipfile.BadZipFile, RuntimeError, EOFError,
-            OSError) as e:
-        # A corrupt entry (bad CRC, truncated stream) is a
+            OSError, zlib.error, lzma.LZMAError) as e:
+        # A corrupt entry (bad CRC, truncated stream,
+        # deflate/bzip2/lzma stream failing mid-read) is a
         # refusal like any other: remove the partial file and
         # surface it as the same ValueError the budget and
         # containment refusals use, never a leaked zipfile
-        # error (2.6.2).
+        # error (2.6.2). The zlib.error / lzma.LZMAError arms
+        # are the NF-02 family: without them a deflate-corrupt
+        # member escaped this extractor raw and aborted the
+        # caller (Phase 3 extraction sweep).
         try:
             os.unlink(dest)
         except OSError:
@@ -2174,6 +2200,16 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
             step_notes.append(
                 "container holds no triageable base APK; "
                 "APK-level steps skipped")
+            # The resolution's named refusal records (a
+            # depth-limit stop, an extraction refusal) are
+            # the reason no base was found: relay them into
+            # the step notes as the resolved branch does,
+            # not only into the structured container block
+            # (certification D-02).
+            for skipped in resolved_target.split_skipped:
+                step_notes.append(
+                    f"container split skipped: "
+                    f"{skipped['name']} ({skipped['reason']})")
         report["contained_obbs"] = [
             o.get("source_entry") or o["name"]
             for o in resolved_target.obbs
