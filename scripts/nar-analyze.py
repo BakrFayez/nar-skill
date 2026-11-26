@@ -2317,9 +2317,21 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
                         if n.lower().endswith(".pak"):
                             pak_sources.append((obb_path, n))
         if flags["il2cpp"]:
+            # Container targets: hand the tool the container
+            # itself, not the single root carrying the native
+            # library — the IL2CPP pair is routinely split
+            # across merged members (the metadata in an asset
+            # pack, the library in the base or an ABI split),
+            # and nar-il2cpp resolves the pair across all of
+            # them. A lone root hides the sibling half of the
+            # pair and degrades the stage.
+            il2cpp_arg = target if (
+                triage.get("is_container")
+                and resolved_target is not None) \
+                else _root_with("il2cpp")
             data, err = run_json_tool(
                 "nar-il2cpp.py",
-                [_root_with("il2cpp"), "--out",
+                [il2cpp_arg, "--out",
                  os.path.join(work_dir, "il2cpp")])
             engines["unity_il2cpp"] = data or {"error": err}
         else:

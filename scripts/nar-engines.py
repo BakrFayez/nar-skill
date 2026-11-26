@@ -11,7 +11,11 @@ signature:
 - JNI / native dynamic-symbol evidence read directly from the
   dynamic export table of every lib/**/*.so (narlib.elf): a
   family JNI match is direct evidence — medium on its own,
-  high with a corroborating DEX/path marker for the family,
+  high with a corroborating DEX/path marker for the family;
+  JNI evidence contributed SOLELY by a known third-party SDK
+  bridge namespace (formats.json jni_bridge_prefixes) is
+  recorded but weighed below the detection threshold, since
+  an SDK built on an engine is not the app's engine,
 - a direct layout pass of its own (IoStore containers, Unity
   Data layout, Flutter assets, Hermes bundles, Godot packs),
 - with --deep, the matching deep-dive tool's verdict
@@ -34,6 +38,7 @@ MIT License. See LICENSE in the repo root.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -90,6 +95,21 @@ JNI_SYMBOL_MARKERS = _formats.jni_markers()
 # matches are not Xamarin evidence; a real Xamarin runtime
 # ships its own Mono libraries, which keep their matches.
 JNI_EXCLUSIONS = _formats.jni_exclusions()
+# JNI symbol prefixes belonging to known third-party SDK
+# bridges built on an engine (formats.json
+# jni_bridge_prefixes): the SDK is hosted under the engine's
+# Java package root and ships as its own library inside apps
+# that are not built on the engine, so its bridge exports are
+# evidence of the SDK, not of the app's engine (M2-07).
+JNI_BRIDGE_PREFIXES = _formats.jni_bridge_prefixes()
+# Score for JNI evidence that comes solely from such a
+# bridge namespace: the indicator is still recorded (the JNI
+# channel measurement reads recorded indicators), but the
+# contribution stays below the detection threshold and never
+# raises a verdict to the high floor; any non-bridge JNI
+# evidence, or any corroborating channel, restores the
+# normal weighing.
+JNI_BRIDGE_ONLY_SCORE = 20
 # Weak-only families need this many distinct weak symbol hits
 # before the surface counts as family evidence at all.
 JNI_WEAK_MIN_MATCHES = 3
@@ -112,7 +132,31 @@ JNI_MAX_SYMBOLS_PER_LIBRARY = 20000
 JNI_SAMPLE_SIZE = 10
 
 
-def _classify_symbol(name, spec):
+_ALPHA_RUN = re.compile(r"[A-Za-z]+")
+_CAMEL_BOUNDARY = re.compile(
+    r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _symbol_tokens(name):
+    """Whole-word tokens of an exported symbol name.
+
+    Alphabetic runs (digit runs — including the length
+    prefixes of Itanium-mangled names — act as separators)
+    are split further at CamelCase boundaries, so a mangled
+    name yields the identifiers it was built from: e.g.
+    ``_ZN4love7physics4stepEf`` yields {zn, love, physics,
+    step, ef} and ``...CellOverlays...`` yields {cell,
+    overlays} — never a fused token spanning the boundary.
+    """
+    tokens = set()
+    for run in _ALPHA_RUN.findall(name):
+        for word in _CAMEL_BOUNDARY.split(run):
+            if word:
+                tokens.add(word.lower())
+    return tokens
+
+
+def _classify_symbol(name, spec, tokens=None):
     """'strong' / 'weak' / None for one exported symbol name."""
     for prefix in spec["prefixes"]:
         if name.startswith(prefix):
@@ -125,10 +169,21 @@ def _classify_symbol(name, spec):
     for prefix in spec["weak_prefixes"]:
         if name.startswith(prefix):
             return "weak"
-    lowered = name.lower()
-    for sub in spec["weak_substrings"]:
-        if sub in lowered:
-            return "weak"
+    if spec["weak_substrings"]:
+        # Weak substrings are the fuzzy channel: matched as a
+        # raw substring they fire on accidents inside mangled
+        # C++ names, where a short pattern can span the seam
+        # between two identifiers (the tail of one word plus
+        # the head of the next). They therefore count only
+        # as a WHOLE TOKEN of the demangle-aware tokenization
+        # above (M2-08). Strong patterns (prefixes, exact
+        # names, specific substrings) are long and specific
+        # enough to keep substring semantics.
+        if tokens is None:
+            tokens = _symbol_tokens(name)
+        for sub in spec["weak_substrings"]:
+            if sub.lower() in tokens:
+                return "weak"
     return None
 
 
@@ -144,14 +199,21 @@ def match_jni_symbols(symbol_names):
     for name in symbol_names:
         if not name:
             continue
+        tokens = None
         for canonical, spec in JNI_SYMBOL_MARKERS.items():
-            kind = _classify_symbol(name, spec)
+            if spec["weak_substrings"] and tokens is None:
+                tokens = _symbol_tokens(name)
+            kind = _classify_symbol(name, spec, tokens)
             if kind is None:
                 continue
             entry = hits.setdefault(canonical, {
-                "names": [], "strong": 0, "weak": 0})
+                "names": [], "strong": 0, "weak": 0,
+                "strong_names": []})
             if name not in entry["names"]:
                 entry["names"].append(name)
+            if kind == "strong" and \
+                    name not in entry["strong_names"]:
+                entry["strong_names"].append(name)
             entry[kind] += 1
     out = {}
     for canonical, entry in hits.items():
@@ -160,9 +222,19 @@ def match_jni_symbols(symbol_names):
                 entry["weak"] < JNI_WEAK_MIN_MATCHES:
             continue
         required = spec.get("also_requires")
-        if required and not any(required in n.lower()
-                                for n in entry["names"]):
-            continue
+        if required:
+            # The corroborating token is held to the same
+            # token discipline as the weak substrings (a raw
+            # substring check would re-admit the boundary
+            # accidents the token rule excludes); a strong
+            # match that literally contains it (e.g. a
+            # luaopen_<family> entry point) also satisfies it.
+            req = required.lower()
+            if not any(req in _symbol_tokens(n)
+                       or (n in entry["strong_names"]
+                           and req in n.lower())
+                       for n in entry["names"]):
+                continue
         names = sorted(entry["names"])
         out[canonical] = {
             "matched": names[:JNI_SAMPLE_SIZE],
@@ -179,11 +251,14 @@ def jni_evidence(apk_path, extra_paths=None):
     narlib.container) whose libraries are scanned with the
     same budget; library names are then qualified with the
     archive they came from. Returns {"per_engine":
-    {canonical: {matched, count, strong, weak, libraries}},
-    "libraries_scanned": int, "libraries_with_exports": int,
-    "anative_activity": bool}. A member that is not a
-    parseable ELF, or exceeds the size budget, contributes
-    no evidence and never fails the scan.
+    {canonical: {matched, count, strong, weak, libraries,
+    bridge_only, bridge_symbols}}, "libraries_scanned": int,
+    "libraries_with_exports": int, "anative_activity": bool}.
+    bridge_only is True when every contributing library's
+    family matches sit under a known SDK bridge prefix.
+    A member that is not a parseable ELF, or exceeds the
+    size budget, contributes no evidence and never fails
+    the scan.
     """
     result = {"per_engine": {}, "libraries_scanned": 0,
               "libraries_with_exports": 0,
@@ -238,7 +313,11 @@ def _jni_evidence_one(apk_path, result, qualify=False):
                 slot = result["per_engine"].setdefault(
                     canonical, {"matched": [], "count": 0,
                                 "strong": 0, "weak": 0,
-                                "libraries": []})
+                                "libraries": [],
+                                "bridge_only": bool(
+                                    JNI_BRIDGE_PREFIXES.get(
+                                        canonical)),
+                                "bridge_symbols": 0})
                 for name in match["matched"]:
                     if name not in slot["matched"]:
                         slot["matched"].append(name)
@@ -247,6 +326,26 @@ def _jni_evidence_one(apk_path, result, qualify=False):
                 slot["count"] += match["count"]
                 slot["strong"] += match["strong"]
                 slot["weak"] += match["weak"]
+                bridge_prefixes = JNI_BRIDGE_PREFIXES.get(
+                    canonical) or []
+                if bridge_prefixes:
+                    # This library's contribution is
+                    # bridge-only when every symbol it matched
+                    # for the family sits under a known SDK
+                    # bridge prefix.
+                    spec = JNI_SYMBOL_MARKERS[canonical]
+                    family_symbols = [
+                        s for s in exports
+                        if _classify_symbol(s, spec) is not None]
+                    slot["bridge_symbols"] += sum(
+                        1 for s in family_symbols
+                        if any(s.startswith(p)
+                               for p in bridge_prefixes))
+                    if not family_symbols or not all(
+                            any(s.startswith(p)
+                                for p in bridge_prefixes)
+                            for s in family_symbols):
+                        slot["bridge_only"] = False
                 lib_label = (
                     f"{os.path.basename(apk_path)}:"
                     f"{info.filename}") if qualify \
@@ -465,19 +564,38 @@ def _fuse_resolved(apk_path, scan_path, extra_paths, resolved,
         # corroborating indicator for the same family (path,
         # DEX, layout, version) the verdict is raised to the
         # high floor. Path evidence alone is unchanged.
+        # Bridge-only JNI evidence (M2-07) — every matching
+        # symbol sits in a known third-party SDK bridge
+        # namespace — is the exception: it is recorded with
+        # the same indicator, but weighed at
+        # JNI_BRIDGE_ONLY_SCORE (below the detection
+        # threshold) and never raised to the high floor,
+        # because the SDK's presence does not make the app
+        # an app of that engine.
         jni_match = jni["per_engine"].get(canonical)
         if jni_match:
             corroborated = bool(indicators)
-            score += JNI_SCORE
-            if corroborated:
-                score = max(score, JNI_HIGH_FLOOR)
+            bridge_only = bool(jni_match.get("bridge_only"))
+            if bridge_only:
+                score += JNI_BRIDGE_ONLY_SCORE
+            else:
+                score += JNI_SCORE
+                if corroborated:
+                    score = max(score, JNI_HIGH_FLOOR)
+            detail = (
+                f"{jni_match['count']} exported "
+                f"symbol(s) match {canonical} "
+                f"(sample: "
+                f"{', '.join(jni_match['matched'][:3])}) "
+                f"in {', '.join(jni_match['libraries'][:3])}")
+            if bridge_only:
+                detail += (
+                    " — all matching symbols are in a known "
+                    "third-party SDK bridge namespace; weighed "
+                    "as SDK evidence, not engine evidence")
             indicators.append({
                 "kind": "jni-symbols",
-                "detail": f"{jni_match['count']} exported "
-                          f"symbol(s) match {canonical} "
-                          f"(sample: "
-                          f"{', '.join(jni_match['matched'][:3])}) "
-                          f"in {', '.join(jni_match['libraries'][:3])}"})
+                "detail": detail})
         if not indicators:
             continue
         version = None
@@ -499,6 +617,10 @@ def _fuse_resolved(apk_path, scan_path, extra_paths, resolved,
                 "strong_matches": jni_match["strong"],
                 "weak_matches": jni_match["weak"],
                 "libraries": jni_match["libraries"]}
+            if jni_match.get("bridge_only"):
+                verdict["jni_symbols"]["sdk_bridge_only"] = True
+                verdict["jni_symbols"]["bridge_symbols"] = \
+                    jni_match.get("bridge_symbols", 0)
         if deep and spec["deep"] and verdict["detected"]:
             deep_args = [scan_path]
             if work_dir and spec["deep"] == "nar-il2cpp.py":

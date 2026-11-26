@@ -2,11 +2,23 @@
 """nar-assets.py: asset inventory and classification (brief
 section 10).
 
-Inventories the payload files of an APK (assets/, raw
-resources, and engine containers wherever they sit): each
-entry gets its type (magic first, extension second), a
-category (texture, audio, video, model, font, data, config,
-code, container, other), size and SHA-256. Image dimensions
+Inventories the payload files of an APK: every member
+under assets/ and res/ in each archive root (the base
+archive, merged splits, and bundle module roots), engine
+containers (.pak/.pck/.utoc/.ucas/.bundle/.unity3d/.obb)
+wherever they sit, and every member of an OBB payload
+archive (the target itself, or one contained in / beside
+the target — an OBB carries payload only). Each entry
+gets its type (magic first, extension second, content
+evidence third), a category (texture, audio, video,
+model, font, data, config, code, container, other), size
+and SHA-256. Code and platform metadata are inventoried
+by their own stages and stay out of scope here: DEX
+(nar-dex), native libraries (nar-native), the manifest,
+resources.arsc and META-INF signing metadata (the app /
+triage stages). Container members are listed as members;
+their contents are not recursed into (the engine stages
+open the containers they parse). Image dimensions
 are read from PNG/JPEG/WebP headers; audio metadata
 (channels, sample rate, duration where the header makes it
 computable) is parsed from WAV / OGG (Vorbis, Opus) / MP3
@@ -43,6 +55,7 @@ EXT_TYPES = {
     ".png": ("png-image", "texture"), ".jpg": ("jpeg-image", "texture"),
     ".jpeg": ("jpeg-image", "texture"), ".webp": ("webp-image", "texture"),
     ".gif": ("gif-image", "texture"), ".bmp": ("bmp-image", "texture"),
+    ".svg": ("svg-image", "texture"),
     ".mp3": ("mp3-audio", "audio"), ".ogg": ("ogg-audio", "audio"),
     ".wav": ("wav-audio", "audio"), ".m4a": ("m4a-audio", "audio"),
     ".flac": ("flac-audio", "audio"), ".mp4": ("mp4-video", "video"),
@@ -50,9 +63,12 @@ EXT_TYPES = {
     ".fbx": ("fbx-model", "model"), ".obj": ("obj-model", "model"),
     ".glb": ("glb-model", "model"), ".gltf": ("gltf-model", "model"),
     ".ttf": ("ttf-font", "font"), ".otf": ("otf-font", "font"),
+    ".woff": ("woff-font", "font"), ".woff2": ("woff2-font", "font"),
+    ".fnt": ("bitmap-font", "font"),
     ".json": ("json", "data"), ".xml": ("xml", "data"),
     ".txt": ("text", "data"), ".csv": ("csv", "data"),
     ".ini": ("ini-config", "config"), ".properties": ("properties", "config"),
+    ".prop": ("properties", "config"),
     ".yaml": ("yaml", "config"), ".yml": ("yaml", "config"),
     ".dex": ("dex", "code"), ".so": ("elf", "code"),
     ".pak": ("unreal-pak", "container"), ".pck": ("godot-pck", "container"),
@@ -85,12 +101,14 @@ EXT_TYPES = {
     ".lua": ("lua-script", "code"), ".gd": ("gdscript", "code"),
     ".dart": ("dart-source", "code"), ".wasm": ("wasm", "code"),
     ".obb": ("obb", "container"), ".zip": ("zip", "container"),
+    ".gz": ("gzip-archive", "container"),
     ".7z": ("7z-archive", "container"),
     ".ase": ("aseprite", "animation"),
     ".aseprite": ("aseprite", "animation"),
     ".riv": ("rive-animation", "animation"),
     ".scml": ("spriter", "animation"),
     ".jsc": ("javascript-compiled", "code"),
+    ".py": ("python", "code"),
     ".pyc": ("python-bytecode", "code"),
     ".ccb": ("cocos-ccb", "data"), ".csb": ("cocos-csb", "data"),
     ".locres": ("unreal-locres", "data"),
@@ -133,7 +151,117 @@ def magic_type(head):
         return ("dds-texture", "texture")
     if head.startswith(b"PKM 10") or head.startswith(b"PKM 20"):
         return ("pkm-texture", "texture")
+    if head.startswith(b"\x1f\x8b"):
+        return ("gzip-archive", "container")
+    if head.startswith(b"wOF2"):
+        return ("woff2-font", "font")
+    if head.startswith(b"wOFF"):
+        return ("woff-font", "font")
+    if head.startswith(b"BMF\x03"):
+        return ("bitmap-font", "font")
+    if head.startswith(b"bplist00"):
+        return ("plist", "data")
+    if head.startswith(b"\x00\x01\x00\x00") \
+            or head.startswith(b"ttcf") \
+            or head.startswith(b"true\x00"):
+        return ("ttf-font", "font")
+    if head.startswith(b"OTTO"):
+        return ("otf-font", "font")
+    if head[:4] == b"\x03\x00\x08\x00":
+        # Android binary XML (RES_XML_TYPE chunk header).
+        return ("xml", "data")
+    if head.startswith(b"\xc1\x83\x2a\x9e"):
+        return ("unreal-asset", "data")
+    if head.startswith(
+            b"\x0e\x14\x74\x75\x67\x4a\x03\xfc"
+            b"\x4a\x15\x90\x9d\xc3\x37\x7f\x1b"):
+        return ("unreal-locres", "data")
+    if head.startswith(b"\x1bLua"):
+        return ("lua-script", "code")
+    if head.startswith(b"RIVE") and len(head) > 4 \
+            and head[4] < 0x20:
+        return ("rive-animation", "animation")
+    if len(head) >= 6 and head[4:6] == b"\xe0\xa5":
+        return ("aseprite", "animation")
+    # SVG is a text format: an XML document whose root is
+    # <svg (possibly behind a BOM, whitespace or the XML
+    # declaration). Deterministic content evidence, checked
+    # after every binary signature above.
+    stripped = head[3:] if head.startswith(b"\xef\xbb\xbf") \
+        else head
+    stripped = stripped.lstrip()
+    if stripped.startswith(b"<svg"):
+        return ("svg-image", "texture")
+    if stripped.startswith(b"<?xml") and b"<svg" in head[:1024]:
+        return ("svg-image", "texture")
     return None
+
+
+#: Bytes of member content read for classification (magic,
+#: then content evidence). Bounded and header-only: the
+#: full member is still streamed separately for hashing.
+_CLASSIFY_WINDOW = 8192
+
+
+def _content_is_binary(data):
+    """Deterministic content evidence: True when the read
+    window is binary — a NUL byte, bytes that do not decode
+    as UTF-8 (a multi-byte sequence split by the window
+    edge is trimmed before judging), or C0 control bytes
+    other than the usual text whitespace. An empty window
+    carries no binary evidence."""
+    if not data:
+        return False
+    if b"\x00" in data:
+        return True
+    text = None
+    for trimmed in (data, data[:-1], data[:-2], data[:-3]):
+        try:
+            text = trimmed.decode("utf-8")
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return True
+    return any(ord(ch) < 0x20 and ch not in "\t\n\r\x0b\x0c"
+               for ch in text)
+
+
+#: Categories whose extension rule asserts a text/data
+#: nature, plus the source-code types that assert readable
+#: source. For these, an extension alone never commits the
+#: category when the content is binary with no recognized
+#: signature (the signature check runs first): the member
+#: is reported unknown/other instead. Formats that
+#: genuinely carry no magic but read as text (JSON, XML,
+#: shader source, BMFont text, ...) pass the content check
+#: and keep their extension classification.
+_DISCIPLINE_CATEGORIES = ("data", "config", "animation",
+                          "font")
+_DISCIPLINE_TYPES = {"javascript", "lua-script", "gdscript",
+                     "dart-source", "python", "svg-image"}
+
+
+def _classify(name, data):
+    """(type, category) for one member from its content
+    window: magic first, extension second, content evidence
+    third. With no signature and no extension rule, content
+    that reads as text is ("text", "data") and anything
+    else stays ("unknown", "other")."""
+    kind_cat = magic_type(data)
+    if kind_cat is not None:
+        return kind_cat
+    ext = os.path.splitext(name)[1].lower()
+    rule = EXT_TYPES.get(ext)
+    if rule is None:
+        if data and not _content_is_binary(data):
+            return ("text", "data")
+        return ("unknown", "other")
+    if rule[1] in _DISCIPLINE_CATEGORIES \
+            or rule[0] in _DISCIPLINE_TYPES:
+        if _content_is_binary(data):
+            return ("unknown", "other")
+    return rule
 
 
 def image_dimensions(kind, data):
@@ -407,13 +535,26 @@ def media_metadata(kind, head):
     return mediainfo_mod.wwise_bank_facts(head, ext)
 
 
+#: Engine containers are payload wherever they sit in an
+#: archive (the pre-existing extension rule).
+_CONTAINER_EXTS = (".pak", ".pck", ".utoc", ".ucas",
+                   ".bundle", ".unity3d", ".obb")
+
+
 def _in_scope(name):
-    return (name.startswith("assets/")
-            or name.startswith("res/raw")
-            or name.startswith("base/assets/")
-            or name.lower().endswith(
-                (".pak", ".pck", ".utoc", ".ucas",
-                 ".bundle", ".unity3d", ".obb")))
+    """Payload scope for one archive member: the assets/
+    and res/ trees — at the archive root or one level down,
+    which covers bundle (AAB) module roots such as
+    base/assets/ and feature-module assets/ — plus engine
+    containers by extension wherever they sit. Code and
+    platform metadata (DEX, lib/, the manifest,
+    resources.arsc, META-INF/) are other stages' scope and
+    are never inventoried here."""
+    if name.lower().endswith(_CONTAINER_EXTS):
+        return True
+    parts = name.split("/")
+    return parts[0] in ("assets", "res") or (
+        len(parts) > 1 and parts[1] in ("assets", "res"))
 
 
 def inventory(target, merge_splits=True):
@@ -439,17 +580,30 @@ def _inventory_merged(target, resolved):
     assets = []
     by_hash = {}
     total_bytes = 0
-    for root in resolved.assets_roots:
+    # Inventory roots: the resolved archive roots (base
+    # first, then splits), then the OBB payload archives
+    # the resolution carries (contained in / beside the
+    # target). An OBB carries payload only, so every member
+    # of an OBB root is in scope; a direct OBB target's own
+    # root is an OBB root too.
+    roots = [(root, resolved.input_kind == "obb")
+             for root in resolved.assets_roots]
+    seen_roots = {root for root, _ in roots}
+    for obb in resolved.obbs:
+        if obb["path"] not in seen_roots:
+            roots.append((obb["path"], True))
+            seen_roots.add(obb["path"])
+    for root, whole_archive in roots:
         archive_name = os.path.basename(root)
         with zipfile.ZipFile(root) as zf:
             for info in zf.infolist():
                 name = info.filename
                 if name.endswith("/"):
                     continue
-                if not _in_scope(name):
+                if not whole_archive and not _in_scope(name):
                     continue
                 with zf.open(name) as fh:
-                    head = fh.read(64)
+                    head = fh.read(_CLASSIFY_WINDOW)
                     fh.seek(0)
                     digest = hashlib.sha256()
                     while True:
@@ -457,12 +611,7 @@ def _inventory_merged(target, resolved):
                         if not chunk:
                             break
                         digest.update(chunk)
-                ext = os.path.splitext(name)[1].lower()
-                kind_cat = magic_type(head) or EXT_TYPES.get(
-                    ext, ("unknown", "other"))
-                if kind_cat[0] == "unknown" and not ext and (
-                        "/bin/Data/" in name):
-                    kind_cat = ("unity-serialized", "data")
+                kind_cat = _classify(name, head)
                 width = height = None
                 if kind_cat[1] == "texture":
                     with zf.open(name) as fh:
@@ -515,7 +664,7 @@ def _inventory_merged(target, resolved):
             "locations": locations})
     by_category = {}
     assets_by_split = {}
-    for root in resolved.assets_roots:
+    for root, _whole in roots:
         assets_by_split[os.path.basename(root)] = 0
     for a in assets:
         by_category[a["category"]] = \
@@ -546,16 +695,10 @@ def _inventory_single(target):
             name = info.filename
             if name.endswith("/"):
                 continue
-            in_scope = (name.startswith("assets/")
-                        or name.startswith("res/raw")
-                        or name.startswith("base/assets/")
-                        or name.lower().endswith(
-                            (".pak", ".pck", ".utoc", ".ucas",
-                             ".bundle", ".unity3d", ".obb")))
-            if not in_scope:
+            if not _in_scope(name):
                 continue
             with zf.open(name) as fh:
-                head = fh.read(64)
+                head = fh.read(_CLASSIFY_WINDOW)
                 fh.seek(0)
                 digest = hashlib.sha256()
                 while True:
@@ -563,14 +706,7 @@ def _inventory_single(target):
                     if not chunk:
                         break
                     digest.update(chunk)
-            ext = os.path.splitext(name)[1].lower()
-            kind_cat = magic_type(head) or EXT_TYPES.get(
-                ext, ("unknown", "other"))
-            if kind_cat[0] == "unknown" and not ext and (
-                    "/bin/Data/" in name):
-                # Extensionless files inside the Unity Data
-                # layout are Unity serialized files.
-                kind_cat = ("unity-serialized", "data")
+            kind_cat = _classify(name, head)
             width = height = None
             if kind_cat[1] == "texture":
                 with zf.open(name) as fh:

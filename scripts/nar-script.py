@@ -61,6 +61,7 @@ import argparse
 import importlib.util
 import json
 import os
+import struct
 import sys
 import tempfile
 import zipfile
@@ -71,6 +72,7 @@ from narlib import scriptparse as sp  # noqa: E402
 
 VERSION = "3.0.1"
 TOOL = "nar-script"
+IL2CPP_METADATA_MAGIC = 0xFAB11BAF
 
 PARSE_CAP = 32 * 1024 * 1024       # full-member parse cap
 JS_CAP = 16 * 1024 * 1024          # text-bundle scan cap
@@ -259,6 +261,42 @@ def _scan_resolved(target, resolved):
                 })
     finally:
         scan.close()
+    # Coverage honesty: members the container resolution
+    # could not merge are named in the limitations, and a
+    # scan that covered nothing because resolution failed
+    # (no readable roots, or every content-bearing member
+    # skipped) must not exit as a silently empty "absent":
+    # it carries a named degraded record stating why the
+    # target could not be measured.
+    for skipped in resolved.split_skipped:
+        limitations.append(
+            f"Container member {skipped['name']} was not "
+            f"merged into the scan: {skipped['reason']}; "
+            "content carried only by that member is not "
+            "covered by this report.")
+    if not files:
+        problems = []
+        if not roots:
+            problems.append(
+                "target resolution produced no readable "
+                "archive roots (no base archive identified)")
+        for skipped in resolved.split_skipped:
+            problems.append(
+                f"container member {skipped['name']} not "
+                f"merged: {skipped['reason']}")
+        if problems:
+            files.append({
+                "file": "(target resolution)",
+                "source_archive": None,
+                "format": "unknown",
+                "status": "identified_only",
+                "fidelity": "identified-only",
+                "size_bytes": 0,
+                "facts": {"resolution_problems": problems},
+                "reason": "the scan could not cover this "
+                          "target: " + "; ".join(problems),
+                "error": None,
+            })
     return _report(target, resolved.container_block(), files,
                    limitations)
 
@@ -312,11 +350,61 @@ def _report(target, container_block, files, limitations):
     }
 
 
+def _container_signature(head):
+    """The binary container signature at the start of a
+    member, or None. Unity AssetBundles open with one of
+    the UnityFS / UnityWeb / UnityRaw magics."""
+    for sig in (b"UnityFS", b"UnityWeb", b"UnityRaw"):
+        if head.startswith(sig):
+            return sig.decode("ascii")
+    return None
+
+
+def _looks_html(data):
+    """True when the member's content is an HTML document:
+    after an optional BOM and leading whitespace it opens
+    with a doctype or an <html> tag."""
+    probe = data[:4096].lstrip(b"\xef\xbb\xbf").lstrip().lower()
+    return probe.startswith(b"<!doctype") or \
+        probe.startswith(b"<html")
+
+
 def _scan_member(scan, m, names, files, limitations, dart_vm_version):
     name = m["name"]
     base = os.path.basename(name).lower()
     ext = os.path.splitext(base)[1]
     head = scan.read_head(m, HEAD_BYTES)
+
+    # IL2CPP metadata: the name is the deterministic
+    # evidence (the Unity IL2CPP pair member); the header
+    # magic/version corroborate it and the native library's
+    # presence in the merged target is reported as a fact.
+    if base == "global-metadata.dat":
+        magic_ok = False
+        version = None
+        if len(head) >= 8:
+            magic, version_raw = struct.unpack_from("<II", head, 0)
+            magic_ok = magic == IL2CPP_METADATA_MAGIC
+            version = version_raw if magic_ok else None
+        facts = {
+            "metadata_magic_ok": magic_ok,
+            "metadata_version": version,
+            "native_library_present": any(
+                os.path.basename(n).lower() == "libil2cpp.so"
+                for n in names),
+        }
+        if magic_ok:
+            files.append(_rec(m, "il2cpp-metadata", _mk(
+                "supported", "structural-summary", facts)))
+        else:
+            files.append(_rec(m, "il2cpp-metadata", _mk(
+                "identified_only", "identified-only", facts,
+                reason="IL2CPP metadata member present but "
+                       "its header magic is not the standard "
+                       "IL2CPP magic; the file may be "
+                       "encrypted or obfuscated, so no "
+                       "version is read from it")))
+        return
 
     # Hermes first: the magic decides, whatever the name.
     if head[:8] == _hermes_magic():
@@ -441,11 +529,43 @@ def _scan_member(scan, m, names, files, limitations, dart_vm_version):
 
     if ext in (".js", ".mjs", ".cjs") or (
             ext == ".bundle"):
+        # Content gate: a name is not evidence of a text
+        # script. Binary containers (Unity AssetBundles
+        # carry the UnityFS/UnityWeb/UnityRaw signature)
+        # and members whose bytes are binary must never be
+        # run through the text-statistics fallback, and
+        # HTML content must never be claimed as JavaScript.
+        container_sig = _container_signature(head)
+        if container_sig is not None:
+            files.append(_rec(m, "unknown", _mk(
+                "identified_only", "identified-only",
+                {"container_signature": container_sig},
+                reason=f"binary container ({container_sig} "
+                       "signature); not a text script, no "
+                       "script format is claimed for it")))
+            return
+        if b"\x00" in head:
+            files.append(_rec(m, "unknown", _mk(
+                "identified_only", "identified-only",
+                {"content_kind": "binary"},
+                reason="binary content (NUL bytes in the "
+                       "header probe); not a text script, "
+                       "no script format is claimed for it")))
+            return
         data = scan.read(m, JS_CAP)
         truncated = False
         if data is None:
             data = scan.read_head(m, JS_CAP)
             truncated = True
+        if _looks_html(data):
+            files.append(_rec(m, "unknown", _mk(
+                "identified_only", "identified-only",
+                {"content_kind": "html"},
+                reason="content is HTML (document markup "
+                       "at the start of the member), not "
+                       "JavaScript; no script format is "
+                       "claimed for it")))
+            return
         parsed = sp.parse_javascript(data, sibling_names=names)
         if truncated:
             parsed["facts"]["scan_truncated_at_bytes"] = JS_CAP
@@ -469,6 +589,20 @@ def _scan_member(scan, m, names, files, limitations, dart_vm_version):
             files.append(_oversize(m, "pyc", PARSE_CAP))
             return
         files.append(_rec(m, "pyc", sp.parse_pyc(data)))
+        return
+
+    if ext == ".py":
+        data = scan.read(m, JS_CAP)
+        if data is None:
+            files.append(_oversize(m, "python", JS_CAP))
+            return
+        text = data.decode("utf-8", "replace")
+        files.append(_rec(m, "python", _mk(
+            "identified_only", "identified-only",
+            {"variant": "source",
+             "line_count": text.count("\n") + 1},
+            reason="Python source text (.py), not compiled "
+                   "bytecode; line census only")))
         return
 
     if ext == ".as":
@@ -538,7 +672,8 @@ def human(report):
                 "constant_count", "typedef_count",
                 "methoddef_count", "code_object_count",
                 "total_functions", "public_count",
-                "bytecode_version", "cpython_version")
+                "bytecode_version", "cpython_version",
+                "metadata_version")
             if facts.get(k) is not None)
         lines.append(f"  [{rec['format']}] {rec['file']} "
                      f"({rec['status']})"

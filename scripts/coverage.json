@@ -849,7 +849,8 @@
    "probe": null,
    "test_ref": "tests/unit/test_formats_registry.py::test_asset_formats_match_ext_types",
    "ext": [
-    ".properties"
+    ".properties",
+    ".prop"
    ],
    "parser": "nar-assets"
   },
@@ -1636,6 +1637,84 @@
     ".spriteatlas"
    ],
    "parser": "nar-atlas"
+  },
+  {
+   "id": "svg-image",
+   "name": "svg-image",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_assets.py::test_svg_detection",
+   "ext": [
+    ".svg"
+   ],
+   "parser": "nar-assets"
+  },
+  {
+   "id": "bitmap-font",
+   "name": "bitmap-font",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_assets.py::test_bitmap_font_detection",
+   "ext": [
+    ".fnt"
+   ],
+   "parser": "nar-assets"
+  },
+  {
+   "id": "woff-font",
+   "name": "woff-font",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_assets.py::test_woff_magics",
+   "ext": [
+    ".woff"
+   ],
+   "parser": "nar-assets"
+  },
+  {
+   "id": "woff2-font",
+   "name": "woff2-font",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_assets.py::test_woff_magics",
+   "ext": [
+    ".woff2"
+   ],
+   "parser": "nar-assets"
+  },
+  {
+   "id": "python",
+   "name": "python",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_assets.py::test_python_source_extension",
+   "ext": [
+    ".py"
+   ],
+   "parser": "nar-assets"
+  },
+  {
+   "id": "gzip-archive",
+   "name": "gzip-archive",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_assets.py::test_gzip_magic_and_extension",
+   "ext": [
+    ".gz"
+   ],
+   "parser": "nar-assets"
   }
  ],
  "script_formats": [

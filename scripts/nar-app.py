@@ -9,6 +9,25 @@ the `app.json` companion document (schemas/app.schema.json)
 that nar-analyze writes into a case and that nar-ask /
 nar-blueprint deepen from. Sections, each evidence-cited:
 
+- Identity: package, app label (manifest literal or
+  resources.arsc string-table resolution of the label
+  reference), versionName/versionCode, compileSdk,
+  min/target SDK, native ABIs and the signer certificate
+  subject (stdlib DER parse of the shipped v1 PKCS#7 and
+  APK Signing Block certificates; conflicting sources are
+  surfaced, never silently resolved).
+- Components: the full manifest component census (all four
+  component types + aliases: counts, explicit
+  android:exported=true counts, effective exported counts
+  under the manifest defaulting rules, and inventories),
+  plus a DEX *Activity class census reported alongside the
+  manifest activity inventory with its basis named.
+- Behaviour: the manifest <application> element's declared
+  attributes (debuggable, allowBackup, fullBackupContent,
+  usesCleartextTraffic, networkSecurityConfig,
+  extractNativeLibs, ...), each asserted as declared with
+  its value or explicitly not declared, plus the bundled
+  network-security-config resource census.
 - UI frameworks: Jetpack Compose (@Composable-annotated
   class/method census from DEX annotation directories —
   annotation TYPES only are decoded), View/XML layouts
@@ -62,6 +81,7 @@ MIT License. See LICENSE in the repo root.
 """
 import argparse
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -362,6 +382,28 @@ SDK_FAMILIES = [
      ("unity-ads", "unityads")),
     ("ironsource", "ironSource", ("Lcom/ironsource/",),
      ("ironsource",)),
+    ("vungle", "Vungle / Liftoff", ("Lcom/vungle/",),
+     ("vungle",)),
+    ("chartboost", "Chartboost", ("Lcom/chartboost/",),
+     ("chartboost",)),
+    ("pangle", "Pangle (ByteDance)",
+     ("Lcom/bytedance/sdk/openadsdk/", "Lcom/bytedance/pangle/"),
+     ("pangle",)),
+    ("adcolony", "AdColony", ("Lcom/adcolony/",), ("adcolony",)),
+    ("inmobi", "InMobi", ("Lcom/inmobi/",), ("inmobi",)),
+    ("mintegral", "Mintegral (MBridge)",
+     ("Lcom/mbridge/", "Lcom/mintegral/"),
+     ("mintegral", "mbridge")),
+    ("fyber", "Fyber", ("Lcom/fyber/", "Lcom/inneractive/"),
+     ("fyber", "inneractive")),
+    ("moloco", "Moloco", ("Lcom/moloco/",), ("moloco",)),
+    ("deltadna", "DeltaDNA", ("Lcom/deltadna/",), ("deltadna",)),
+    ("tapjoy", "Tapjoy", ("Lcom/tapjoy/",), ("tapjoy",)),
+    ("bidstack", "BidStack", ("Lcom/bidstack/",), ("bidstack",)),
+    ("revenuecat", "RevenueCat", ("Lcom/revenuecat/",),
+     ("revenuecat",)),
+    ("garena", "Garena platform (Beetalk / GGPay)",
+     ("Lcom/beetalk/", "Lcom/garena/"), ("garena", "beetalk")),
     ("branch", "Branch", ("Lio/branch/",), ("branch",)),
     ("intercom", "Intercom", ("Lio/intercom/",), ("intercom",)),
     ("mapbox", "Mapbox", ("Lcom/mapbox/",), ("mapbox",)),
@@ -372,6 +414,22 @@ SDK_FAMILIES = [
     ("androidx-core", "AndroidX core libraries",
      ("Landroidx/",), ("androidx",)),
 ]
+
+# Native-carried SDK evidence: some SDKs ship (also) as a
+# named native library; the census consults the native
+# inventory for these families, not only the DEX. Member
+# markers are shipped-asset evidence for a plugin-carried
+# SDK. Both channels are deterministic name matches, stated
+# in the entry's evidence when they fire.
+SDK_NATIVE_LIBS = {
+    "tapjoy": ("tapjoy",),
+    "bidstack": ("bidstack",),
+    "garena": ("libggp",),
+}
+
+SDK_MEMBER_MARKERS = {
+    "revenuecat": ("purchases_flutter",),
+}
 
 TRACKER_HOST_MARKERS = (
     "google-analytics.com", "googletagmanager.com",
@@ -421,6 +479,680 @@ def _manifest_pass(scan, resolved):
     except Exception:
         report = None
     return report, root, member
+
+
+# ------------------------------------------------------------------
+# Signer certificates (stdlib DER parse: v1 PKCS#7 files and
+# the APK Signing Block) + resources.arsc string resolution
+# ------------------------------------------------------------------
+
+def _der_tlv(data, off):
+    """(tag, content_offset, content_length) for the DER TLV
+    at off. Raises ValueError on truncation."""
+    if off + 2 > len(data):
+        raise ValueError("der: truncated")
+    tag = data[off]
+    off += 1
+    if tag & 0x1F == 0x1F:
+        while off < len(data) and data[off] & 0x80:
+            off += 1
+        off += 1
+    if off >= len(data):
+        raise ValueError("der: truncated length")
+    first = data[off]
+    off += 1
+    if first & 0x80:
+        nbytes = first & 0x7F
+        if nbytes == 0 or nbytes > 4 or off + nbytes > len(data):
+            raise ValueError("der: bad long-form length")
+        length = int.from_bytes(data[off:off + nbytes], "big")
+        off += nbytes
+    else:
+        length = first
+    if off + length > len(data):
+        raise ValueError("der: content overruns buffer")
+    return tag, off, length
+
+
+def _der_children(data, start, end):
+    """[(tag, content_off, content_len, raw_off, raw_end)] for
+    the consecutive TLVs inside data[start:end]."""
+    out = []
+    off = start
+    while off < end:
+        tag, coff, clen = _der_tlv(data, off)
+        out.append((tag, coff, clen, off, coff + clen))
+        off = coff + clen
+    return out
+
+
+_OID_NAMES = {
+    (2, 5, 4, 3): "CN", (2, 5, 4, 6): "C", (2, 5, 4, 7): "L",
+    (2, 5, 4, 8): "ST", (2, 5, 4, 9): "STREET",
+    (2, 5, 4, 10): "O", (2, 5, 4, 11): "OU",
+    (2, 5, 4, 17): "postalCode", (2, 5, 4, 5): "serialNumber",
+    (1, 2, 840, 113549, 1, 9, 1): "emailAddress",
+}
+
+
+def _oid_arcs(content):
+    if not content:
+        return ()
+    arcs = [content[0] // 40, content[0] % 40]
+    value = 0
+    for byte in content[1:]:
+        value = (value << 7) | (byte & 0x7F)
+        if not byte & 0x80:
+            arcs.append(value)
+            value = 0
+    return tuple(arcs)
+
+
+def _directory_string(tag, raw):
+    try:
+        if tag == 0x1E:  # BMPString
+            return raw.decode("utf-16-be", "replace")
+        if tag == 0x14:  # TeletexString
+            return raw.decode("utf-8", "replace")
+        return raw.decode("utf-8" if tag == 0x0C else "ascii",
+                          "replace")
+    except Exception:
+        return ""
+
+
+def _name_string(data, content_off, content_len):
+    """RFC 4519-style DN for one X.501 Name content span:
+    RDNs print most-specific first, the reverse of the DER
+    sequence order — the order keytool/apksigner print."""
+    rdns = []
+    try:
+        for _t, set_off, set_len, _r, _e in _der_children(
+                data, content_off, content_off + content_len):
+            parts = []
+            for _t2, av_off, av_len, _r2, _e2 in _der_children(
+                    data, set_off, set_off + set_len):
+                pair = _der_children(data, av_off, av_off + av_len)
+                if len(pair) != 2:
+                    continue
+                _ot, oid_off, oid_len, _or, _oe = pair[0]
+                vtag, val_off, val_len, _vr, _ve = pair[1]
+                arcs = _oid_arcs(data[oid_off:oid_off + oid_len])
+                key = _OID_NAMES.get(
+                    arcs, ".".join(str(a) for a in arcs))
+                value = _directory_string(
+                    vtag, data[val_off:val_off + val_len])
+                value = value.replace("\\", "\\\\") \
+                    .replace(",", "\\,")
+                parts.append(f"{key}={value}")
+            if parts:
+                rdns.append("+".join(parts))
+    except ValueError:
+        return None
+    return ", ".join(reversed(rdns)) if rdns else None
+
+
+def _cert_info(cert_der, source):
+    """{subject, issuer, sha256, source} for one X.509 cert,
+    or None when the structure does not parse. The subject
+    is the 4th SEQUENCE child of the TBSCertificate (after
+    signature algorithm, issuer and validity)."""
+    try:
+        tag, coff, clen = _der_tlv(cert_der, 0)
+        if tag != 0x30:
+            return None
+        top = _der_children(cert_der, coff, coff + clen)
+        if not top or top[0][0] != 0x30:
+            return None
+        _t, tbs_off, tbs_len, _r, _e = top[0]
+        seqs = [c for c in _der_children(
+            cert_der, tbs_off, tbs_off + tbs_len) if c[0] == 0x30]
+        if len(seqs) < 4:
+            return None
+        issuer = _name_string(cert_der, seqs[1][1], seqs[1][2])
+        subject = _name_string(cert_der, seqs[3][1], seqs[3][2])
+    except ValueError:
+        return None
+    if subject is None:
+        return None
+    return {"subject": subject, "issuer": issuer,
+            "sha256": hashlib.sha256(cert_der).hexdigest(),
+            "source": source}
+
+
+def _certs_from_pkcs7(data):
+    """Certificate DER blobs inside a PKCS#7 SignedData blob
+    (the META-INF/*.RSA v1 signature file shape)."""
+    certs = []
+    try:
+        tag, coff, clen = _der_tlv(data, 0)
+        if tag != 0x30:
+            return certs
+        outer = _der_children(data, coff, coff + clen)
+        holder = next((c for c in outer if c[0] == 0xA0), None)
+        if holder is None:
+            return certs
+        signed = _der_children(data, holder[1],
+                               holder[1] + holder[2])
+        if not signed or signed[0][0] != 0x30:
+            return certs
+        _t, sd_off, sd_len, _r, _e = signed[0]
+        for child in _der_children(data, sd_off, sd_off + sd_len):
+            if child[0] != 0xA0:
+                continue
+            for cert in _der_children(data, child[1],
+                                      child[1] + child[2]):
+                if cert[0] == 0x30:
+                    certs.append(data[cert[3]:cert[4]])
+    except ValueError:
+        return certs
+    return certs
+
+
+def _lp_read(data, off):
+    """One uint32-LE length-prefixed blob from an APK Signing
+    Block structure: (blob, next_offset)."""
+    if off + 4 > len(data):
+        raise ValueError("lp: truncated")
+    size = struct.unpack_from("<I", data, off)[0]
+    if off + 4 + size > len(data):
+        raise ValueError("lp: overruns buffer")
+    return data[off + 4:off + 4 + size], off + 4 + size
+
+
+def _signing_block_certs(value):
+    """Certificates inside one v2/v3 signer block value."""
+    certs = []
+    try:
+        signers, _ = _lp_read(value, 0)
+        off = 0
+        while off < len(signers):
+            signer, off = _lp_read(signers, off)
+            signed_data, _ = _lp_read(signer, 0)
+            _digests, pos = _lp_read(signed_data, 0)
+            cert_blob, _ = _lp_read(signed_data, pos)
+            coff = 0
+            while coff < len(cert_blob):
+                cert, coff = _lp_read(cert_blob, coff)
+                certs.append(cert)
+    except ValueError:
+        return certs
+    return certs
+
+
+_SIGNING_BLOCK_IDS = {0x7109871A: "v2", 0xF05368C0: "v3",
+                      0x1B93AD61: "v3.1"}
+
+
+def _certs_from_signing_block(path):
+    """[(cert_der, scheme)] from the APK Signing Block of the
+    file at path, located via its End Of Central Directory."""
+    out = []
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            tail_len = min(size, 65536 + 22)
+            fh.seek(size - tail_len)
+            tail = fh.read()
+            eocd = tail.rfind(b"PK\x05\x06")
+            if eocd < 0:
+                return out
+            cd_off = struct.unpack_from("<I", tail, eocd + 16)[0]
+            if cd_off < 24 or cd_off > size:
+                return out
+            fh.seek(cd_off - 24)
+            foot = fh.read(24)
+            if foot[8:24] != b"APK Sig Block 42":
+                return out
+            block_size = struct.unpack_from("<Q", foot, 0)[0]
+            start = cd_off - (block_size + 8)
+            if start < 0 or block_size + 8 > size:
+                return out
+            fh.seek(start)
+            block = fh.read(block_size + 8)
+        pos = 8
+        end = len(block) - 24
+        while pos + 8 <= end:
+            plen = struct.unpack_from("<Q", block, pos)[0]
+            pos += 8
+            if plen < 4 or pos + plen > len(block) - 24 + 8:
+                break
+            pair_id = struct.unpack_from("<I", block, pos)[0]
+            if pair_id in _SIGNING_BLOCK_IDS:
+                value = block[pos + 4:pos + plen]
+                for cert in _signing_block_certs(value):
+                    out.append((cert, _SIGNING_BLOCK_IDS[pair_id]))
+            pos += plen
+    except (OSError, struct.error, ValueError):
+        return out
+    return out
+
+
+def _signer_section(scan, resolved):
+    """Signer identity from the certificates the base APK
+    itself ships: v1 PKCS#7 signature files and the APK
+    Signing Block, both parsed with the stdlib. Sources that
+    disagree are surfaced as a conflict, never resolved
+    silently."""
+    by_hash = {}
+    base = resolved.base
+    if base:
+        for m in scan.members:
+            if m["root"] != base:
+                continue
+            upper = m["name"].upper()
+            if upper.startswith("META-INF/") and upper.endswith(
+                    (".RSA", ".DSA", ".EC")):
+                data = scan.read(m, 16 * 1024 * 1024)
+                if not data:
+                    continue
+                for cert in _certs_from_pkcs7(data):
+                    info = _cert_info(
+                        cert, f"v1 signature file {m['name']}")
+                    if info:
+                        slot = by_hash.setdefault(
+                            info["sha256"],
+                            dict(info, sources=[]))
+                        slot["sources"].append(info["source"])
+        if os.path.isfile(base):
+            for cert, scheme in _certs_from_signing_block(base):
+                info = _cert_info(
+                    cert, f"APK Signing Block ({scheme})")
+                if info:
+                    slot = by_hash.setdefault(
+                        info["sha256"], dict(info, sources=[]))
+                    slot["sources"].append(info["source"])
+    certs = sorted(by_hash.values(), key=lambda c: c["sha256"])
+    for cert in certs:
+        cert["source"] = "; ".join(sorted(set(cert.pop(
+            "sources"))))
+    subjects = sorted({c["subject"] for c in certs})
+    out = {
+        "found": bool(certs),
+        "certificates": certs,
+        "subject": subjects[0] if len(subjects) == 1 else None,
+        "evidence": "signing certificate(s) shipped in the "
+                    "base APK: META-INF PKCS#7 (v1) and/or APK "
+                    "Signing Block (v2/v3), X.509 subject parsed "
+                    "with a stdlib DER reader; certificate "
+                    "SHA-256 over the exact DER bytes",
+    }
+    if len(subjects) > 1:
+        out["conflicting_subjects"] = subjects
+        out["conflict_note"] = (
+            "the shipped signing sources disagree on the "
+            "signer subject; every certificate is listed "
+            "above and no single signer is asserted")
+    if not certs:
+        out["reason"] = (
+            "no v1 signature file and no parseable APK "
+            "Signing Block certificate in the base APK")
+    return out
+
+
+def _arsc_lookup(data, res_id):
+    """Resolve one string resource id against a resources.arsc
+    blob: global string pool + package type chunks, default
+    configuration preferred. Returns the string or None."""
+    perms = _perms()
+    if len(data) < 12 or \
+            struct.unpack_from("<H", data, 0)[0] != 0x0002:
+        return None
+    header_size = struct.unpack_from("<H", data, 2)[0]
+    total = struct.unpack_from("<I", data, 4)[0]
+    pkg_id = (res_id >> 24) & 0xFF
+    type_idx = (res_id >> 16) & 0xFF
+    entry_idx = res_id & 0xFFFF
+    global_strings = None
+    packages = []
+    off = header_size
+    end = min(total, len(data))
+    while off + 8 <= end:
+        ctype, _chdr, csize = struct.unpack_from("<HHI", data, off)
+        if csize < 8:
+            break
+        if ctype == 0x0001 and global_strings is None:
+            try:
+                global_strings = perms._parse_string_pool(data, off)
+            except Exception:
+                global_strings = None
+        elif ctype == 0x0200:
+            packages.append(off)
+        off += csize
+    if global_strings is None:
+        return None
+    for poff in packages:
+        if struct.unpack_from("<I", data, poff + 8)[0] != pkg_id \
+                and len(packages) > 1:
+            continue
+        phdr = struct.unpack_from("<H", data, poff + 2)[0]
+        psize = struct.unpack_from("<I", data, poff + 4)[0]
+        type_off = struct.unpack_from("<I", data, poff + 268)[0]
+        type_id_offset = struct.unpack_from(
+            "<I", data, poff + 284)[0] if phdr >= 288 else 0
+        try:
+            type_names = perms._parse_string_pool(
+                data, poff + type_off)
+        except Exception:
+            continue
+        candidates = []
+        sub = poff + phdr
+        pend = min(poff + psize, len(data))
+        while sub + 8 <= pend:
+            ctype, chdr, csize = struct.unpack_from(
+                "<HHI", data, sub)
+            if csize < 8:
+                break
+            if ctype == 0x0201 and sub + 20 <= pend:
+                type_id = data[sub + 8] + type_id_offset
+                entry_count = struct.unpack_from(
+                    "<I", data, sub + 12)[0]
+                entries_start = struct.unpack_from(
+                    "<I", data, sub + 16)[0]
+                name_idx = data[sub + 8] - 1
+                if type_id == type_idx and entry_idx < entry_count \
+                        and 0 <= name_idx < len(type_names) \
+                        and type_names[name_idx] == "string":
+                    eoff = struct.unpack_from(
+                        "<I", data, sub + chdr + entry_idx * 4)[0]
+                    if eoff != 0xFFFFFFFF:
+                        epos = sub + entries_start + eoff
+                        esize, eflags = struct.unpack_from(
+                            "<HH", data, epos)
+                        if not eflags & 0x0001 and \
+                                epos + esize + 8 <= len(data):
+                            _vs, _r0, dtype, value = \
+                                struct.unpack_from(
+                                    "<HBBI", data, epos + esize)
+                            if dtype == 0x03 and \
+                                    value < len(global_strings):
+                                cfg_size = struct.unpack_from(
+                                    "<I", data, sub + 20)[0]
+                                cfg = data[sub + 20:
+                                           sub + 20 + cfg_size]
+                                is_default = all(
+                                    b == 0 for b in cfg[4:])
+                                candidates.append(
+                                    (is_default,
+                                     global_strings[value]))
+            sub += csize
+        if candidates:
+            candidates.sort(key=lambda c: not c[0])
+            return candidates[0][1]
+    return None
+
+
+def _arsc_string(scan, resolved, res_id):
+    member = None
+    for m in scan.members:
+        if m["root"] == resolved.base and \
+                m["name"] == "resources.arsc":
+            member = m
+            break
+    if member is None:
+        return None
+    data = scan.read(member, 64 * 1024 * 1024)
+    if not data:
+        return None
+    try:
+        return _arsc_lookup(data, res_id)
+    except Exception:
+        return None
+
+
+def _as_int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _identity_section(scan, resolved, perms_report, raw_root,
+                      names):
+    rep = perms_report or {}
+    app = rep.get("application") or {}
+    raw_attrs = raw_root.attrs if raw_root is not None else {}
+    label_raw = app.get("label")
+    label = None
+    label_source = None
+    if isinstance(label_raw, str) and label_raw:
+        if label_raw.startswith("@0x"):
+            try:
+                res_id = int(label_raw[1:], 16)
+            except ValueError:
+                res_id = None
+            resolved_label = _arsc_string(
+                scan, resolved, res_id) if res_id else None
+            if resolved_label is not None:
+                label = resolved_label
+                label_source = "resources.arsc string-table " \
+                    "resolution of the manifest label reference"
+            else:
+                label_source = "unresolved resource reference: " \
+                    "resources.arsc yielded no string for it"
+        else:
+            label = label_raw
+            label_source = "manifest android:label literal"
+    abis = sorted({
+        n.split("/")[1] for n in names
+        if n.startswith("lib/") and n.count("/") >= 2
+        and n.endswith(".so")})
+    return {
+        "package": rep.get("package"),
+        "app_label": label,
+        "app_label_raw": label_raw,
+        "app_label_source": label_source,
+        "version_name": rep.get("version_name"),
+        "version_code": _as_int(rep.get("version_code")),
+        "compile_sdk_version": _as_int(
+            raw_attrs.get("android:compileSdkVersion")),
+        "compile_sdk_codename": raw_attrs.get(
+            "android:compileSdkVersionCodename"),
+        "min_sdk": rep.get("min_sdk"),
+        "target_sdk": rep.get("target_sdk"),
+        "native_abis": abis,
+        "signer": _signer_section(scan, resolved),
+        "evidence": "manifest root + <application> attributes "
+                    "and <uses-sdk> via the nar-perms AXML parse "
+                    "of the base APK; native ABIs from the "
+                    "lib/<abi>/ member layout across the "
+                    "resolved roots; app label resolved from "
+                    "resources.arsc when the manifest carries "
+                    "a reference; signer from the shipped "
+                    "signing certificates",
+    }
+
+
+_BEHAVIOUR_KEYS = (
+    "debuggable", "allowBackup", "fullBackupContent",
+    "usesCleartextTraffic", "networkSecurityConfig",
+    "extractNativeLibs", "largeHeap", "hardwareAccelerated",
+    "requestLegacyExternalStorage", "isGame", "hasCode",
+    "supportsRtl", "dataExtractionRules", "backupAgent",
+    "appComponentFactory", "allowNativeHeapPointerTagging",
+)
+
+_INSTALL_LOCATIONS = {0: "internalOnly", 1: "preferExternal",
+                      2: "auto"}
+
+
+def _behaviour_section(raw_root, perms_report, names):
+    """Declared <application>-element behaviour, asserted
+    from the manifest parse itself: every tracked attribute
+    is reported declared-with-value or explicitly not
+    declared (a parse result, never a platform default)."""
+    app_el = raw_root.find_child("application") \
+        if raw_root is not None else None
+    raw = {}
+    if app_el is not None:
+        for key, value in app_el.attrs.items():
+            raw[key[len("android:"):]
+                if key.startswith("android:") else key] = value
+    tracked = {key: {"declared": key in raw,
+                     "value": raw.get(key)}
+               for key in _BEHAVIOUR_KEYS}
+    nsc_members = sorted(
+        n for n in names
+        if n.startswith("res/xml/")
+        and "network_security_config" in os.path.basename(n))
+    root_attrs = raw_root.attrs if raw_root is not None else {}
+    install_location = _as_int(
+        root_attrs.get("android:installLocation"))
+    gl_es = []
+    if raw_root is not None:
+        for el in raw_root.find_all("uses-feature"):
+            version = _as_int(el.attrs.get("android:glEsVersion"))
+            if version is not None:
+                gl_es.append(f"0x{version:x}")
+    return {
+        "application_class": (perms_report or {}).get(
+            "application", {}).get("name"),
+        "attributes": tracked,
+        "all_declared_attributes": raw,
+        "network_security_config_resource": {
+            "present": bool(nsc_members),
+            "members": nsc_members,
+            "evidence": "res/xml member census (bundled "
+                        "resource, independent of whether the "
+                        "application element references it)",
+        },
+        "install_location": install_location,
+        "install_location_name": _INSTALL_LOCATIONS.get(
+            install_location),
+        "gl_es_versions": gl_es,
+        "evidence": "AndroidManifest.xml <application> "
+                    "element attributes via the nar-perms AXML "
+                    "parse; 'declared: false' is the parse "
+                    "result (attribute absent from the "
+                    "element), not a platform default",
+    }
+
+
+_COMPONENT_KINDS = ("activity", "activity-alias", "service",
+                    "receiver", "provider")
+
+
+def _components_section(perms_report):
+    """Full manifest component census for app.json: every
+    component type with its count, its explicit
+    android:exported=true count, its effective exported
+    count (nar-perms defaulting rules) and its inventory —
+    the facts the sibling manifest companions already carry,
+    asserted on the app.json surface itself."""
+    rep = perms_report or {}
+    components = rep.get("components") or {}
+    per_type = {}
+    inventories = {}
+    totals = {"exported_explicit_true": 0,
+              "exported_effective": 0,
+              "exported_attribute_declared": 0}
+    truncated = False
+    for kind in _COMPONENT_KINDS:
+        comps = components.get(kind) or []
+        explicit_true = sum(
+            1 for c in comps
+            if c.get("exported_explicit") and c.get("exported"))
+        effective = sum(1 for c in comps if c.get("exported"))
+        explicit_attr = sum(
+            1 for c in comps if c.get("exported_explicit"))
+        per_type[kind] = {
+            "count": len(comps),
+            "exported_explicit_true": explicit_true,
+            "exported_effective": effective,
+            "exported_attribute_declared": explicit_attr,
+        }
+        totals["exported_explicit_true"] += explicit_true
+        totals["exported_effective"] += effective
+        totals["exported_attribute_declared"] += explicit_attr
+        if len(comps) > 1000:
+            truncated = True
+        inventories[kind] = [
+            {"name": c.get("name"),
+             "exported": c.get("exported"),
+             "exported_explicit": c.get("exported_explicit")}
+            for c in comps[:1000]]
+    counts = {kind: per_type[kind]["count"]
+              for kind in _COMPONENT_KINDS}
+    counts["total"] = sum(counts.values())
+    return {
+        "counts": counts,
+        "per_type": per_type,
+        "exported_explicit_true_total":
+            totals["exported_explicit_true"],
+        "exported_effective_total": totals["exported_effective"],
+        "exported_attribute_declared_total":
+            totals["exported_attribute_declared"],
+        "application_class": (rep.get("application") or {}).get(
+            "name"),
+        "launcher_activity": rep.get("launcher_activity"),
+        "inventories": inventories,
+        "inventories_truncated": truncated,
+        "evidence": "AndroidManifest.xml component census via "
+                    "the nar-perms AXML parse of the base "
+                    "manifest: counts are element counts; "
+                    "exported_explicit_true counts components "
+                    "whose android:exported attribute is "
+                    "present and true; exported_effective "
+                    "applies the manifest defaulting rules "
+                    "(intent-filter presence, provider SDK "
+                    "rule) exactly as nar-perms computes them",
+    }
+
+
+def _dex_activity_census(facts, package, launcher=None):
+    """DEX type-descriptor census of *Activity classes, the
+    second screen-census basis: reported alongside the
+    manifest activity inventory, never substituted for it.
+    The census counts type descriptors (defined and
+    referenced types alike — the classes.txt-style census),
+    and the app-package subset is taken under the manifest
+    package and under the launcher activity's package,
+    which differ when the applicationId carries a suffix
+    the code root does not."""
+    named = set()
+    for desc in facts.type_refs:
+        if not desc:
+            continue
+        simple = _simple(desc)
+        leaf = simple.rsplit(".", 1)[-1]
+        if leaf.endswith("Activity"):
+            named.add(simple)
+    distinct = sorted(named)
+    roots = set()
+    if package:
+        roots.add(package)
+    if launcher and "." in launcher:
+        roots.add(launcher.rsplit(".", 1)[0])
+    app_named = [n for n in distinct
+                 if any(n.startswith(root + ".")
+                        for root in roots)]
+    app_top = [n for n in app_named if "$" not in n]
+    return {
+        "basis": "DEX type-descriptor census",
+        "activity_named_class_count": len(distinct),
+        "app_package_activity_named_class_count": len(app_named),
+        "app_package_top_level_activity_count": len(app_top),
+        "app_package_top_level_activities": app_top[:200],
+        "app_package_roots": sorted(roots),
+        "activity_named_class_sample": distinct[:SAMPLE],
+        "evidence": "DEX type-descriptor census (narlib.dex "
+                    "type lists, defined and referenced types "
+                    "unioned): types whose simple class name "
+                    "ends with 'Activity', counted distinctly; "
+                    "the app-package subset is those under "
+                    "the manifest package or the launcher "
+                    "activity's package, and top-level "
+                    "excludes inner classes (names containing "
+                    "'$'). This census complements the "
+                    "manifest activity inventory in the "
+                    "navigation section; the two bases count "
+                    "different things and are both reported",
+    }
 
 
 def _foreground_service_types(root):
@@ -743,7 +1475,8 @@ def _library_versions(scan):
     return dict(sorted(versions.items()))
 
 
-def _sdk_inventory(facts, library_versions):
+def _sdk_inventory(facts, library_versions, native_libs=(),
+                   member_names=()):
     out = []
     class_descs = [d for d, _s in facts.classes if d]
     for fid, label, prefixes, version_keys in SDK_FAMILIES:
@@ -751,7 +1484,16 @@ def _sdk_inventory(facts, library_versions):
                     if any(d.startswith(p) for p in prefixes))
         type_count = sum(1 for t in facts.type_refs
                          if any(t.startswith(p) for p in prefixes))
-        if not count and not type_count:
+        native_hits = sorted({
+            lib for lib in native_libs
+            if any(p in lib.lower()
+                   for p in SDK_NATIVE_LIBS.get(fid, ()))})
+        member_hits = sorted({
+            n for n in member_names
+            if any(p in n
+                   for p in SDK_MEMBER_MARKERS.get(fid, ()))})
+        if not count and not type_count and not native_hits \
+                and not member_hits:
             continue
         version = None
         version_evidence = None
@@ -760,18 +1502,32 @@ def _sdk_inventory(facts, library_versions):
                 version = ver
                 version_evidence = f"META-INF/{key}.version"
                 break
+        evidence = f"DEX class census: {count} defined " \
+                   f"class(es) under {prefixes[0]}"
+        if not count and type_count:
+            evidence += f"; {type_count} referenced type(s) " \
+                        "and no defined classes (referenced-" \
+                        "only census hit: the SDK's API types " \
+                        "are referenced by bundled code)"
+        if native_hits:
+            evidence += "; native library evidence: " + \
+                ", ".join(native_hits)
+        if member_hits:
+            evidence += "; shipped member evidence: " + \
+                member_hits[0]
+        evidence += (f"; version from {version_evidence}"
+                     if version_evidence else
+                     "; no shipped .version evidence — "
+                     "version not claimed")
         out.append({
             "id": fid, "name": label,
             "defined_class_count": count,
             "referenced_type_count": type_count,
+            "native_libraries": native_hits,
+            "member_evidence": member_hits[:SAMPLE],
             "version": version,
             "version_evidence": version_evidence,
-            "evidence": f"DEX class census: {count} defined "
-                        f"class(es) under {prefixes[0]}"
-                        + (f"; version from {version_evidence}"
-                           if version_evidence else
-                           "; no shipped .version evidence — "
-                           "version not claimed"),
+            "evidence": evidence,
         })
     out.sort(key=lambda s: -s["defined_class_count"])
     return out
@@ -869,6 +1625,7 @@ def _report(target, container_block, _unused, limitations):
         "verdict": "absent",
         "container": container_block,
         "package": None,
+        "identity": {}, "behaviour": {}, "components": {},
         "ui_frameworks": {}, "navigation": {},
         "storage": {}, "encrypted_storage": {}, "auth": {},
         "background_work": {}, "permissions_in_use": {},
@@ -899,6 +1656,11 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
         limitations.append("DEX pass: " + err)
 
     package = (perms_report or {}).get("package")
+    identity = _identity_section(scan, resolved, perms_report,
+                                 raw_root, names)
+    behaviour = _behaviour_section(raw_root, perms_report,
+                                   names)
+    components_section = _components_section(perms_report)
     components = (perms_report or {}).get("components") or {}
     activities = components.get("activity") or []
     launcher = (perms_report or {}).get("launcher_activity")
@@ -1008,6 +1770,8 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
              "intent_filter_count": a.get("intent_filter_count")}
             for a in activities[:200]],
         "dex_activity_class_count": len(facts.activity_classes),
+        "dex_activity_census": _dex_activity_census(
+            facts, package, launcher),
         "fragment_class_count": len(facts.fragment_classes),
         "fragment_sample": [_simple(x) for x in
                             facts.fragment_classes[:SAMPLE]],
@@ -1020,6 +1784,29 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
     }
 
     # ---- Storage -------------------------------------------
+    native_libs = sorted({os.path.basename(n) for n in names
+                          if n.endswith(".so")})
+    # Library-level Room signal: defined classes under
+    # androidx/room. The lone MultiInstanceInvalidationService
+    # class is a manifest-service artifact that also appears
+    # in targets with no Room library, so presence requires
+    # at least one further Room class.
+    room_classes = sorted({
+        d for d, _s in facts.classes
+        if d and d.startswith("Landroidx/room/")})
+    room_beyond_service = [
+        d for d in room_classes
+        if "MultiInstanceInvalidationService" not in d]
+    # MMKV signal: defined classes in any */mmkv/ package
+    # (the canonical package and vendor forks alike) and/or
+    # an mmkv-named native library.
+    mmkv_classes = sorted({
+        d for d, _s in facts.classes
+        if d and "/mmkv/" in d.lower()})
+    mmkv_libs = [lib for lib in native_libs
+                 if "mmkv" in lib.lower()]
+    datastore_libs = [lib for lib in native_libs
+                      if "datastore" in lib.lower()]
     asset_members = [m for m in scan.members
                      if m["name"].startswith("assets/")]
     asset_dirs = {}
@@ -1051,6 +1838,23 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
             "sqlite_open_helper_classes":
                 [_simple(x) for x in facts.sqlite_helpers[:SAMPLE]],
             "shipped_databases": databases,
+            "room_library": {
+                "present": bool(room_beyond_service),
+                "defined_class_count": len(room_classes),
+                "defined_class_count_excluding_service":
+                    len(room_beyond_service),
+                "sample": [_simple(x) for x in
+                           room_classes[:SAMPLE]],
+                "evidence": "DEX defined-class census under "
+                            "androidx/room (library-level "
+                            "presence, independent of any "
+                            "RoomDatabase subclass): presence "
+                            "requires a class beyond "
+                            "MultiInstanceInvalidationService, "
+                            "which is a manifest-service "
+                            "artifact that also ships in "
+                            "targets with no Room library",
+            },
             "evidence": "DEX superclass census + narlib.sqlite "
                         "sqlite_master walk of shipped .db/"
                         ".sqlite members",
@@ -1058,8 +1862,20 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
         "datastore": {
             "present": facts.api_refs.get("datastore", 0) > 0,
             "type_refs": facts.api_refs.get("datastore", 0),
+            "native_libraries": datastore_libs,
             "evidence": "DEX type references under "
                         "androidx/datastore/",
+        },
+        "mmkv": {
+            "present": bool(mmkv_classes or mmkv_libs),
+            "dex_class_count": len(mmkv_classes),
+            "dex_class_sample": [_simple(x) for x in
+                                 mmkv_classes[:SAMPLE]],
+            "native_libraries": mmkv_libs,
+            "evidence": "DEX defined classes in a */mmkv/ "
+                        "package (canonical or vendor-fork "
+                        "package) and/or an mmkv-named native "
+                        "library in the native inventory",
         },
         "files_cache_assets": {
             "asset_file_count": len(asset_members),
@@ -1071,8 +1887,6 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
     }
 
     # ---- Encrypted storage ---------------------------------
-    native_libs = sorted({os.path.basename(n) for n in names
-                          if n.endswith(".so")})
     sqlcipher_lib = any("sqlcipher" in lib.lower()
                         for lib in native_libs)
     sqlcipher_dex = facts.api_refs.get("sqlcipher", 0) > 0 or \
@@ -1113,6 +1927,8 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
         token_locations.append("EncryptedSharedPreferences")
     if storage["datastore"]["present"]:
         token_locations.append("DataStore")
+    if storage["mmkv"]["present"]:
+        token_locations.append("MMKV")
     if facts.room_databases or facts.sqlite_helpers or databases:
         token_locations.append("SQLite / Room database")
     if encrypted["android_keystore"]["present"]:
@@ -1212,7 +2028,8 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
     }
 
     # ---- SDKs + compliance ----------------------------------
-    sdks = _sdk_inventory(facts, library_versions)
+    sdks = _sdk_inventory(facts, library_versions, native_libs,
+                          names)
     tracker_hosts = []
     for host, count in sorted(facts.urls.items(),
                               key=lambda kv: -kv[1]):
@@ -1320,6 +2137,9 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
         "verdict": verdict,
         "container": resolved.container_block(),
         "package": package,
+        "identity": identity,
+        "behaviour": behaviour,
+        "components": components_section,
         "ui_frameworks": ui,
         "navigation": navigation,
         "storage": storage,
@@ -1336,6 +2156,14 @@ def _build_doc(target, resolved, scan, perms_report, raw_root,
             "dex_files": len(facts.dex_files),
             "dex_classes": facts.class_count,
             "activities": len(activities),
+            "services": components_section["counts"]["service"],
+            "receivers":
+                components_section["counts"]["receiver"],
+            "providers":
+                components_section["counts"]["provider"],
+            "exported_components_explicit":
+                components_section[
+                    "exported_explicit_true_total"],
             "fragments": len(facts.fragment_classes),
             "composable_methods": compose_count,
             "layouts": len(layouts),
@@ -1365,6 +2193,42 @@ def human(report):
                  f"{totals.get('layouts', 0)} layouts, "
                  f"{totals.get('composable_methods', 0)} "
                  "@Composable methods")
+    identity = report.get("identity") or {}
+    if identity:
+        signer = (identity.get("signer") or {}).get("subject")
+        lines.append(
+            f"Identity: {identity.get('package')} "
+            f"{identity.get('version_name')} "
+            f"(code {identity.get('version_code')}), label "
+            f"{identity.get('app_label')!r}, SDK min "
+            f"{identity.get('min_sdk')} / target "
+            f"{identity.get('target_sdk')} / compile "
+            f"{identity.get('compile_sdk_version')}, ABIs "
+            f"{', '.join(identity.get('native_abis') or [])}, "
+            f"signer {signer}")
+    behaviour = report.get("behaviour") or {}
+    if behaviour:
+        attrs = behaviour.get("attributes") or {}
+        shown = []
+        for key in ("debuggable", "allowBackup",
+                    "usesCleartextTraffic",
+                    "networkSecurityConfig"):
+            entry = attrs.get(key) or {}
+            shown.append(
+                f"{key}={entry.get('value')}"
+                if entry.get("declared")
+                else f"{key}=not declared")
+        lines.append("Behaviour: " + ", ".join(shown))
+    comp_section = report.get("components") or {}
+    if comp_section:
+        counts = comp_section.get("counts") or {}
+        lines.append(
+            f"Components: {counts.get('activity', 0)} "
+            f"activities, {counts.get('service', 0)} services, "
+            f"{counts.get('receiver', 0)} receivers, "
+            f"{counts.get('provider', 0)} providers; "
+            f"{comp_section.get('exported_explicit_true_total', 0)} "
+            f"exported (explicit)")
     nav = report.get("navigation") or {}
     lines.append(f"Navigation: launcher "
                  f"{nav.get('launcher_activity')}; "

@@ -16,6 +16,9 @@
     "weak_prefixes": [],
     "weak_substrings": []
    },
+   "jni_bridge_prefixes": [
+    "Java_com_unity3d_coherence_"
+   ],
    "paths": [
     "libil2cpp.so",
     "global-metadata.dat"
@@ -1413,7 +1416,8 @@
   },
   "properties": {
    "ext": [
-    ".properties"
+    ".properties",
+    ".prop"
    ],
    "category": "config",
    "parser": "nar-assets",
@@ -2026,6 +2030,66 @@
    "reason": "Text YAML references packed sprites by GUID only: nar-atlas recovers the atlas name and packed-sprite count; frame names and rects are not recoverable from the .spriteatlas file alone.",
    "probe": "Add a UnityPy rung to resolve the packed sprites inside the project's serialized data.",
    "test_ref": "tests/unit/test_atlas.py::UnitySpriteAtlasTest"
+  },
+  "svg-image": {
+   "ext": [
+    ".svg"
+   ],
+   "category": "texture",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_phase2_assets.py::test_svg_detection"
+  },
+  "bitmap-font": {
+   "ext": [
+    ".fnt"
+   ],
+   "category": "font",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_phase2_assets.py::test_bitmap_font_detection"
+  },
+  "woff-font": {
+   "ext": [
+    ".woff"
+   ],
+   "category": "font",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_phase2_assets.py::test_woff_magics"
+  },
+  "woff2-font": {
+   "ext": [
+    ".woff2"
+   ],
+   "category": "font",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_phase2_assets.py::test_woff_magics"
+  },
+  "python": {
+   "ext": [
+    ".py"
+   ],
+   "category": "code",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_phase2_assets.py::test_python_source_extension"
+  },
+  "gzip-archive": {
+   "ext": [
+    ".gz"
+   ],
+   "category": "container",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_phase2_assets.py::test_gzip_magic_and_extension"
   }
  },
  "script_formats": {

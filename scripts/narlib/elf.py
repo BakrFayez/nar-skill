@@ -502,9 +502,15 @@ class Elf:
             and min(aligns) >= 0x4000,
             "imports": imports,
             "exports": exports,
+            # jni_exports is the Java_* export list ONLY
+            # (M2-13): JNI_OnLoad is a bridge marker, not a
+            # Java_* export, and counting it here inflated
+            # every JNI-export count by one against a plain
+            # Java_* census. JNI_OnLoad remains visible in
+            # the full "exports" list above, which is where
+            # bridge classification reads it from.
             "jni_exports": [s for s in exports
-                            if s.startswith("Java_")
-                            or s == "JNI_OnLoad"],
+                            if s.startswith("Java_")],
             "register_natives_hint": any(
                 s["name"] == "RegisterNatives" for s in dynsyms),
             "section_names": section_names,

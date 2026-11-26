@@ -48,7 +48,7 @@ MAX_MEMBER_BYTES = 32 * 1024 * 1024
 SYSTEMS = ("spine", "dragonbones", "lottie", "rive",
            "aseprite", "unity-animator",
            "godot-animationplayer", "spriter", "creature",
-           "cocos-ccb")
+           "cocos-ccb", "gif", "pag", "android-view")
 
 
 def _record(system, name, source_split, status, facts,
@@ -1001,6 +1001,30 @@ def parse_unity_yaml(text, name, source_split=None):
                    "decoded", facts)
 
 
+def _is_unity_data_member(low):
+    """True for members that can carry Unity serialized
+    data: bundle/.assets files anywhere, split parts of an
+    .assets file, and the classic serialized-data tree
+    under a bin/Data directory (extensionless hash-named
+    files, level files, shared-assets files and their split
+    parts). Raw .resource payloads (media bytes referenced
+    by serialized files, not serialized data themselves)
+    and the IL2CPP metadata subtree (engine type tables,
+    present whether or not the game ships animation) are
+    excluded."""
+    base = low.rsplit("/", 1)[-1]
+    if "/managed/" in low or base == "global-metadata.dat":
+        return False
+    if low.endswith((".bundle", ".unity3d", ".assets")):
+        return True
+    if re.search(r"\.assets\.split\d+$", low):
+        return True
+    if "/bin/data/" in low \
+            and not low.endswith(".resource"):
+        return True
+    return False
+
+
 def parse_unity_bundle_member(data, name, source_split=None):
     """Identification only for clips/controllers embedded
     in a Unity bundle/.assets member: bounded content scan
@@ -1089,6 +1113,413 @@ def parse_csb(data, name, source_split=None):
 
 
 # ------------------------------------------------------------------
+# 10. GIF (.gif image sequence)
+# ------------------------------------------------------------------
+_GIF_MAGICS = (b"GIF87a", b"GIF89a")
+
+
+def _gif_skip_sub_blocks(data, pos):
+    """Offset just past a GIF data sub-block series (a run
+    of length-prefixed blocks ended by a zero length), or
+    None when the series runs past the end of the data."""
+    while True:
+        if pos >= len(data):
+            return None
+        size = data[pos]
+        pos += 1
+        if size == 0:
+            return pos
+        pos += size
+        if pos > len(data):
+            return None
+
+
+def parse_gif(data, name, source_split=None):
+    """GIF structural parse: the 6-byte version magic, the
+    logical-screen width/height, then a block walk counting
+    image descriptors (frames) and graphic-control
+    extensions (with their delay values), plus the
+    NETSCAPE2.0 looping extension when present. A member
+    whose walk does not reach the trailer byte degrades to
+    identified_only with the header facts only — a frame
+    count is never claimed from a partial walk."""
+    probe = ("Repair or re-export the GIF; only a block "
+             "walk that reaches the trailer byte supports "
+             "a frame count.")
+    if len(data) < 13 or data[:6] not in _GIF_MAGICS:
+        return _identified(
+            "gif", name, source_split, {},
+            "member carries a .gif name but no GIF87a/"
+            "GIF89a magic at its start; identified by "
+            "extension only", probe)
+    version = data[:6].decode("ascii")
+    width, height = struct.unpack_from("<HH", data, 6)
+    header = {"version": version, "width": width,
+              "height": height}
+    pos = 13
+    packed = data[10]
+    if packed & 0x80:
+        pos += 3 * (2 ** ((packed & 0x07) + 1))
+    frames = 0
+    delays = []
+    loop_count = None
+    problem = None
+    while problem is None:
+        if pos >= len(data):
+            problem = "data ends before the trailer byte"
+            break
+        marker = data[pos]
+        if marker == 0x3B:  # trailer
+            break
+        if marker == 0x21:  # extension block
+            if pos + 2 > len(data):
+                problem = "truncated extension header"
+                break
+            label = data[pos + 1]
+            end = _gif_skip_sub_blocks(data, pos + 2)
+            if end is None:
+                problem = "extension sub-blocks run past " \
+                          "the end of the data"
+                break
+            if label == 0xF9:  # graphic control extension
+                # One sub-block: packed, delay u16 (in
+                # centiseconds), transparent-colour index.
+                if pos + 5 <= len(data) \
+                        and data[pos + 2] == 4:
+                    delay, = struct.unpack_from(
+                        "<H", data, pos + 4)
+                    delays.append(delay)
+            elif label == 0xFF:  # application extension
+                # First sub-block is the 11-byte application
+                # identifier; NETSCAPE2.0 carries the loop
+                # count in a following 3-byte sub-block
+                # (sub-block id 1, then a u16 count).
+                if data[pos + 3:pos + 14] == b"NETSCAPE2.0" \
+                        and pos + 18 <= len(data) \
+                        and data[pos + 14] == 3 \
+                        and data[pos + 15] == 1:
+                    loop_count, = struct.unpack_from(
+                        "<H", data, pos + 16)
+            pos = end
+            continue
+        if marker == 0x2C:  # image descriptor
+            if pos + 10 > len(data):
+                problem = "truncated image descriptor"
+                break
+            ipacked = data[pos + 9]
+            pos += 10
+            if ipacked & 0x80:  # local colour table
+                pos += 3 * (2 ** ((ipacked & 0x07) + 1))
+            if pos >= len(data):
+                problem = "image data runs past the end " \
+                          "of the data"
+                break
+            pos += 1  # LZW minimum code size byte
+            end = _gif_skip_sub_blocks(data, pos)
+            if end is None:
+                problem = "image sub-blocks run past " \
+                          "the end of the data"
+                break
+            frames += 1
+            pos = end
+            continue
+        problem = f"unknown block byte {marker:#04x} at " \
+                  f"offset {pos}"
+    if problem is not None:
+        return _identified(
+            "gif", name, source_split, header,
+            f"GIF block walk failed ({problem}); header "
+            f"facts only, no frame count claimed", probe)
+    facts = dict(header)
+    facts.update({
+        "frame_count": frames,
+        "animated": frames > 1,
+        "frame_delays_cs": delays[:16],
+        "frame_delays_truncated": len(delays) > 16,
+        "loop_count": loop_count,
+    })
+    return _record("gif", name, source_split, "decoded",
+                   facts)
+
+
+# ------------------------------------------------------------------
+# 11. PAG (.pag binary)
+# ------------------------------------------------------------------
+def parse_pag(data, name, source_split=None):
+    """Identification only for PAG animation files: the
+    format is a proprietary binary container and this rung
+    does not decode its tag stream, so the record carries
+    size and first-bytes facts only. Identification rests
+    on the .pag extension itself — a library or version
+    file whose name merely contains the substring is not
+    a PAG animation file and never reaches this parser."""
+    return _identified(
+        "pag", name, source_split,
+        {"size_bytes": len(data),
+         "first_bytes_hex": data[:16].hex()},
+        "PAG is a proprietary binary animation format; "
+        "container decode is not implemented, identification "
+        "and first-bytes facts only",
+        "Add a PAG container reader (tag-stream walk) "
+        "with a labeled fixture.")
+
+
+# ------------------------------------------------------------------
+# 12. Android view animation (res/anim, res/animator XML)
+# ------------------------------------------------------------------
+_ANIM_ROOTS = frozenset((
+    "set", "alpha", "scale", "translate", "rotate", "clip",
+    "objectAnimator", "animator", "layoutAnimation",
+    "gridLayoutAnimation"))
+_INTERPOLATOR_ROOTS = frozenset((
+    "accelerateDecelerateInterpolator",
+    "accelerateInterpolator", "anticipateInterpolator",
+    "anticipateOvershootInterpolator", "bounceInterpolator",
+    "cycleInterpolator", "decelerateInterpolator",
+    "linearInterpolator", "overshootInterpolator",
+    "pathInterpolator"))
+_ANIM_DIR_RE = re.compile(
+    r"(?:^|/)res/(anim|animator)(?:-[^/]*)?/")
+
+_ANDROID_NS = "http://schemas.android.com/apk/res/android"
+
+
+def _anim_resource_kind(name):
+    """'anim' / 'animator' when the member sits in a view-
+    animation resource directory (res/anim, res/animator,
+    with any qualifier suffix), else None."""
+    m = _ANIM_DIR_RE.search(name.lower())
+    return m.group(1) if m else None
+
+
+def _axml_read_len8(data, pos):
+    b0 = data[pos]
+    if b0 & 0x80:
+        return ((b0 & 0x7F) << 8) | data[pos + 1], pos + 2
+    return b0, pos + 1
+
+
+def _axml_read_len16(data, pos):
+    v = struct.unpack_from("<H", data, pos)[0]
+    if v & 0x8000:
+        v2 = struct.unpack_from("<H", data, pos + 2)[0]
+        return ((v & 0x7FFF) << 16) | v2, pos + 4
+    return v, pos + 2
+
+
+def _axml_string_pool(data, chunk_off):
+    """String list of one AXML string-pool chunk (the same
+    layout nar-perms' manifest reader walks)."""
+    header_size = struct.unpack_from(
+        "<H", data, chunk_off + 2)[0]
+    string_count, _styles, flags, strings_start, _ss = \
+        struct.unpack_from("<IIIII", data, chunk_off + 8)
+    utf8 = bool(flags & 0x100)
+    offsets_base = chunk_off + header_size
+    strings_base = chunk_off + strings_start
+    strings = []
+    for i in range(string_count):
+        off = struct.unpack_from(
+            "<I", data, offsets_base + i * 4)[0]
+        pos = strings_base + off
+        if utf8:
+            _chars, pos = _axml_read_len8(data, pos)
+            byte_len, pos = _axml_read_len8(data, pos)
+            strings.append(data[pos:pos + byte_len].decode(
+                "utf-8", "replace"))
+        else:
+            char_len, pos = _axml_read_len16(data, pos)
+            strings.append(
+                data[pos:pos + char_len * 2].decode(
+                    "utf-16-le", "replace"))
+    return strings
+
+
+def _axml_attr_value(strings, raw_value, data_type, data):
+    if raw_value != 0xFFFFFFFF:
+        return strings[raw_value] \
+            if raw_value < len(strings) else None
+    if data_type == 0x03:  # TYPE_STRING
+        return strings[data] if data < len(strings) else None
+    if data_type == 0x12:  # TYPE_INT_BOOLEAN
+        return bool(data)
+    if data_type == 0x10:  # TYPE_INT_DEC
+        return data if data < 0x80000000 \
+            else data - 0x100000000
+    if data_type == 0x01:  # TYPE_REFERENCE
+        return f"@0x{data:08x}"
+    if data_type == 0x02:  # TYPE_ATTRIBUTE
+        return f"?0x{data:08x}"
+    return f"0x{data:08x}"
+
+
+def _parse_axml_tree(data):
+    """Binary-XML (AXML) bytes -> a node tree of
+    {tag, attrs, children} dicts, or None when the bytes
+    are not a well-formed AXML document. The walk mirrors
+    nar-perms' manifest reader (string pool plus
+    start/end-element chunks); only element structure and
+    attributes are kept."""
+    if len(data) < 8 or struct.unpack_from(
+            "<I", data, 0)[0] != 0x00080003:
+        return None
+    strings = []
+    root = None
+    stack = []
+    off = 8
+    try:
+        while off + 8 <= len(data):
+            chunk_type, _hs, chunk_size = struct.unpack_from(
+                "<HHI", data, off)
+            if chunk_size < 8 or off + chunk_size > len(data):
+                return None
+            if chunk_type == 0x0001:  # string pool
+                strings = _axml_string_pool(data, off)
+            elif chunk_type == 0x0102:  # start element
+                _ns, name_idx = struct.unpack_from(
+                    "<II", data, off + 16)
+                attr_start, attr_size, attr_count = \
+                    struct.unpack_from("<HHH", data, off + 24)
+                tag = strings[name_idx] \
+                    if name_idx < len(strings) else ""
+                node = {"tag": tag, "attrs": {},
+                        "children": []}
+                for i in range(attr_count):
+                    a_off = off + 16 + attr_start \
+                        + i * attr_size
+                    a_ns, a_name, a_raw, _sz, _z, a_type, \
+                        a_data = struct.unpack_from(
+                            "<IIIHBBI", data, a_off)
+                    key = strings[a_name] \
+                        if a_name < len(strings) else ""
+                    if a_ns != 0xFFFFFFFF \
+                            and a_ns < len(strings) \
+                            and strings[a_ns] == _ANDROID_NS:
+                        key = "android:" + key
+                    node["attrs"][key] = _axml_attr_value(
+                        strings, a_raw, a_type, a_data)
+                if stack:
+                    stack[-1]["children"].append(node)
+                elif root is None:
+                    root = node
+                stack.append(node)
+            elif chunk_type == 0x0103:  # end element
+                if stack:
+                    stack.pop()
+            off += chunk_size
+    except (struct.error, IndexError):
+        return None
+    return root
+
+
+def _et_node(elem):
+    tag = elem.tag.rsplit("}", 1)[-1] \
+        if isinstance(elem.tag, str) else ""
+    attrs = {}
+    for key, val in elem.attrib.items():
+        attrs[key.rsplit("}", 1)[-1]] = val
+        attrs[key] = val
+    return {"tag": tag, "attrs": attrs,
+            "children": [_et_node(c) for c in elem]}
+
+
+def _parse_text_xml_tree(data):
+    try:
+        root = ET.fromstring(data.decode("utf-8", "replace"))
+    except ET.ParseError:
+        return None
+    return _et_node(root)
+
+
+def _android_view_facts(root, kind):
+    kinds = {}
+    durations = set()
+    interpolators = set()
+    properties = set()
+    count = 0
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        count += 1
+        kinds[node["tag"]] = kinds.get(node["tag"], 0) + 1
+        attrs = node["attrs"]
+        for key in ("android:duration", "duration"):
+            val = attrs.get(key)
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, int):
+                durations.add(val)
+            elif isinstance(val, str) and val.isdigit():
+                durations.add(int(val))
+        for key in ("android:interpolator", "interpolator"):
+            val = attrs.get(key)
+            if isinstance(val, str) and val:
+                interpolators.add(val)
+        for key in ("android:propertyName", "propertyName"):
+            val = attrs.get(key)
+            if isinstance(val, str) and val:
+                properties.add(val)
+        stack.extend(node["children"])
+    return {
+        "root": root["tag"],
+        "resource_kind": kind,
+        "element_count": count,
+        "element_kinds": {k: kinds[k] for k in sorted(kinds)},
+        "durations_ms": sorted(durations)[:16],
+        "interpolators": sorted(interpolators)[:8],
+        "property_names": sorted(properties)[:8],
+    }
+
+
+def parse_android_view(data, name, source_split=None):
+    """Android view/property animation resource decode.
+
+    The member must sit in a res/anim or res/animator
+    directory (any qualifier variant) — or be a loose file,
+    where content alone decides — and its XML root must be
+    an animation element (set / alpha / scale / translate /
+    rotate / clip / objectAnimator / animator /
+    layoutAnimation, an interpolator element, or a selector
+    holding animator children). Binary AXML is walked with
+    the built-in reader; plain-text XML is parsed as XML.
+    A directory-matched member whose bytes parse as
+    neither degrades to identified_only; anything else is
+    not a view-animation record at all."""
+    kind = _anim_resource_kind(name) or "loose"
+    root = None
+    if data[:4] == b"\x03\x00\x08\x00":
+        root = _parse_axml_tree(data)
+    elif data.lstrip()[:1] == b"<":
+        root = _parse_text_xml_tree(data)
+    if root is None:
+        if kind != "loose":
+            return _identified(
+                "android-view", name, source_split, {},
+                "member sits in a view-animation resource "
+                "directory but its XML does not parse as "
+                "binary or text XML; identified by "
+                "directory only",
+                "Dump the resource with aapt2 to inspect "
+                "the compiled XML.")
+        return None
+    tag = root["tag"]
+    is_animation = tag in _ANIM_ROOTS \
+        or tag in _INTERPOLATOR_ROOTS
+    if not is_animation and tag == "selector":
+        stack = list(root["children"])
+        while stack and not is_animation:
+            node = stack.pop()
+            if node["tag"] in ("objectAnimator", "animator"):
+                is_animation = True
+            stack.extend(node["children"])
+    if not is_animation:
+        return None
+    facts = _android_view_facts(root, kind)
+    return _record("android-view", name, source_split,
+                   "decoded", facts)
+
+
+# ------------------------------------------------------------------
 # Dispatch: one member -> one record (or None)
 # ------------------------------------------------------------------
 _EXT_SYSTEM_GUESS = {
@@ -1099,6 +1530,7 @@ _EXT_SYSTEM_GUESS = {
     ".controller": "unity-animator",
     ".overridecontroller": "unity-animator",
     ".ccb": "cocos-ccb", ".csb": "cocos-ccb",
+    ".gif": "gif", ".pag": "pag",
 }
 
 
@@ -1158,7 +1590,6 @@ def classify_and_parse(name, data, source_split=None):
     fail their structure guards degrade to identified_only
     records (never garbage counts)."""
     low = name.lower()
-    base = low.rsplit("/", 1)[-1]
     try:
         if low.endswith(".json"):
             return _parse_json_member(data, name, source_split)
@@ -1183,14 +1614,21 @@ def classify_and_parse(name, data, source_split=None):
             return parse_ccb(data, name, source_split)
         if low.endswith(".csb"):
             return parse_csb(data, name, source_split)
-        if low.endswith((".bundle", ".unity3d", ".assets")) \
-                or base == "sharedassets0.assets":
+        if low.endswith(".gif"):
+            return parse_gif(data, name, source_split)
+        if low.endswith(".pag"):
+            return parse_pag(data, name, source_split)
+        if low.endswith(".xml"):
+            return parse_android_view(data, name,
+                                      source_split)
+        if _is_unity_data_member(low):
             return parse_unity_bundle_member(data, name,
                                              source_split)
     except Exception as exc:  # per-file degradation, by design
         system = _EXT_SYSTEM_GUESS.get(
             os.path.splitext(low)[1], "unknown")
-        if system == "unknown" and low.endswith(".json"):
+        if system == "unknown" and low.endswith(
+                (".json", ".xml")):
             return None
         return _identified(
             system, name, source_split, {},
@@ -1204,11 +1642,20 @@ def classify_and_parse(name, data, source_split=None):
 
 def is_candidate(name):
     low = name.lower()
+    if low.endswith(".xml"):
+        # XML members are read only when they can be view-
+        # animation resources: inside a res/anim or
+        # res/animator directory, or a loose file whose
+        # content decides.
+        return _anim_resource_kind(name) is not None \
+            or "/" not in name
+    if _is_unity_data_member(low):
+        return True
     return low.endswith((
         ".json", ".skel", ".riv", ".ase", ".aseprite",
         ".tscn", ".tres", ".scml", ".anim", ".controller",
-        ".overridecontroller", ".ccb", ".csb", ".bundle",
-        ".unity3d", ".assets"))
+        ".overridecontroller", ".ccb", ".csb",
+        ".gif", ".pag"))
 
 
 # ------------------------------------------------------------------

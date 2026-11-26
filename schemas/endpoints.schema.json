@@ -35,6 +35,9 @@
      },
      "redacted": {
       "type": "boolean"
+     },
+     "transport": {
+      "type": "string"
      }
     },
     "required": [
@@ -77,6 +80,15 @@
    "required": [
     "endpoint_values_redacted"
    ]
+  },
+  "kind_hosts": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    }
+   }
   }
  },
  "required": [

@@ -171,9 +171,20 @@ def project_api_architecture(endpoints_doc, version):
         return doc
     by_host = {}
     kinds = {}
+    websockets = 0
     for e in endpoints_doc.get("endpoints") or []:
         kind = e.get("kind") or "web"
         kinds[kind] = kinds.get(kind, 0) + 1
+        # Phase 2 fix round (M2-03): the endpoint "kind" is
+        # now the purpose kind; the transport moved to its
+        # own field. Count websockets from the transport /
+        # URL scheme, falling back to the legacy kind value
+        # for documents written before the change.
+        if e.get("transport") == "websocket" or \
+                (e.get("url") or "").startswith(
+                    ("ws://", "wss://")) or \
+                kind == "websocket":
+            websockets += 1
         host = e.get("host")
         if not host:
             continue
@@ -196,6 +207,6 @@ def project_api_architecture(endpoints_doc, version):
     doc["host_profiles"] = [by_host[h] for h in sorted(by_host)]
     doc["api_hosts"] = endpoints_doc.get("api_hosts") or []
     doc["endpoint_kinds"] = kinds
-    doc["websocket_endpoint_count"] = kinds.get("websocket", 0)
+    doc["websocket_endpoint_count"] = websockets
     doc["services"] = endpoints_doc.get("services") or []
     return doc

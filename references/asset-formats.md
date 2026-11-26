@@ -328,7 +328,7 @@ python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
 
 ## properties
 
-Extensions: `.properties` · Category: config · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+Extensions: `.properties, .prop` · Category: config · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
 
 ```bash
 python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
@@ -1051,3 +1051,75 @@ python3 scripts/nar-atlas.py <synthetic-atlas-fixture.apk>
 Extensions: `.spriteatlas` · Category: data · Parser: `nar-atlas` · Status: **partial** · Fidelity: identified-only
 
 Honest status: **partial**. Text YAML references packed sprites by GUID only: nar-atlas recovers the atlas name and packed-sprite count; frame names and rects are not recoverable from the .spriteatlas file alone.
+
+## svg-image
+
+Extensions: `.svg` · Category: texture · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.svg", "type": "svg-image", "category": "texture", "size_bytes": 11}
+```
+
+## bitmap-font
+
+Extensions: `.fnt` · Category: font · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.fnt", "type": "bitmap-font", "category": "font", "size_bytes": 11}
+```
+
+## woff-font
+
+Extensions: `.woff` · Category: font · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.woff", "type": "woff-font", "category": "font", "size_bytes": 11}
+```
+
+## woff2-font
+
+Extensions: `.woff2` · Category: font · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.woff2", "type": "woff2-font", "category": "font", "size_bytes": 11}
+```
+
+## python
+
+Extensions: `.py` · Category: code · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.py", "type": "python", "category": "code", "size_bytes": 11}
+```
+
+## gzip-archive
+
+Extensions: `.gz` · Category: container · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.gz", "type": "gzip-archive", "category": "container", "size_bytes": 11}
+```

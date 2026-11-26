@@ -5,7 +5,8 @@
 For every .so in an APK (or a bare .so), parses the ELF with
 the narlib parser and reports: class/architecture, SONAME,
 DT_NEEDED dependencies, Build ID, symbol imports/exports,
-JNI exports (Java_* and JNI_OnLoad), RegisterNatives hints,
+JNI exports (Java_* only; JNI_OnLoad is reported in the full
+exports list, not counted as a JNI export), RegisterNatives hints,
 hardening facts (RELRO, BIND_NOW, symbol-table presence,
 16 KB alignment), plus the native dependency graph (which
 bundled libraries depend on which). When readelf is
@@ -327,6 +328,13 @@ def _finish_report(report):
     report["behavior_indicator_count"] = sum(
         len(lib.get("behavior_indicators") or [])
         for lib in report["libraries"])
+    # jni_map mirrors the per-library jni_exports lists
+    # (Java_* exports only, M2-13): a library whose only JNI
+    # surface is JNI_OnLoad no longer appears here. Bridge
+    # classification is unaffected — it reads JNI_OnLoad from
+    # each library's full "exports" list. Counts derived from
+    # jni_map downstream (e.g. a "jni libraries" headline)
+    # therefore count libraries WITH Java_* exports.
     report["jni_map"] = {
         lib_name(lib): lib["jni_exports"]
         for lib in report["libraries"] if lib.get("jni_exports")}

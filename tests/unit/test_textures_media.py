@@ -466,7 +466,8 @@ def test_assets_inventory_new_kinds_and_texture_facts():
             zf.writestr("assets/script.lua",
                         "print('hello')\n")
             zf.writestr("assets/anim.skel",
-                        b"\x00" * 16 + b"spine-fixture")
+                        b'{"skeleton": {"spine": "3.8.79"}, '
+                        b'"bones": []}')
         for report in (assets.inventory(apk),
                        assets.inventory(apk,
                                         merge_splits=False)):

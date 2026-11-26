@@ -275,6 +275,64 @@ def locate_in_zip(zf):
     return meta, (libs[0] if libs else None)
 
 
+def locate_pair_container(target, inputs_dir):
+    """Locate the IL2CPP pair across a container target's
+    merged roots (narlib.container resolution: base plus
+    every merged split). The pair is routinely split
+    across members — metadata in an asset-pack split, the
+    native library in an ABI config split — so a container
+    must be searched as a whole, never as its outer
+    archive alone (whose entries are only the member
+    APKs). Returns (meta_entry, so_entry, meta_src,
+    so_src, handled): ``handled`` is False when the target
+    is not a container, leaving the single-archive path
+    to the caller. Extracted pair files are copies under
+    inputs_dir; the resolution's own temp roots are
+    cleaned up before returning."""
+    try:
+        from narlib import container as container_mod
+    except Exception:
+        return None, None, None, None, False
+    try:
+        resolved = container_mod.resolve_target(target)
+    except Exception:
+        return None, None, None, None, False
+    try:
+        if not resolved.is_container:
+            return None, None, None, None, False
+        roots = []
+        for root in list(resolved.assets_roots) + \
+                list(resolved.native_roots):
+            if root not in roots and os.path.isfile(root):
+                roots.append(root)
+        meta_hit = so_hit = None  # (root, entry)
+        for root in roots:
+            try:
+                with zipfile.ZipFile(root) as zf:
+                    meta, so = locate_in_zip(zf)
+            except (zipfile.BadZipFile, OSError):
+                continue
+            if meta and meta_hit is None:
+                meta_hit = (root, meta)
+            if so and so_hit is None:
+                so_hit = (root, so)
+        meta_entry = meta_hit[1] if meta_hit else None
+        so_entry = so_hit[1] if so_hit else None
+        meta_src = so_src = None
+        if meta_hit and so_hit:
+            os.makedirs(inputs_dir, exist_ok=True)
+            meta_src = os.path.join(
+                inputs_dir, "global-metadata.dat")
+            so_src = os.path.join(inputs_dir, "libil2cpp.so")
+            with zipfile.ZipFile(meta_hit[0]) as zf:
+                _extract_capped(zf, meta_entry, meta_src)
+            with zipfile.ZipFile(so_hit[0]) as zf:
+                _extract_capped(zf, so_entry, so_src)
+        return meta_entry, so_entry, meta_src, so_src, True
+    finally:
+        resolved.cleanup()
+
+
 def locate_in_dir(root):
     meta = so = None
     for dirpath, _dirs, files in os.walk(root):
@@ -343,19 +401,46 @@ def analyze(target, out_dir, backend=None):
     if os.path.isdir(target):
         meta_src, so_src = locate_in_dir(target)
     elif zipfile.is_zipfile(target):
-        with zipfile.ZipFile(target) as zf:
-            meta_entry, so_entry = locate_in_zip(zf)
-            if meta_entry and so_entry:
-                os.makedirs(inputs_dir, exist_ok=True)
-                meta_src = os.path.join(inputs_dir, "global-metadata.dat")
-                so_src = os.path.join(inputs_dir, "libil2cpp.so")
-                try:
-                    _extract_capped(zf, meta_entry, meta_src)
-                    _extract_capped(zf, so_entry, so_src)
-                except ValueError as e:
-                    report["error"] = (
-                        f"IL2CPP pair extraction refused: {e}")
-                    return report
+        # Container targets first: the pair may be split
+        # across merged members, invisible to a search of
+        # the outer archive alone.
+        try:
+            c_meta, c_so, c_meta_src, c_so_src, handled = \
+                locate_pair_container(target, inputs_dir)
+        except ValueError as e:
+            report["error"] = (
+                f"IL2CPP pair extraction refused: {e}")
+            return report
+        if handled:
+            meta_entry, so_entry = c_meta, c_so
+            meta_src, so_src = c_meta_src, c_so_src
+            if not meta_src or not so_src:
+                report["error"] = (
+                    "no IL2CPP pair found across the "
+                    "container's merged members (need both "
+                    "global-metadata.dat and libil2cpp.so); "
+                    "this is not a Unity IL2CPP build, or "
+                    "the pair lives outside the given target")
+                report["found"] = {
+                    "metadata": bool(meta_entry),
+                    "binary": bool(so_entry)}
+                return report
+        else:
+            with zipfile.ZipFile(target) as zf:
+                meta_entry, so_entry = locate_in_zip(zf)
+                if meta_entry and so_entry:
+                    os.makedirs(inputs_dir, exist_ok=True)
+                    meta_src = os.path.join(
+                        inputs_dir, "global-metadata.dat")
+                    so_src = os.path.join(
+                        inputs_dir, "libil2cpp.so")
+                    try:
+                        _extract_capped(zf, meta_entry, meta_src)
+                        _extract_capped(zf, so_entry, so_src)
+                    except ValueError as e:
+                        report["error"] = (
+                            f"IL2CPP pair extraction refused: {e}")
+                        return report
     else:
         report["error"] = "target is neither an APK/ZIP nor a directory"
         return report

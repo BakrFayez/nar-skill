@@ -120,8 +120,11 @@ class AnalyzeRedactionTest(unittest.TestCase):
                      if e["classification"] == "sensitive"]
         # api_key + access_token + session/token URLs classify
         # sensitive from the ORIGINAL URLs, and are flagged
-        # as redacted in the output.
-        self.assertEqual(len(sensitive), 3)
+        # as redacted in the output. The userinfo URL also
+        # classifies sensitive since the Phase 2 fix round
+        # (M2-04): classify() now inspects URL userinfo, so
+        # the planted user:password@ URL is the fourth.
+        self.assertEqual(len(sensitive), 4)
         self.assertTrue(all(e.get("redacted") for e in sensitive))
         self.assertEqual(len(by_url), 5)
         errors = evidence.validate(

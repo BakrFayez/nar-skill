@@ -215,6 +215,24 @@ def build_coverage(doc=None):
     return out
 
 
+def jni_bridge_prefixes(doc=None):
+    """{canonical engine name: [JNI symbol prefixes]} — the
+    JNI namespaces of known third-party SDK bridges built on
+    the engine (an SDK hosted under the engine's Java package
+    root, shipped as its own library inside apps that are not
+    built on the engine). nar-engines records their symbols
+    as evidence but weighs bridge-only evidence below the
+    detection threshold: the SDK's presence is not the app's
+    engine."""
+    doc = doc or load_formats()
+    out = {}
+    for entry in doc["engines"].values():
+        prefixes = entry.get("jni_bridge_prefixes") or []
+        if prefixes:
+            out[entry["name"]] = list(prefixes)
+    return out
+
+
 def jni_exclusions(doc=None):
     """{library basename: [canonical engine names whose JNI
     matches from that library are excluded]} — e.g. the

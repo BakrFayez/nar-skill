@@ -40,7 +40,8 @@ _COUNT_KEYS = ("bones_count", "slots_count",
                "frames_parsed", "entity_count",
                "clip_count", "controller_count",
                "node_count", "armature_count",
-               "precomp_count", "mesh_points_count")
+               "precomp_count", "mesh_points_count",
+               "element_count")
 
 
 def human(report):
