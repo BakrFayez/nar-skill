@@ -11,7 +11,7 @@
 # described below; it is likewise applied through the
 # web UI at publication. The 3.0.1 patch release carries
 # the matrix unchanged; its hosted proof is nar-ci run
-# #42 (all 17 jobs green on Linux, macOS and Windows).
+# #42 (all 18 jobs green on Linux, macOS and Windows).
 # Every job's Linux commands were
 # verified locally from a clean extraction (see
 # docs/NAR_3.0.0_UPDATE_REPORT.md): on a hosted runner
@@ -28,7 +28,8 @@
 # the harness is bash. The Linux legs of every matrix
 # job were verified locally from a clean extraction;
 # the Windows and macOS legs are NOT RUN locally — their
-# first hosted run after publication is the proof. The
+# first hosted run after publication was the proof
+# (nar-ci runs #39–#42; run #42 fully green). The
 # remaining jobs stay on ubuntu-latest as before.
 #
 # Job map (brief G1):
