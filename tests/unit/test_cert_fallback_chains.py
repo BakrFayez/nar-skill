@@ -320,6 +320,12 @@ def test_c05_triage_aab_human_line_names_bundletool(
 # Fixture: the encrypted format-2 pack from test_godot.py,
 # whose own-parser listing is unavailable, which is exactly
 # what triggers the tool-listing path.
+# Windows note: a scripted fake executable is neither
+# discoverable (PATHEXT requires a real extension) nor
+# runnable there, so the two run-semantics tests are
+# POSIX-only; Windows discovery of a real .exe through
+# PATHEXT — the shape a shipped GodotPckTool takes — is
+# covered by test_c07_godotpcktool_windows_discovery.
 # ------------------------------------------------------------------
 
 def _encrypted_pck(tmp_path):
@@ -366,6 +372,32 @@ def test_c07_godotpcktool_absent(monkeypatch, tmp_path):
     assert "fallback: GodotPckTool is not installed" in text
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows PATHEXT discovery shape")
+def test_c07_godotpcktool_windows_discovery(
+        monkeypatch, tmp_path):
+    # On Windows a real GodotPckTool ships as an .exe and
+    # shutil.which finds it through PATHEXT. An .exe-named
+    # file on PATH is what find_godotpcktool must return.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "godotpcktool.exe"
+    fake.write_bytes(b"")
+    monkeypatch.setenv(
+        "PATH", str(bin_dir) + os.pathsep
+        + os.environ.get("PATH", ""))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert nar_godot.find_godotpcktool() == str(fake)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="a scripted fake executable is neither "
+           "discoverable (PATHEXT) nor runnable on Windows; "
+           "run semantics are covered on POSIX and Windows "
+           "discovery by "
+           "test_c07_godotpcktool_windows_discovery")
 def test_c07_godotpcktool_failing_run_refused(
         monkeypatch, tmp_path):
     # A fake tool on PATH (which() wins over the tools-dir
@@ -396,6 +428,13 @@ def test_c07_godotpcktool_failing_run_refused(
     assert pck["encrypted"] is True
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="a scripted fake executable is neither "
+           "discoverable (PATHEXT) nor runnable on Windows; "
+           "run semantics are covered on POSIX and Windows "
+           "discovery by "
+           "test_c07_godotpcktool_windows_discovery")
 def test_c07_godotpcktool_serving_listing(monkeypatch, tmp_path):
     fake = _fake_tool(
         tmp_path,

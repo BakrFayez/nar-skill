@@ -280,19 +280,26 @@ def main(argv=None):
     failures = 0
     global _WORKDIR
     _WORKDIR = tempfile.mkdtemp(prefix="nar-zip-fuzz-")
-    old_handler = signal.signal(signal.SIGALRM, _alarm)
+    # SIGALRM is POSIX-only; on Windows the per-case timeout
+    # cannot be enforced this way, so the harness runs
+    # without it there (bounded iterations still apply).
+    use_alarm = hasattr(signal, "SIGALRM")
+    old_handler = (signal.signal(signal.SIGALRM, _alarm)
+                   if use_alarm else None)
     try:
         for i in range(args.iterations):
             seed_name, seed_bytes = seeds[rng.randrange(len(seeds))]
             mutant, strategy = mutate(rng, seed_bytes)
-            signal.setitimer(signal.ITIMER_REAL, args.timeout)
+            if use_alarm:
+                signal.setitimer(signal.ITIMER_REAL, args.timeout)
             try:
                 failure = exercise(mutant)
             except _Timeout:
                 failure = ("Timeout",
                            f"exceeded {args.timeout}s per-case budget")
             finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+                if use_alarm:
+                    signal.setitimer(signal.ITIMER_REAL, 0)
             if failure is None:
                 continue
             kind, detail = failure
@@ -328,7 +335,8 @@ def main(argv=None):
                         "w", encoding="utf-8") as fh:
                     json.dump(repro, fh, indent=1, sort_keys=True)
     finally:
-        signal.signal(signal.SIGALRM, old_handler)
+        if use_alarm:
+            signal.signal(signal.SIGALRM, old_handler)
         shutil.rmtree(_WORKDIR, ignore_errors=True)
         _WORKDIR = None
     print(f"done: seed={args.seed} iterations={args.iterations} "
