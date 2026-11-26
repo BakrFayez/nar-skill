@@ -388,7 +388,14 @@ def test_c07_godotpcktool_windows_discovery(
         "PATH", str(bin_dir) + os.pathsep
         + os.environ.get("PATH", ""))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    assert nar_godot.find_godotpcktool() == str(fake)
+    found = nar_godot.find_godotpcktool()
+    assert found is not None
+    # shutil.which builds the candidate name from the
+    # PATHEXT extension verbatim (".EXE") while the file on
+    # disk is ".exe"; on a case-insensitive filesystem both
+    # name the same file, so compare with normcase.
+    assert os.path.normcase(found) == \
+        os.path.normcase(str(fake))
 
 
 @pytest.mark.skipif(
