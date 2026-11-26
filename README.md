@@ -213,7 +213,7 @@ REA (reverse-engineer-anything) covers everything: native binaries, Electron app
 
 ## Documentation
 
-The guides in `references/` (26 guides, one per topic) carry the method in depth. The repository-level records:
+The guides in `references/` (33 guides, one per topic) carry the method in depth. The repository-level records:
 
 - [CHANGELOG.md](CHANGELOG.md) — release history (the only place version history lives)
 - [NAR_3.0.0_UPDATE_REPORT.md](docs/NAR_3.0.0_UPDATE_REPORT.md) — 3.0.0 update report: per-Part defect → fix → test → measured evidence, Part 13 protocol, Part 15 acceptance transcript, Definition-of-Done verdict

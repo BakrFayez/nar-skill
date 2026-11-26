@@ -61,7 +61,11 @@ with every assertion unchanged.
 - **Hosted CI: NOT RUN** — ci.yml is applied only via
   the GitHub web UI at an authorized publication;
   every job's commands were executed locally from a
-  clean extraction instead.
+  clean extraction instead. [**Superseded: hosted CI
+  has since executed and passed for this release and
+  its successors; the record lives in the
+  post-publication addendum of
+  docs/NAR_3.0.0_UPDATE_REPORT.md.**]
 
 ## Definition of Done (brief §13), item by item
 
@@ -115,7 +119,11 @@ with every assertion unchanged.
     commands executed from a clean `git archive`
     extraction with skip reasons printed; one job
     defect (CI-01) found and fixed. Hosted execution
-    remains NOT RUN until publication.
+    remains NOT RUN until publication. [**Superseded:
+    hosted execution has since run and passed for this
+    release and its successors; the record lives in
+    the post-publication addendum of
+    docs/NAR_3.0.0_UPDATE_REPORT.md.**]
 12. **No placeholder-dependent critical
     functionality** — PASS. The audit found no critical
     path depending on placeholder data; the registry

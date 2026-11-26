@@ -14,7 +14,7 @@
   budget (ctypes prototypes), PATHEXT executable probing,
   and test-layer fixture/resolution corrections — closed by
   a pycache-snapshot fix in the doctor compile test. Hosted
-  run #42 is fully green: all 17 jobs pass on Linux, macOS
+  run #42 is fully green: all 18 jobs pass on Linux, macOS
   and Windows. Details in the post-publication addendum of
   docs/NAR_3.0.0_UPDATE_REPORT.md.
 

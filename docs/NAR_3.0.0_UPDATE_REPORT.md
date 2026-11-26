@@ -347,7 +347,10 @@ and any public-status change remain the owner's decision.
   `core_ok: false`; too-old-python and `py`-only branches
   also verified. **Windows and macOS real execution:
   NOT RUN** (no such hosts here; the hosted CI run at
-  publication is the proof).
+  publication is the proof). [**Superseded by the
+  post-publication addendum at the end of this report:
+  hosted runs #39–#42 executed the full matrix for
+  real; run #42 is fully green.**]
 
 ## Part 10.5 — Failure tolerance & fallback chains
 
@@ -629,7 +632,10 @@ upgraded).
    NOT RUN (no hosts) with the Windows defect class proven
    by simulation — this item is therefore PARTIAL as
    measured, and stays so until the hosted CI run at
-   publication.
+   publication. [**Superseded by the post-publication
+   addendum at the end of this report: this item
+   closes as PASS by hosted execution (runs
+   #39–#42).**]
 5. **`nar coverage --gap` enumerates every gap with reason
    + probe** — PASS (50 entries, programmatically verified).
 6. **No hardcoded target names; no silent truncation; no
@@ -695,7 +701,7 @@ v3.0.0 tag itself is unchanged and predates these fixes):
   doctor-compile test's own bash-resolution import polluted
   its pycache snapshot on cold-cache subset runs.
 - Snapshot fix (1 commit): resolve bash before the
-  snapshot. **Run #42: FULLY GREEN — all 17 jobs PASS
+  snapshot. **Run #42: FULLY GREEN — all 18 jobs PASS
   (syntax, schema, fuzz, benchmark and docs smokes,
   security-regression, and cli-smoke / doctor / e2e-public
   / unit on Linux, macOS and Windows).**
