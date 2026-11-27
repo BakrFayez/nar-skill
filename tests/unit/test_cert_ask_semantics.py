@@ -44,11 +44,31 @@ Method notes:
   SharedPreferences + SQLite storage, api.example.com /
   OkHttp, 1 high Debuggable finding, bytecode-listing via
   nar-dex-disasm, 2 assets / 100 bytes, hero_spine.json
-  animation-shaped asset, wallet verified fact, 50
+  animation-shaped asset, wallet verified fact, 51
   non-supported coverage entries) BEFORE the passing/xfail
   split was made. The split follows observed behaviour only
   in WHICH registry an item sits in; no expected intent or
   fact was edited to fit the product.
+
+PHASE 5 DELIBERATE RE-BASELINE (2026-11-26) — the ONLY
+sanctioned expectation change in this file. The formats
+registry now registers the gif, pag and android-view
+animation systems (the Phase 2 M2-10 registration, landed
+in ca21b29 and reverted in 4fb4c64 precisely so it could be
+re-baselined here, not mid-round). gif and android-view are
+"supported"; pag is "partial" (identified-only), so the
+registry's non-supported count — which the gaps builder
+counts live from the registry, and which the F-10 scorer
+below recounts dynamically — moves 50 -> 51. The four
+frozen "50 coverage entries" expectation sites (two F-01
+gaps entries, one converted F-01 gaps entry, the F-02 gaps
+family record that also feeds its three paraphrases) were
+each individually reviewed against the new registry state
+and updated to "51 coverage entries"; the seven affected
+tests are exactly the ones that failed on the registration
+commit. No other expectation in this file changed, and no
+product code changed to meet an expectation: the product
+was already answering with the registry-true count.
 - Candidate items assert the CORRECT behaviour under
   xfail(strict=True): the suite stays green while the defect
   stands, and turns red (XPASS) when the product is fixed,
@@ -200,11 +220,12 @@ F01_PASS = [
       ["PrefsStore"]),
     E("How does teleportation work?", "behaviour",
       unknown="absent"),
-    # gaps (2)
+    # gaps (2) — count re-baselined 50 -> 51 in the Phase 5
+    # registry re-baseline (see module docstring).
     E("What is missing from your picture of this target?",
-      "gaps", ["50 coverage entries"]),
+      "gaps", ["51 coverage entries"]),
     E("Summarise the limitations that bound this analysis.",
-      "gaps", ["50 coverage entries"]),
+      "gaps", ["51 coverage entries"]),
     # compare (1; expected contract-complete unknown)
     E("Has anything changed between the first release and "
       "this one?", "compare", unknown="absent"),
@@ -263,7 +284,7 @@ F01_PASS = [
     E("If I handed you a second build alongside this one, "
       "could you contrast them?", "compare", unknown="absent"),
     E("Where does your knowledge of this target run out?",
-      "gaps", ["50 coverage entries"]),
+      "gaps", ["51 coverage entries"]),  # Phase 5 re-baseline
 ]
 
 # Newly-classified candidates exposed by the F-01 probe.
@@ -466,7 +487,7 @@ F02 = [
           "figure?"],
       xfail=[]),
     C("What can you not tell me?", "gaps",
-      ["50 coverage entries"],
+      ["51 coverage entries"],  # Phase 5 re-baseline (docstring)
       passing=[
           "What is missing from your picture of this "
           "target?",

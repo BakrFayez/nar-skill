@@ -1959,6 +1959,36 @@
    "probe": null,
    "test_ref": "tests/unit/test_anim.py::test_spriter_counts",
    "parser": "narlib/anim (nar-anim)"
+  },
+  {
+   "id": "gif",
+   "name": "gif",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_anim.py::test_gif_decoded_frame_walk",
+   "parser": "narlib/anim (nar-anim)"
+  },
+  {
+   "id": "pag",
+   "name": "pag",
+   "status": "partial",
+   "fidelity": "identified-only",
+   "reason": "Identification only: a .pag member is recognised by its extension and size/header facts are emitted; the PAG tag-stream decode is not implemented.",
+   "probe": "Add a PAG tag-stream decoder (tag headers and the composition/layer tables), or inspect the file in a PAG viewer/runtime.",
+   "test_ref": "tests/unit/test_phase2_anim.py::test_pag_member_identified_only",
+   "parser": "narlib/anim (nar-anim)"
+  },
+  {
+   "id": "android-view",
+   "name": "android-view",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_phase2_anim.py::test_android_view_axml_decoded",
+   "parser": "narlib/anim (nar-anim)"
   }
  ],
  "app_frameworks": [

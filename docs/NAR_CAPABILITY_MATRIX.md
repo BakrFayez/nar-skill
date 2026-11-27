@@ -269,6 +269,9 @@ non-supported entry are in `nar coverage --gap`.
 | cocos-ccb | Animation systems | partial | structural-summary | tests/unit/test_anim.py::test_ccb_binary_plist |
 | creature | Animation systems | supported | structural-summary | tests/unit/test_anim.py::test_creature_counts |
 | spriter | Animation systems | supported | structural-summary | tests/unit/test_anim.py::test_spriter_counts |
+| gif | Animation systems | supported | structural-summary | tests/unit/test_phase2_anim.py::test_gif_decoded_frame_walk |
+| pag | Animation systems | partial | identified-only | tests/unit/test_phase2_anim.py::test_pag_member_identified_only |
+| android-view | Animation systems | supported | structural-summary | tests/unit/test_phase2_anim.py::test_android_view_axml_decoded |
 | kotlin | App frameworks | identified_only | identified-only | DEX marker detection in nar-triage only; Kotlin intelligence beyond inventory is partial (capability matrix).. |
 | jetpack-compose | App frameworks | partial | structural-summary | tests/unit/test_app.py::test_compose_census |
 | compose-multiplatform | App frameworks | identified_only | identified-only | DEX marker detection in nar-triage only.. |
@@ -289,4 +292,4 @@ non-supported entry are in `nar coverage --gap`.
 | native_hardening | Protection kinds | supported | structural-summary | tests/unit/test_signatures.py::SignatureDatabaseTest |
 | play-integrity-verdict | Protection kinds | server_side | identified-only | The verdict is server-side; only client-side presence markers are detectable statically.. |
 
-Total: 177 coverage entries.
+Total: 180 coverage entries.

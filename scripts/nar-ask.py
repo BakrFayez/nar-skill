@@ -106,6 +106,29 @@ INTENT_RULES = [
         r"\bsecond (build|version|release|artifact|copy)\b",
         r"\b(beside|alongside)\b.*\b(one|this|it)\b",
         r"\bside by side\b",
+        # Phase 5 (F-01/F-06 measurement): comparative
+        # phrasings the frozen rules missed — validated
+        # against every held-out pool before landing; the
+        # only flips are genuine two-artifact comparatives
+        # (within-app count comparisons are excluded by
+        # requiring an artifact-referring object after
+        # "compared with/to").
+        r"\bcompared (with|to) (the )?(earlier|previous|"
+        r"older|other|newer|last)\b",
+        r"\bcompared (with|to) (it|this|that)\b",
+        r"\bchang\w+ between\b",
+        r"\bdifferent\b.*\bbetween\b",
+        r"\b(newer|previous|earlier|other|second) "
+        r"(build|version|release)\b",
+        r"\bother (build|version|release|artifact|file|"
+        r"app)\b",
+        r"\bare (the )?two\b", r"\bidentical\b",
+        r"\bhow much (bigger|smaller|larger|heavier|"
+        r"more)\b",
+        r"\bhow many more\b",
+        r"\b(bigger|smaller|larger|heavier) than\b",
+        r"\bthan the one before\b",
+        r"\bany\b.*\b(added|removed)\b",
     ]),
     ("rebuild", [
         r"\brebuild\w*", r"\bre-?build\w*",
@@ -808,6 +831,12 @@ def _app_doc(case):
         return None
 
 
+_GENERIC_SCREEN_TOKENS = {
+    "screen", "activity", "page", "view", "window",
+    "dialog", "fragment",
+}
+
+
 def build_screens(q, case, ctx):
     perms = case.get("permissions.json")
     manifest = case.get("manifest.json")
@@ -874,7 +903,13 @@ def build_screens(q, case, ctx):
                         "= %s" % launcher)
     subject = ctx.get("subject")
     if subject:
-        toks = _tokens(subject)
+        # Generic screen vocabulary is not a subject: the
+        # token "screen" alone matched fullscreen-ad
+        # activities for questions about unrelated screens
+        # (Phase 5 F-10 adjudication). Only distinctive
+        # tokens may match a component name.
+        toks = [t for t in _tokens(subject)
+                if t not in _GENERIC_SCREEN_TOKENS]
         hits = [a for a in activities
                 if any(t in (a.get("name") or "").lower()
                        for t in toks)]
@@ -1043,6 +1078,36 @@ def build_screens(q, case, ctx):
             "; ".join(detail_parts) or
             "the stated counts and the component list differ",
             extra)
+    # Consistency check (Phase 5): the launcher activity the
+    # answer names must appear in the component census the
+    # same companions carry (any component kind, including
+    # activity aliases); a launcher that no component list
+    # contains is surfaced, not asserted.
+    if launcher:
+        census = set()
+        for kind in ("activity", "activity-alias", "service",
+                     "receiver", "provider"):
+            for comp in components.get(kind) or []:
+                if isinstance(comp, dict) and comp.get("name"):
+                    census.add(comp["name"])
+        for lst in ((manifest or {}).get("components")
+                    or {}).values():
+            if isinstance(lst, list):
+                for comp in lst:
+                    if isinstance(comp, dict) \
+                            and comp.get("name"):
+                        census.add(comp["name"])
+        if census and launcher not in census:
+            answer, confidence, boundary = _surface_conflict(
+                answer, evidence, why, boundary, confidence,
+                "the launcher activity",
+                "permissions.json records launcher_activity "
+                "%s, but that name appears nowhere in the "
+                "component census (%d components across "
+                "permissions.json and manifest.json)"
+                % (launcher, len(census)),
+                ["permissions.json launcher_activity = %s"
+                 % launcher])
     return _answer(q, "screens", answer, evidence, confidence,
                    why, _chain_text(case, False), boundary)
 
@@ -1171,13 +1236,36 @@ def build_behaviour(q, case, ctx):
         why.append("no verified fact covers the effect, so "
                    "the trace stops at code structure and is "
                    "strongly-indicated")
+    boundary = ("static evidence only: runtime order, "
+                "server responses and user-specific state "
+                "changes are not observable from the "
+                "artifact")
+    # Corroboration check (Phase 5): when the trace's only
+    # link is a recorded verified fact — no DEX class, no
+    # manifest component and no app record names the
+    # subject — the effect is reported as recorded but
+    # explicitly not corroborated, never as settled.
+    if fact_hits and not any(
+            not e.startswith("investigation.json")
+            for e in evidence):
+        answer += (" Corroboration note: the recorded "
+                   "effect rests on the investigation's "
+                   "verified fact alone — the subject is "
+                   "not corroborated by the DEX class "
+                   "census, the manifest components or the "
+                   "app evidence in this case, so the "
+                   "effect is reported as recorded, not as "
+                   "independently confirmed.")
+        why.append("corroboration check: no DEX class, "
+                   "component or app record names the "
+                   "subject; only the investigation fact "
+                   "does")
+        boundary += ("; the recorded effect is not "
+                     "corroborated elsewhere in the case "
+                     "evidence")
     return _answer(q, "behaviour", answer, evidence,
                    "strongly-indicated", why,
-                   _chain_text(case, True),
-                   "static evidence only: runtime order, "
-                   "server responses and user-specific state "
-                   "changes are not observable from the "
-                   "artifact")
+                   _chain_text(case, True), boundary)
 
 
 _STORAGE_MARKERS = [
@@ -1217,6 +1305,39 @@ def build_storage(q, case, ctx):
                 else:
                     evidence.append("dex.json class %s -> %s"
                                     % (h, label))
+    # App-census deference (Phase 5, F-09 root): when
+    # app.json's own Room census explicitly refutes a Room
+    # library (library marked absent, no RoomDatabase
+    # classes, no shipped databases) and every Room marker
+    # hit is the MultiInstanceInvalidationService runtime
+    # artifact, the marker label is a name-only false
+    # positive and is not claimed.
+    if "Room" in found:
+        _app = _app_doc(case)
+        _room = ((_app or {}).get("storage") or {}).get(
+            "room_sqlite") or {}
+        _library = _room.get("room_library") or {}
+        _room_hits = [e for e in evidence
+                      if e.endswith("-> Room")]
+        if _library.get("present") is False \
+                and not _room.get("room_database_classes") \
+                and not _room.get("shipped_databases") \
+                and _room_hits \
+                and all(
+                    re.split(r"[/.]", e.split(
+                        "class ", 1)[-1].split(" ")[0])[-1]
+                    .rstrip(";")
+                    == "MultiInstanceInvalidationService"
+                    for e in _room_hits):
+            found = [f for f in found if f != "Room"]
+            evidence = [e for e in evidence
+                        if not e.endswith("-> Room")]
+            why.append(
+                "the androidx/room name signal comes only "
+                "from the MultiInstanceInvalidationService "
+                "runtime artifact; app.json's Room census "
+                "records no Room library, so Room is not "
+                "claimed")
     subject = ctx.get("subject")
     subj_hits = _search_dex(case, subject) if subject else []
     storage_subj = [h for h in subj_hits
@@ -1365,21 +1486,46 @@ def build_network(q, case, ctx):
         "classification_counts") or {}
     counts_conflict = bool(ep_counts and na_counts
                            and ep_counts != na_counts)
+    # Consistency check (Phase 5): the classification
+    # counts endpoints.json states must also agree with
+    # the endpoint items it lists — a classification the
+    # counts claim but no item carries (or the reverse)
+    # is the companion disagreeing with itself. Verified
+    # to hold per-key on real cases.
+    item_counts = {}
+    for e in eps:
+        cls = e.get("classification")
+        if cls:
+            item_counts[cls] = item_counts.get(cls, 0) + 1
+    items_conflict = bool(ep_counts) and any(
+        ep_counts.get(k, 0) != item_counts.get(k, 0)
+        for k in set(ep_counts) | set(item_counts))
 
     def _network_conflict(answer, boundary, confidence):
-        detail = ("endpoints.json classification_counts "
-                  "reports %s, while network-analysis.json "
-                  "classification_counts reports %s"
-                  % (ep_counts, na_counts))
-        extra = [
-            "endpoints.json classification_counts = %s"
-            % ep_counts,
-            "network-analysis.json classification_counts = "
-            "%s" % na_counts]
+        details, extra = [], []
+        if counts_conflict:
+            details.append(
+                "endpoints.json classification_counts "
+                "reports %s, while network-analysis.json "
+                "classification_counts reports %s"
+                % (ep_counts, na_counts))
+            extra += [
+                "endpoints.json classification_counts = %s"
+                % ep_counts,
+                "network-analysis.json classification_counts "
+                "= %s" % na_counts]
+        if items_conflict:
+            details.append(
+                "endpoints.json classification_counts "
+                "reports %s, while the endpoint items it "
+                "lists carry %s" % (ep_counts, item_counts))
+            extra.append(
+                "endpoints.json classification_counts = %s"
+                % ep_counts)
         return _surface_conflict(
             answer, evidence, why, boundary, confidence,
-            "the endpoint classification counts", detail,
-            extra)
+            "the endpoint classification counts",
+            "; ".join(details), extra)
 
     subject = ctx.get("subject")
     named = None
@@ -1413,7 +1559,7 @@ def build_network(q, case, ctx):
                     "patterns; the live request/response "
                     "behaviour of the endpoint is runtime "
                     "and server-side")
-        if counts_conflict:
+        if counts_conflict or items_conflict:
             answer, confidence, boundary = _network_conflict(
                 answer, boundary, confidence)
         return _answer(q, "network", answer, evidence,
@@ -1474,7 +1620,7 @@ def build_network(q, case, ctx):
     boundary = ("static inventory only: which endpoints "
                 "are actually called, with what payloads, "
                 "is runtime and server-side behaviour")
-    if counts_conflict:
+    if counts_conflict or items_conflict:
         answer, confidence, boundary = _network_conflict(
             answer, boundary, confidence)
     return _answer(q, "network", answer, evidence, confidence,
@@ -1529,12 +1675,37 @@ def build_security(q, case, ctx):
         why.append("visibility is a direct observation of "
                    "the decompile Fallback Record and the "
                    "DEX inventory")
+        boundary = ("visibility of managed code only; "
+                    "native logic and encrypted payloads "
+                    "need their own probes")
+        confidence = "confirmed"
+        # Consistency check (Phase 5, the NF-03 pattern):
+        # the class total the headline cites must agree
+        # with the DEX class list the same companion
+        # carries; a stated total that its own list
+        # contradicts is surfaced, not asserted.
+        stated_classes = totals.get("classes")
+        if isinstance(stated_classes, int):
+            try:
+                listed = case.dex_classes()
+            except Exception:
+                listed = []
+            if listed and len(listed) != stated_classes:
+                # Both sides are named in the conflict
+                # detail; the totals side is also cited in
+                # the evidence above. (No new evidence-item
+                # shape is introduced for the list side.)
+                answer, confidence, boundary = \
+                    _surface_conflict(
+                        answer, evidence, why, boundary,
+                        confidence, "the DEX class count",
+                        "dex.json totals record %d classes, "
+                        "while the dex.json class list "
+                        "contains %d entries"
+                        % (stated_classes, len(listed)))
         return _answer(q, "security", answer, evidence,
-                       "confirmed", why,
-                       _chain_text(case, True),
-                       "visibility of managed code only; "
-                       "native logic and encrypted payloads "
-                       "need their own probes")
+                       confidence, why,
+                       _chain_text(case, True), boundary)
     findings = (findings_doc or {}).get("findings") or []
     for f in findings[:8]:
         evidence.append("security-findings.json %s %s "
@@ -1573,6 +1744,10 @@ def build_security(q, case, ctx):
                        "proof of absence of protection; "
                        "runtime-only protections are out of "
                        "static scope")
+    boundary = ("static findings only; server-side verdicts "
+                "(for example Play Integrity) and runtime "
+                "protections are not decided by the artifact")
+    confidence = "confirmed"
     if packer_named:
         answer = "Protection records name: %s." % ", ".join(
             str(p.get("name") or p) for p in packer_named)
@@ -1585,14 +1760,31 @@ def build_security(q, case, ctx):
                          "severity_counts"),
                      protections if protections else
                      "none named"))
+        # Consistency check (Phase 5, the NF-03 pattern
+        # extended to a companion's internal counts): the
+        # severity_counts the headline cites must sum to the
+        # number of findings it also cites; a companion that
+        # disagrees with itself is surfaced, not asserted.
+        severity_counts = (findings_doc or {}).get(
+            "severity_counts") or {}
+        if severity_counts and all(
+                isinstance(v, int)
+                for v in severity_counts.values()) \
+                and sum(severity_counts.values()) != len(
+                    findings):
+            answer, confidence, boundary = _surface_conflict(
+                answer, evidence, why, boundary, confidence,
+                "the security finding counts",
+                "security-findings.json lists %d findings, "
+                "while its severity_counts %s sum to %d"
+                % (len(findings), severity_counts,
+                   sum(severity_counts.values())),
+                ["security-findings.json severity_counts = %s"
+                 % severity_counts])
     why.append("findings are direct companion observations "
                "with their own verification_status")
-    return _answer(q, "security", answer, evidence, "confirmed",
-                   why, _chain_text(case, False),
-                   "static findings only; server-side verdicts "
-                   "(for example Play Integrity) and runtime "
-                   "protections are not decided by the "
-                   "artifact")
+    return _answer(q, "security", answer, evidence, confidence,
+                   why, _chain_text(case, False), boundary)
 
 
 _BILLING_NEEDLES = ("billingclient", "com/android/vending",
@@ -2383,29 +2575,110 @@ def build_compare(q, case, ctx):
             ["nar-compare.py exited %s without a JSON "
              "report" % proc.returncode],
             "comparison only")
+    diff = doc.get("diff") or {}
+    old_doc = doc.get("old") or {}
+    new_doc = doc.get("new") or {}
+    if not diff and not old_doc:
+        # A report in an unrecognised shape supports no
+        # factual claim about the pair: say so, assert no
+        # differences, and stay below the confirmed band.
+        return _answer(
+            q, "compare",
+            "nar-compare produced a report whose shape this "
+            "build of nar-ask does not recognise, so no "
+            "differences between the two artifacts are "
+            "asserted.",
+            ["nar-compare report keys: %s" % sorted(doc)],
+            "inferred",
+            ["the report parsed as JSON but carries neither "
+             "a diff nor per-side summaries"],
+            _chain_text(case, False),
+            "comparison only; run nar-compare.py on the pair "
+            "directly for the full report")
     evidence, why = [], []
-    ident = doc.get("identity") or {}
-    evidence.append("nar-compare identity: %s" % ident)
-    for key in ("summary", "counts", "similarity"):
-        if doc.get(key) is not None:
-            evidence.append("nar-compare %s: %s"
-                            % (key, doc[key]))
-    for key in ("dex", "native", "assets", "entries"):
-        sub = doc.get(key)
-        if isinstance(sub, dict):
-            evidence.append("nar-compare %s: %s"
-                            % (key, {k: sub[k] for k in
-                                      list(sub)[:6]}))
-    if not evidence:
-        evidence.append("nar-compare report keys: %s"
-                        % sorted(doc.keys()))
-    answer = ("Comparison of the two supplied artifacts "
-              "completed; identity and per-dimension "
-              "differences are cited in the evidence (full "
-              "report written under the case ask-compare "
-              "directory).")
+
+    def _side(label, side):
+        badging = side.get("badging") or {}
+        text = "nar-compare %s: %s (%s bytes, sha256 %s)" % (
+            label, side.get("file"), side.get("size_bytes"),
+            (side.get("sha256") or "")[:12])
+        if badging.get("package"):
+            text += " %s %s (code %s)" % (
+                badging.get("package"),
+                badging.get("version_name"),
+                badging.get("version_code"))
+        return text
+
+    if old_doc:
+        evidence.append(_side("old", old_doc))
+    if new_doc:
+        evidence.append(_side("new", new_doc))
+    evidence.append("nar-compare identical_files: %s"
+                    % doc.get("identical_files"))
+    evidence.append(
+        "nar-compare diff: size_delta_bytes %s, "
+        "entry_count_delta %s, identity_changed %s, "
+        "manifest_changed %s"
+        % (diff.get("size_delta_bytes"),
+           diff.get("entry_count_delta"),
+           diff.get("identity_changed"),
+           diff.get("manifest_changed")))
+    added_p = diff.get("permissions_added") or []
+    removed_p = diff.get("permissions_removed") or []
+    evidence.append(
+        "nar-compare permissions: added %d %s, removed %d %s"
+        % (len(added_p), added_p[:6], len(removed_p),
+           removed_p[:6]))
+    dex = diff.get("dex") or {}
+    if dex:
+        evidence.append(
+            "nar-compare dex: added %s, removed %s, "
+            "changed %d, totals_delta %s"
+            % ([d.get("name") for d in dex.get("added") or []],
+               [d.get("name") for d in
+                dex.get("removed") or []],
+               len(dex.get("changed") or []),
+               dex.get("totals_delta")))
+    native = diff.get("native_libs") or {}
+    if native:
+        evidence.append(
+            "nar-compare native_libs: added %s, removed %s, "
+            "changed %d"
+            % ([d.get("name") for d in
+                native.get("added") or []],
+               [d.get("name") for d in
+                native.get("removed") or []],
+               len(native.get("changed") or [])))
+    if diff.get("counts_delta"):
+        evidence.append("nar-compare counts_delta: %s"
+                        % diff["counts_delta"])
+    arsc = diff.get("resources_arsc") or {}
+    if arsc.get("status"):
+        evidence.append("nar-compare resources_arsc: %s"
+                        % arsc["status"])
+    similarity = (doc.get("extended") or {}).get(
+        "similarity")
+    if similarity:
+        evidence.append("nar-compare similarity: %s"
+                        % similarity)
     why.append("the diff is computed by nar-compare.py "
                "from both artifacts directly")
+    if doc.get("identical_files"):
+        answer = ("The two supplied artifacts are identical "
+                  "files (size delta 0 bytes, entry delta 0; "
+                  "nar-compare reports identical_files).")
+    else:
+        answer = (
+            "The two supplied artifacts differ: size delta "
+            "%s bytes, entry delta %s, identity changed: %s, "
+            "manifest changed: %s; %d permission(s) added "
+            "and %d removed (full report written under the "
+            "case ask-compare directory)."
+            % (diff.get("size_delta_bytes"),
+               diff.get("entry_count_delta"),
+               diff.get("identity_changed"),
+               diff.get("manifest_changed"),
+               len(added_p), len(removed_p)))
     return _answer(q, "compare", answer, evidence,
                    "confirmed", why, _chain_text(case, False),
                    "structural diff only; behavioural "
@@ -2473,7 +2746,303 @@ def build_gaps(q, case, ctx):
                    "unsupported input, not as a named entry")
 
 
+_GRAPH_OPS = re.compile(
+    r"\b(nodes?|edges?|connected|connections?|neighbours?|"
+    r"neighbors?|path|linked|degree|links?)\b", re.I)
+_GRAPH_KIND_WORDS = [
+    ("native library", "native_library"),
+    ("native libraries", "native_library"),
+    ("security finding", "security_finding"),
+    ("permission", "permission"),
+    ("component", "component"),
+    ("class", "class"),
+    ("asset", "asset"),
+    ("endpoint", "network_endpoint"),
+    ("engine", "engine"),
+    ("application", "application"),
+    ("dex file", "dex_file"),
+    ("jni", "jni_function"),
+]
+_GRAPH_STOP = {
+    "the", "investigation", "graph", "node", "nodes",
+    "edge", "edges", "connected", "target", "this",
+    "there", "what", "does", "have", "many", "from",
+}
+
+
+_GRAPH_QWORDS = {
+    "does", "is", "in", "the", "what", "how", "are",
+    "was", "were", "can", "could", "there", "this",
+    "that", "it", "do", "did", "a", "an",
+}
+
+
+def _graph_subjects(q):
+    out = []
+    for tok in re.findall(r"[A-Za-z0-9_./:+~-]+", q or ""):
+        tok = tok.strip(".")
+        if len(tok) < 3:
+            continue
+        if tok.lower() in _GRAPH_STOP:
+            continue
+        if "." in tok or "/" in tok:
+            out.append(tok)
+        elif tok[0].isupper() and any(c.islower()
+                                      for c in tok) \
+                and tok.lower() not in _GRAPH_QWORDS:
+            out.append(tok)
+    return out
+
+
+def _graph_answer(q, case):
+    """Answer graph-shaped questions from the case's
+    graph.json (F-07 wiring). Returns None when the
+    question is not graph-shaped or no graph exists."""
+    graph = case.get("graph.json")
+    if not graph or not re.search(r"\bgraph\b", q or "",
+                                  re.I):
+        return None
+    if not _GRAPH_OPS.search(q):
+        return None
+    from collections import Counter
+    nodes = graph.get("nodes") or []
+    edges = graph.get("edges") or []
+    kinds = Counter(n.get("kind") for n in nodes)
+    boundary = ("the graph is a static-evidence fusion of "
+                "the case companions; absence from the "
+                "graph means no static evidence recorded "
+                "the entity, not that it cannot exist at "
+                "runtime")
+    counts_ev = "graph.json: %d nodes, %d edges; node " \
+        "kinds %s" % (len(nodes), len(edges), dict(kinds))
+    low = q.lower()
+    subjects = _graph_subjects(q)
+    if "how many" in low and "edges" not in low \
+            and not subjects:
+        for word, kind in _GRAPH_KIND_WORDS:
+            if word in low:
+                return _answer(
+                    q, "other",
+                    "The investigation graph contains %d "
+                    "%s node(s) out of %d nodes in total."
+                    % (kinds.get(kind, 0), kind,
+                       len(nodes)),
+                    [counts_ev,
+                     "graph.json node kind %s: %d"
+                     % (kind, kinds.get(kind, 0))],
+                    "confirmed",
+                    ["the count is taken directly from "
+                     "the graph companion's node list"],
+                    _chain_text(case, False), boundary)
+    if "how many" in low and not subjects:
+        return _answer(
+            q, "other",
+            "The investigation graph contains %d nodes "
+            "and %d edges." % (len(nodes), len(edges)),
+            [counts_ev], "confirmed",
+            ["the counts are taken directly from the "
+             "graph companion"],
+            _chain_text(case, False), boundary)
+
+    def _find(subject):
+        s = subject.lower()
+        for n in nodes:
+            if s == (n.get("label") or "").lower() \
+                    or s == (n.get("id") or "").lower():
+                return n
+        for n in nodes:
+            if s in (n.get("label") or "").lower() \
+                    or s in (n.get("id") or "").lower():
+                return n
+        return None
+
+    def _edges_of(node_id):
+        return [e for e in edges
+                if e.get("source") == node_id
+                or e.get("target") == node_id]
+
+    if len(subjects) >= 2:
+        a, b = _find(subjects[0]), _find(subjects[1])
+        if a is None or b is None:
+            missing = subjects[0] if a is None \
+                else subjects[1]
+            return _answer(
+                q, "other",
+                "No: the investigation graph's %d nodes "
+                "contain no node labelled %s, so no edge "
+                "or path involving it is recorded."
+                % (len(nodes), missing),
+                [counts_ev], "strongly-indicated",
+                ["node lookup by label/id over the graph "
+                 "companion found no match for %s"
+                 % missing],
+                _chain_text(case, False), boundary)
+        direct = [e for e in edges
+                  if (e.get("source") == a["id"]
+                      and e.get("target") == b["id"])
+                  or (e.get("source") == b["id"]
+                      and e.get("target") == a["id"])]
+        if direct and "path" not in low:
+            ev = [counts_ev] + [
+                "graph.json edge: %s -[%s]-> %s"
+                % (e.get("source"), e.get("kind"),
+                   e.get("target")) for e in direct[:4]]
+            return _answer(
+                q, "other",
+                "Yes: %s is connected to %s in the "
+                "investigation graph (%d direct "
+                "edge(s), kinds: %s)."
+                % (a.get("label"), b.get("label"),
+                   len(direct),
+                   ", ".join(sorted({e.get("kind")
+                                     for e in direct}))),
+                ev, "confirmed",
+                ["the edge is recorded in the graph "
+                 "companion's edge list"],
+                _chain_text(case, False), boundary)
+        adj = {}
+        for e in edges:
+            adj.setdefault(e.get("source"), []).append(e)
+        prev = {a["id"]: None}
+        queue = [a["id"]]
+        while queue and b["id"] not in prev:
+            cur = queue.pop(0)
+            for e in adj.get(cur, []):
+                nxt = e.get("target")
+                if nxt not in prev:
+                    prev[nxt] = (cur, e)
+                    queue.append(nxt)
+        if b["id"] in prev:
+            path_edges = []
+            cur = b["id"]
+            while prev.get(cur):
+                cur, e = prev[cur][0], prev[cur][1]
+                path_edges.append(e)
+            path_edges.reverse()
+            ev = [counts_ev] + [
+                "graph.json edge: %s -[%s]-> %s"
+                % (e.get("source"), e.get("kind"),
+                   e.get("target"))
+                for e in path_edges[:8]]
+            if "path" in low:
+                text = ("Yes: a path of %d edge(s) leads "
+                        "from %s to %s in the "
+                        "investigation graph."
+                        % (len(path_edges), a.get("label"),
+                           b.get("label")))
+            else:
+                text = ("No direct edge is recorded, but "
+                        "a path of %d edge(s) connects %s "
+                        "to %s in the investigation graph."
+                        % (len(path_edges), a.get("label"),
+                           b.get("label")))
+            return _answer(
+                q, "other", text, ev, "strongly-indicated",
+                ["the path was found by traversal of "
+                 "the graph companion's edge list"],
+                _chain_text(case, False), boundary)
+        return _answer(
+            q, "other",
+            "No: the investigation graph records no edge "
+            "and no path between %s and %s."
+            % (a.get("label"), b.get("label")),
+            [counts_ev,
+             "graph.json node %s (%s): %s"
+             % (a.get("id"), a.get("kind"),
+                a.get("label")),
+             "graph.json node %s (%s): %s"
+             % (b.get("id"), b.get("kind"),
+                b.get("label"))],
+            "strongly-indicated",
+            ["edge-list lookup and traversal found no "
+             "connection between the two nodes"],
+            _chain_text(case, False), boundary)
+    if subjects:
+        node = _find(subjects[0])
+        if node is None:
+            return _answer(
+                q, "other",
+                "No: the investigation graph's %d nodes "
+                "contain no node labelled %s."
+                % (len(nodes), subjects[0]),
+                [counts_ev], "strongly-indicated",
+                ["node lookup by label/id over the graph "
+                 "companion found no match"],
+                _chain_text(case, False), boundary)
+        node_edges = _edges_of(node["id"])
+        out_edges = [e for e in node_edges
+                     if e.get("source") == node["id"]]
+        ev = [counts_ev,
+              "graph.json node %s (%s): %s"
+              % (node.get("id"), node.get("kind"),
+                 node.get("label"))]
+        if "outgoing" in low or "degree" in low:
+            ev += ["graph.json edge: %s -[%s]-> %s"
+                   % (e.get("source"), e.get("kind"),
+                      e.get("target"))
+                   for e in out_edges[:8]]
+            return _answer(
+                q, "other",
+                "The %s node has %d outgoing edge(s) in "
+                "the investigation graph (%d edges in "
+                "total touch it)."
+                % (node.get("label"), len(out_edges),
+                   len(node_edges)),
+                ev, "confirmed",
+                ["the degree is counted from the graph "
+                 "companion's edge list"],
+                _chain_text(case, False), boundary)
+        if "connected" in low or "neighbour" in low \
+                or "neighbor" in low:
+            by_id = {n.get("id"): n for n in nodes}
+            names = []
+            for e in node_edges[:40]:
+                other_id = e.get("target") \
+                    if e.get("source") == node["id"] \
+                    else e.get("source")
+                other = by_id.get(other_id) or {}
+                names.append(other.get("label")
+                             or other_id)
+                ev.append(
+                    "graph.json edge: %s -[%s]-> %s"
+                    % (e.get("source"), e.get("kind"),
+                       e.get("target")))
+            return _answer(
+                q, "other",
+                "%s is connected to %d node(s) in the "
+                "investigation graph; the first %d: %s."
+                % (node.get("label"), len(node_edges),
+                   min(8, len(names)),
+                   ", ".join(names[:8])),
+                ev, "strongly-indicated",
+                ["the neighbours are read from the graph "
+                 "companion's edge list"],
+                _chain_text(case, False), boundary)
+        return _answer(
+            q, "other",
+            "Yes: the investigation graph contains a %s "
+            "node for %s (%d recorded edge(s) touch it)."
+            % (node.get("kind"), node.get("label"),
+               len(node_edges)),
+            ev, "confirmed",
+            ["the node is recorded in the graph "
+             "companion's node list"],
+            _chain_text(case, False), boundary)
+    return _answer(
+        q, "other",
+        "The investigation graph contains %d nodes and "
+        "%d edges (kinds: %s)."
+        % (len(nodes), len(edges), dict(kinds)),
+        [counts_ev], "confirmed",
+        ["the counts are taken directly from the graph "
+         "companion"],
+        _chain_text(case, False), boundary)
+
+
 def build_other(q, case, ctx):
+    graph_doc = _graph_answer(q, case)
+    if graph_doc is not None:
+        return graph_doc
     inv = case.get("investigation.json")
     facts = (inv or {}).get("verified_facts") or []
     q_content = _content_tokens(q)
@@ -2578,8 +3147,18 @@ def answer_question(question, target, case_dir, second=None,
     ctx = {"subject": extract_subject(question),
            "target": target, "second": second,
            "extra_targets": list(extra_targets)}
-    builder = BUILDERS[intent]
-    doc = builder(question, case, ctx)
+    # Graph-shaped questions (an explicit graph mention
+    # plus a graph operation) are served from graph.json
+    # even when a topical keyword would route them to a
+    # dedicated intent: the topical builder cannot answer
+    # a question about the graph itself (F-07).
+    graph_doc = None
+    if intent != "compare":
+        graph_doc = _graph_answer(question, case)
+    if graph_doc is not None:
+        doc = graph_doc
+    else:
+        doc = BUILDERS[intent](question, case, ctx)
     doc["target"] = target
     doc["case_dir"] = case_dir
     return doc

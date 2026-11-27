@@ -136,8 +136,10 @@ def safe_url(url):
     query = urlencode([(k, "REDACTED")
                        for k, _v in parse_qsl(
                            parts.query, keep_blank_values=True)])
+    fragment = _SECRET_PARAM.sub(r"\1REDACTED",
+                                 parts.fragment)
     return urlunsplit((parts.scheme, netloc, parts.path,
-                       query, ""))
+                       query, fragment))
 
 
 def ev(companion, item):
@@ -349,7 +351,35 @@ def storage_hits(case):
                 hits.append((c, via))
         if hits:
             found.append((label, hits))
+    found = [entry for entry in found
+             if not _room_refuted(case, entry)]
     return found
+
+
+def _room_refuted(case, entry):
+    """True when a Room marker entry is refuted by the
+    app census: app.json's room_sqlite block marks the
+    library absent, names no RoomDatabase classes and no
+    shipped databases, and every marker hit is the
+    MultiInstanceInvalidationService class, an AndroidX
+    runtime artifact that also ships in targets with no
+    Room library at all."""
+    label, hits = entry
+    if label != "Room":
+        return False
+    app = case.get("app.json") or {}
+    room = (app.get("storage") or {}).get(
+        "room_sqlite") or {}
+    library = room.get("room_library") or {}
+    if library.get("present") is not False:
+        return False
+    if room.get("room_database_classes") \
+            or room.get("shipped_databases"):
+        return False
+    return all(
+        c.rsplit("/", 1)[-1].rstrip(";")
+        == "MultiInstanceInvalidationService"
+        for c, _via in hits)
 
 
 def build_features(spec):
@@ -433,8 +463,9 @@ def build_features(spec):
         bullets.append(bullet(
             "**Network-backed behaviour** — Trigger: "
             "features that need remote data; Effect: %d "
-            "statically recorded endpoints are contacted "
-            "(purposes in network.md); Implementing "
+            "endpoints are statically recorded (purposes "
+            "in network.md); which of them are contacted "
+            "at runtime is not observed. Implementing "
             "components: network libraries %s"
             % (len(endpoints.get("endpoints") or []),
                endpoints.get("network_libraries") or
@@ -718,18 +749,21 @@ def build_data_model(spec):
         for c, via in hits[:4]:
             if via and via not in c:
                 lines.append(bullet(
-                    "**%s** store implemented by %s "
-                    "(extends %s) — Ownership: application-"
-                    "private store; Lifecycle: persists "
-                    "across process death until uninstall "
-                    "or clear-data"
-                    % (label, c, via),
+                    "**%s** storage-shaped class %s "
+                    "(extends %s) — the class matches the "
+                    "%s signal by name/superclass; whether "
+                    "it implements a store at runtime is "
+                    "not observed. Ownership (if used): "
+                    "application-private store; Lifecycle: "
+                    "persists across process death until "
+                    "uninstall or clear-data"
+                    % (label, c, via, label),
                     "dex.json",
                     "class %s extends %s" % (c, via),
                     inferred=True))
             else:
                 lines.append(bullet(
-                    "**%s** store referenced by %s — "
+                    "**%s** storage-shaped class %s — "
                     "Ownership: application-private store; "
                     "Lifecycle: persists across process "
                     "death until uninstall or clear-data"
@@ -1237,9 +1271,11 @@ def build_build_order(spec):
         .get("verified_facts") or []
     if facts:
         steps.append((
-            "Features: implement the %d verified features "
-            "in features.md order (security and network "
-            "facts last, behind their own layers)"
+            "Features: implement the features listed in "
+            "features.md (derived from the %d verified "
+            "facts in investigation.json) in features.md "
+            "order (security and network facts last, "
+            "behind their own layers)"
             % len(facts),
             "each feature demonstrably produces the "
             "effect its features.md entry records",

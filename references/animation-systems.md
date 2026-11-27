@@ -148,3 +148,43 @@ python3 scripts/nar-anim.py spriter.scml
 ```text
 [spriter] spriter.scml (decoded) — entity_count=1
 ```
+
+## gif
+
+Status: **supported** · Fidelity: structural-summary · Test: `tests/unit/test_phase2_anim.py::test_gif_decoded_frame_walk`
+
+Detection: GIF87a/GIF89a magic at the member start, then a structural block walk (logical screen descriptor, image descriptors, graphic-control extensions, the NETSCAPE2.0 looping extension) that must reach the trailer byte before a frame count is claimed; a member whose walk falls short degrades to identified-only with the header facts.
+
+```bash
+python3 scripts/nar-anim.py <target>
+```
+
+```text
+[gif] assets/loading.gif (decoded) — frame_count=12
+```
+
+## pag
+
+Status: **partial** · Fidelity: identified-only · Test: `tests/unit/test_phase2_anim.py::test_pag_member_identified_only`
+
+Identification only: a .pag member is recognised by its extension and size/header facts are emitted; the PAG tag-stream decode is not implemented.
+
+Detection: extension plus header facts by `nar-anim`; see the status/reason above for the honest decode boundary.
+
+```bash
+python3 scripts/nar-anim.py <target>
+```
+
+## android-view
+
+Status: **supported** · Fidelity: structural-summary · Test: `tests/unit/test_phase2_anim.py::test_android_view_axml_decoded`
+
+Detection: members under `res/anim`/`res/animator` directories (including qualifier variants) whose XML root is an animation element (`set`, `objectAnimator`, `animator`, the transform/alpha leaf elements); binary AXML and text XML are both parsed, and a member that fails to parse degrades to identified-only. `animated-vector` roots are deliberately not claimed.
+
+```bash
+python3 scripts/nar-anim.py <target>
+```
+
+```text
+[android-view] res/anim/fade_in.xml (decoded) — element_count=1
+```
