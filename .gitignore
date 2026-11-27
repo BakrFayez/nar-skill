@@ -28,3 +28,8 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Oracle harness fixtures are regenerated deterministically by
+# tests/benchmarks/build_oracle_fixtures.py — never commit binaries.
+tests/benchmarks/fixtures/*.dex
+tests/benchmarks/fixtures/*.apk

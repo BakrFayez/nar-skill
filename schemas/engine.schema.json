@@ -24,6 +24,10 @@
     },
     "native_no_engine": {
      "type": "boolean"
+    },
+    "unknown_engine": {
+     "description": "Field round additive flag: true when the target carries substantial native code with no detected engine and the verdicts carry an explicit Unknown / custom engine record instead of the plain-native label.",
+     "type": "boolean"
     }
    },
    "type": "object"
@@ -116,6 +120,10 @@
        "string",
        "null"
       ]
+     },
+     "unknown_engine": {
+      "description": "Field round additive flag: true only on the explicit Unknown / custom engine verdict record emitted when substantial native code carries no known engine signatures.",
+      "type": "boolean"
      },
      "score": {
       "maximum": 100,

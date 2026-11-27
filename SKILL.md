@@ -2,7 +2,7 @@
 name: nar
 description: "Reverse engineer any Android APK or AAB (apps and games) with CLI tools: triage and inventory, manifest and resources, DEX/smali analysis, jadx decompilation, native libraries and JNI, game engines (Unity/Unreal/Godot), Unity IL2CPP deep analysis, Flutter/Dart, app bundles, network traffic, Frida scripts, signatures, version comparison, feature maps, and legacy (Android 4.x-7) and modern (Android 14/15/16) analysis."
 metadata:
-  version: "3.0.2"
+  version: "3.0.3"
 ---
 
 # NAR: Nirous Android Reversing
@@ -70,6 +70,11 @@ APK untouched; all work happens on copies and extracted output.
 Choose the first step from the question, not from habit. Start every
 investigation with triage unless the question already names a deeper target.
 
+Interpreter note: the table's commands are written as `python3 …`; on
+Windows machines where `python3` is the Microsoft Store stub, run them
+with `python` or `py -3` instead — see
+[setup and doctor](references/setup-and-doctor.md).
+
 | Question | First step | Guide |
 |---|---|---|
 | What is this APK? Package, version, size, DEX/.so inventory | `python3 scripts/nar-triage.py app.apk` | [triage and inventory](references/triage-and-inventory.md) |
@@ -124,6 +129,23 @@ investigation with triage unless the question already names a deeper target.
 | How do I open this file at all? (unpack chain) | Work outermost-first: delivery container → APK → asset containers → staged DEX | [triage and inventory](references/triage-and-inventory.md) (Unpacking section) |
 | System app from `/system` or `/system/priv-app`? | `adb pull`, then triage + `nar-perms.py` (sharedUserId, platform signature) | [triage and inventory](references/triage-and-inventory.md) |
 | What data does it store on the device? | `run-as` pull, sqlite3 read-only, shared_prefs XML | [dynamic analysis](references/dynamic-analysis.md) |
+
+Split sets under `nar analyze`: the target is resolved before any
+stage runs, and splits are merged by default in every hand-over
+shape — a container (`.apks` / `.xapk` / `.apkm` / `.zip`)
+contributes its contained splits; a lone base APK discovers its
+sibling splits in the same directory (membership is proven, never
+assumed: a sibling's manifest package must match the base's, and
+it must declare itself a split, carry a split-shaped name, or the
+base must carry bundle split evidence); a directory target is
+taken as the set itself, with the base picked by the shared rule.
+Opt out with `--no-merge-splits` or `NAR_NO_MERGE_SPLITS=1`. When
+a set is detected but not fully merged, the report's limitations
+say so — "split set incomplete — native layer may be
+under-reported … engine and native verdicts cover the base APK
+only" — and the case record's `split_set` block lists what was
+merged and what was skipped, with reasons. The fingerprint and
+decompile stages always run on the base APK, merged or not.
 
 If the user says only "my app" without a name, path, or target already
 selected for this task, ask which app before searching for artifacts. Paths

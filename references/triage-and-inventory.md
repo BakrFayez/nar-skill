@@ -228,7 +228,10 @@ Details that are easy to misread:
   file in every APK of the set and a splits manifest
   (`res/xml/splits*.xml`) in the base. Triage reports the evidence
   instead of printing the pure-DEX line; triage the splits before
-  concluding anything about native code.
+  concluding anything about native code. `nar analyze` acts on
+  the same evidence: handed the base alone, it discovers and
+  merges the set before any stage runs (see "Split APKs, APKS,
+  and AAB" below).
 - **No META-INF signing files is normal for v2/v3-only APKs**: the
   APK Signing Block carries the signature, so there are no `.RSA` /
   `.SF` files to find. Triage's signing line says which case applies.
@@ -330,6 +333,28 @@ marker:
 Modern Play installs are often split: one base APK plus config splits
 (`config.arm64_v8a`, `config.en`, `config.xxxhdpi`, ...). An `.apks` file
 is a ZIP of those APKs. An `.aab` is the bundle they are generated from.
+
+`nar analyze` treats the set as one target. Resolution happens
+before any stage runs, and merging is the default in every
+hand-over shape: a container file contributes its contained
+splits; a base APK handed over alone discovers its sibling splits
+in the same directory — membership is proven, not assumed (the
+sibling's package, read from its binary manifest, must equal the
+base's, and the sibling must declare itself a split, carry a
+split-shaped name such as `config.arm64_v8a`, or the base must
+carry bundle split evidence); a directory target is taken as the
+set itself, with the base picked by the shared rule.
+`--no-merge-splits` (or `NAR_NO_MERGE_SPLITS=1`) opts out. The
+case record's `split_set` block states the resolution, the
+members merged, and anything skipped with its reason. When a set
+is detected but not fully merged — merging declined, or no
+siblings found beside a base that carries split evidence — the
+report's limitations carry the explicit line "split set
+incomplete — native layer may be under-reported", with the
+reason, instead of presenting a base-only engine or native
+verdict as the whole app. The fingerprint and decompile stages
+always run on the base APK, merged or not. Triage itself stays
+per-file: the steps below are how a set is triaged by hand.
 
 Triage a set as a set:
 

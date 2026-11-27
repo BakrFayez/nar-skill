@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 3.0.3 — Field-findings fix release (2026-11-27)
+
+Fixes driven by real user testing of 3.0.2 — a split-APK game with a statically linked custom engine, analysed on Windows. No new features beyond the corrections below.
+
+- Split sets: `nar analyze` on a lone base APK now discovers same-package sibling splits in its directory and merges them by default (`--no-merge-splits` / `NAR_NO_MERGE_SPLITS` opts out); a directory holding a split set is accepted as a target; the case record carries a `split_set` block with per-member provenance, and an incomplete set surfaces the explicit limitation "split set incomplete — native layer may be under-reported" instead of a bare not-detected verdict. Triage's split evidence is now consumed by analyze.
+- Tool identity: jadx resolution validates identity — the registry gains the `NAR_JADX_JAR` jar route, the version output must match the jadx identity pattern, a mismatch is rejected with a named `tool_identity_mismatch` record and resolution falls through to the next candidate; the doctor executes each jadx candidate instead of checking file existence. Fallback Records carry the identity outcome, and an identity-validated jadx that produces no sources is reported as such.
+- Windows: the doctor and triage find `apksigner.bat` / `.cmd` in SDK build-tools (triage launches it via `cmd /c`); registry interpreter resolution falls through a broken `python3` (the Microsoft Store stub) to `python` / `py -3`; the default Windows SDK location (`%LOCALAPPDATA%\Android\Sdk`) is in every discovery list; PyGhidra is documented as the fallback when headless Ghidra script execution fails.
+- Engines: a native-strings evidence channel cites engine signature tokens found in library strings, weighted below path and JNI evidence; Cocos2d-x 2.x patterns added, and `nar-cocos` verdicts now count version evidence; a target with substantial native code but no matching engine is classified as an unknown/custom engine with its evidence instead of an affirmative "no engine" label — boundary: the classification requires at least two export-carrying libraries or surviving engine strings.
+- Native analysis: physics-engine detection (Box2D / Chipmunk) draws on dynsym, symtab and string evidence and is wired into analyze's native summary; a development-artifacts section reports gettext files, embedded source-path references and R.U.B.E. scene markers.
+- Guides: the Cocos2d-x guide gains Legacy (2.x), Static-linking and Custom-pipeline profiles and a fallback analysis path; split-set behaviour is documented in SKILL.md and the triage reference; the setup guide separates what CI proves from out-of-box compatibility.
+- Oracle validation: an independent-oracle harness is committed under `tests/benchmarks/` (a dexdump differential for the DEX census; independently derived engine and native-inventory expectations) over small SYNTHETIC fixtures, labelled as such; security-finding accuracy remains NONE by design — no independent oracle exists for it.
+- CI: the Windows doctor leg installs the documented toolchain and gates on the full core verdict (the `|| true` discard is removed); cli-smoke runs the doctor, triage and engines on Windows, beyond `--help`; a new windows-clean-env job installs only what the setup guide documents. The workflow defines eleven jobs expanding to nineteen runs, and the release gate is that all 19 jobs pass on the first hosted run — until that run completes, the new legs are NOT RUN. Physical-device validation remains NOT RUN.
+- Tests: 74 regression tests added in six new modules across the round (battery: 1590 passed).
+
 ## 3.0.2 — Certification fix release (2026-11-27)
 
 The "NAR 3.0.1 — Final Quality & Certification" rounds, published as a patch. No new features.
@@ -26,8 +40,9 @@ The "NAR 3.0.1 — Final Quality & Certification" rounds, published as a patch. 
   budget (ctypes prototypes), PATHEXT executable probing,
   and test-layer fixture/resolution corrections — closed by
   a pycache-snapshot fix in the doctor compile test. Hosted
-  run #42 is fully green: all 18 jobs pass on Linux, macOS
-  and Windows. Details in the post-publication addendum of
+  run #42 is fully green: all 18 CI jobs pass on Linux, macOS
+  and Windows (the workflow as constituted for that release).
+  Details in the post-publication addendum of
   docs/NAR_3.0.0_UPDATE_REPORT.md.
 
 ## 3.0.0 — the answer release (2026-11-25; prepared on the `3.0.0` branch; final acceptance group complete — publication is the owner's decision)

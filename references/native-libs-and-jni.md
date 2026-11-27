@@ -307,6 +307,31 @@ that project, or drive it with your own GhidraScript. Note: Ghidra
 12.2 ships no script named `Decompile`, so `-postScript Decompile`
 fails. Do not copy that flag from older tutorials without checking.
 
+On Windows the headless launcher is `support/analyzeHeadless.bat`
+inside the Ghidra install directory (the extensionless
+`analyzeHeadless` name is the POSIX form).
+
+### PyGhidra fallback
+
+When `analyzeHeadless` script execution itself fails — for example
+the script JIT failing on Windows — drive Ghidra through PyGhidra
+instead of giving up on the library. PyGhidra runs Ghidra from
+Python (it ships with Ghidra and is also installable with
+`pip install pyghidra`), so the same import, auto-analysis, and
+decompile steps run without the headless script machinery:
+
+```python
+import pyghidra
+pyghidra.run_script("work/libexample.so", "YourScript.py")
+# or open a program directly and work with the decompiler API
+with pyghidra.open_program("work/libexample.so") as flat_api:
+    ...
+```
+
+Treat PyGhidra output with the same discipline as headless output:
+pseudocode is an approximation, and unresolved indirect calls stay
+unknowns.
+
 Practical rules:
 
 - Analyze one library at a time. A 150 MB `libxul.so` or `libUE4.so`

@@ -110,6 +110,48 @@ python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
 {"path": "assets/f.flac", "type": "flac-audio", "category": "audio", "size_bytes": 11}
 ```
 
+## gettext-mo
+
+Extensions: `.mo` · Category: data · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+Compiled gettext message catalog. A shipped catalog is a development artifact: nar-assets also lists it in the report's `development_artifacts` section.
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.mo", "type": "gettext-mo", "category": "data", "size_bytes": 11}
+```
+
+## gettext-po
+
+Extensions: `.po` · Category: data · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+Portable gettext message catalog (source form). Its `#:` source references are source-tree evidence: nar-assets collects them in the report's `development_artifacts` section.
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.po", "type": "gettext-po", "category": "data", "size_bytes": 11}
+```
+
+## gettext-pot
+
+Extensions: `.pot` · Category: data · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary
+
+Portable gettext message template (extraction source form) — a build-pipeline artifact when shipped; listed in the report's `development_artifacts` section.
+
+```bash
+python3 scripts/nar-assets.py <synthetic-fixture.apk> --json
+```
+
+```json
+{"path": "assets/f.pot", "type": "gettext-pot", "category": "data", "size_bytes": 11}
+```
+
 ## gif-image
 
 Extensions: `.gif` · Category: texture · Parser: `nar-assets` · Status: **supported** · Fidelity: structural-summary

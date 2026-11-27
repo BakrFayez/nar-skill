@@ -331,6 +331,25 @@ Game logic for C++ Cocos games is native code in the `.so`, analyzed
 with Ghidra or Kuna. For JS games, the `.js` files in `assets/` are
 the game code and are readable directly.
 
+The canonical names above are only one packaging profile. Cocos2d-x
+— 2.x-era builds especially — is often statically linked into a
+single generically-named library (such as `libgame.so`), sometimes
+with renamed libraries throughout and content shipped through a
+custom pipeline under nonstandard asset paths, so neither the
+canonical filename nor the `assets/res`/`assets/src` layout appears.
+The fallback path for that shape: check the strings inside the
+native libraries (a `cocos2d-x <version>` banner is near-conclusive;
+`cocos2d::`/`CCDirector` strings alone are only a lead —
+`nar-engines` scores the banner as a detection and records the weak
+tokens as a candidate), and run `nar-cocos` manually even when
+`nar-engines` found nothing, because its .plist scan is
+path-independent and its version-string scan is name-independent
+(`nar-engines --deep` only routes to the deep dive for a family
+that is already detected). A build stripped of exports, payload
+files and engine strings alike is not statically attributable; a
+substantial native target of that kind is reported as an
+unknown / custom engine rather than as plain native code.
+
 ### libGDX
 
 libGDX is a Java game framework with a thin native layer:

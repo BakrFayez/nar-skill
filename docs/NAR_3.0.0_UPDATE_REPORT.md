@@ -701,10 +701,11 @@ v3.0.0 tag itself is unchanged and predates these fixes):
   doctor-compile test's own bash-resolution import polluted
   its pycache snapshot on cold-cache subset runs.
 - Snapshot fix (1 commit): resolve bash before the
-  snapshot. **Run #42: FULLY GREEN — all 18 jobs PASS
+  snapshot. **Run #42: FULLY GREEN — all 18 CI jobs PASS
   (syntax, schema, fuzz, benchmark and docs smokes,
   security-regression, and cli-smoke / doctor / e2e-public
-  / unit on Linux, macOS and Windows).**
+  / unit on Linux, macOS and Windows — the workflow as
+  constituted for that release).**
 
 DoD item 4 therefore closes as PASS by hosted execution.
 Physical-device runtime validation remains NOT RUN (the
@@ -715,3 +716,15 @@ e2e 68/68 private + 15/0/48 public, doctor READY.
 On the owner's decision (2026-11-26) these fixes shipped
 as the patch release **3.0.1** (tag v3.0.1); the
 3.0.1 tree is the final tree measured above.
+
+## Addendum — 3.0.3 publication (2026-11-27)
+
+The field-findings release (3.0.3) carries a workflow
+revision prepared in the P2 round: with the
+windows-clean-env job added, the workflow defines
+eleven jobs expanding to all 19 jobs on the hosted
+matrix. The run-#42 statements above describe the
+workflow as constituted for the 3.0.1 release and stand
+unchanged in substance. The revision's new legs are
+NOT RUN until the first hosted run of the 3.0.3 tree
+completes; physical-device validation remains NOT RUN.

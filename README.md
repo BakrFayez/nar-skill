@@ -7,7 +7,7 @@
 
 An AI agent skill for Android APK reverse engineering — all apps and games, old and new.
 
-Version 3.0.2
+Version 3.0.3
 NAR covers regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
 
 Clone this repo and you have a working skill. Drop it into your agent's skills folder and start triaging APKs.
@@ -39,6 +39,10 @@ bash scripts/nar-doctor.sh
 python3 scripts/nar-triage.py app.apk
 ```
 
+Windows note: where `python3` is the Microsoft Store stub, run the
+examples with `python` or `py -3` instead — see
+[setup and doctor](references/setup-and-doctor.md).
+
 One command for the full 2.0 workup (case directory with
 report.md + report.json + offline report.html, companion
 evidence files, execution log, and a resumable stage cache):
@@ -55,7 +59,7 @@ Then open `SKILL.md` and follow the routing table for your question.
 
 ## Latest release
 
-**3.0.2** — certification fix release: the accuracy, ask, blueprint, security and robustness corrections of the "NAR 3.0.1 — Final Quality & Certification" rounds, with the full CI matrix green on Linux, macOS and Windows. No new features. Certification statement: Partially Verified (scoped) — 6 of 12 readiness conditions verified, the rest measured and below target or not run (physical-device validation is NOT RUN). Full record: [CHANGELOG.md](CHANGELOG.md) (3.0.2 section).
+**3.0.3** — field-findings fix release: corrections driven by real user testing of 3.0.2 — split sets merge by default (sibling discovery for a lone base APK, directory targets, an explicit incomplete-set limitation), jadx identity validation, Windows toolchain fixes (apksigner .bat discovery, interpreter fallthrough past a broken python3 stub, the SDK default location in every discovery list), a native-strings engine-evidence channel with Cocos2d-x 2.x patterns and unknown/custom-engine classification, physics and development-artifact detection in native analysis, and a committed independent-oracle harness. CI gains a gating Windows doctor leg, real triage/engines smoke on Windows and a clean-environment Windows job; the new legs are NOT RUN until this release's first hosted run, and physical-device validation remains NOT RUN. Full record: [CHANGELOG.md](CHANGELOG.md) (3.0.3 section).
 
 Version history lives in [CHANGELOG.md](CHANGELOG.md); binaries and notes for published releases are on the [releases page](https://github.com/BakrFayez/nar-skill/releases).
 
@@ -475,6 +479,9 @@ nar-skill/
     benchmarks/
       run_benchmarks.py     Fixture-corpus benchmark runner (timings, accuracy metrics, peak memory)
       check_regression.py   Regression gate over the committed baselines
+      oracle_dexdump.py     Independent-oracle differential: dex/dexdis vs dexdump (see benchmarks/README.md)
+      oracle_inventory.py   Independent-oracle differential: native inventory + JNI census vs an in-harness ELF reader
+      build_oracle_fixtures.py  Regenerates the synthetic oracle fixtures under benchmarks/fixtures/
       baseline-2.5.2.json   Per-release performance baselines (2.5.2 … 3.0.0)
       baseline-2.6.0.json
       baseline-2.6.1.json
@@ -501,6 +508,22 @@ bash tests/run_e2e.sh   # needs the local fixture corpus via $NAR_FIXTURES
 ```
 
 See the "Test categories" section of `docs/NAR_TEST_MATRIX.md` for what each category needs and what an absence produces.
+
+### What CI proves — and what it does not
+
+CI green means the unit battery, the schema and docs-consistency
+suites, the doctor's interpreter resolution and self-checks, the
+`--help` surface of every script, and the fixture-free slice of
+the e2e harness pass on hosted Linux, macOS and Windows runners.
+It does not prove a clean stock-Windows install: no CI job
+installs a consumer toolchain (JDK, Android SDK build-tools,
+jadx, apktool) and runs the documented commands against it, and
+much of the Windows platform layer is covered by
+simulated-Windows unit tests rather than real consumer-installed
+tools. A clean-environment Windows job is prepared but not yet
+landed; until it runs, clean-install Windows compatibility is
+stated as NOT RUN, and out-of-box Windows support is bounded by
+the requirements in [setup and doctor](references/setup-and-doctor.md).
 
 ## Legitimate use
 
