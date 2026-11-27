@@ -23,13 +23,35 @@ fi
 # Candidate locations for SDK tools that are often not on PATH.
 SDK_CANDIDATES="${ANDROID_HOME:-} ${ANDROID_SDK_ROOT:-} $HOME/Android/Sdk $HOME/workspace/android-sdk $HOME/android-sdk /opt/android-sdk /usr/lib/android-sdk"
 find_sdk_tool() {
-  local tool="$1" dir ver
+  local tool="$1" dir ver ext
+  local -a dirs=()
   for dir in $SDK_CANDIDATES; do
-    [ -z "$dir" ] && continue
+    [ -n "$dir" ] && dirs+=("$dir")
+  done
+  # The Android Studio default SDK location on Windows
+  # (%LOCALAPPDATA%\Android\Sdk) is not in SDK_CANDIDATES:
+  # the path carries backslashes and usually spaces, which
+  # the space-separated list cannot hold. Normalise the
+  # separators (Git Bash accepts C:/... paths) and add it
+  # as a single quoted entry (field round F-32).
+  if [ -n "${LOCALAPPDATA:-}" ]; then
+    dirs+=("${LOCALAPPDATA//\\//}/Android/Sdk")
+  fi
+  for dir in "${dirs[@]}"; do
     for ver in $(ls "$dir/build-tools" 2>/dev/null | sort -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr); do
       if [ -x "$dir/build-tools/$ver/$tool" ]; then echo "$dir/build-tools/$ver/$tool"; return 0; fi
+      # Windows SDK tools ship with a PATHEXT suffix (apksigner.bat,
+      # analyzeHeadless-style launchers): bash performs no PATHEXT
+      # resolution, so try the suffixed names explicitly. Existence
+      # is the honest test for the suffixed forms under Git Bash.
+      for ext in exe bat cmd; do
+        if [ -f "$dir/build-tools/$ver/$tool.$ext" ]; then echo "$dir/build-tools/$ver/$tool.$ext"; return 0; fi
+      done
     done
     if [ -x "$dir/platform-tools/$tool" ]; then echo "$dir/platform-tools/$tool"; return 0; fi
+    for ext in exe bat cmd; do
+      if [ -f "$dir/platform-tools/$tool.$ext" ]; then echo "$dir/platform-tools/$tool.$ext"; return 0; fi
+    done
   done
   return 1
 }
@@ -105,15 +127,41 @@ check "apktool" "core" "$APKTOOL_BIN" "$APKTOOL_DETAIL" "Install apktool 2.7.0+:
 # JDK (JAVA_HOME set, or java on PATH). Run it for real. A jadx that
 # exists but will not start is a warning with the fix, not an OK, and
 # it counts against the core verdict below.
-JADX_BIN="$(command -v jadx || true)"
+# Identity, not mere executability (field round F-04): a candidate
+# counts only when its --version output identifies as jadx — a bare
+# version number ("1.5.3") or "jadx <version>". A wrapper jar or an
+# impostor binary that reports another product is rejected by name
+# (tool_identity_mismatch) and the next candidate is tried, in the
+# same order narlib/registry.py resolves: PATH binary, the workspace
+# CLI layout, then the NAR_JADX_JAR jar (probed by running it, never
+# by existence). The jadx-headless-mcp jar is an MCP server, not the
+# CLI decompiler, and no longer satisfies this check.
+JADX_BIN=""
 JADX_DETAIL=""
 JADX_STATUS=""
+JADX_REJECTED=""
 jadx_try() {
   # Print the version line when the binary actually starts, else fail.
   local out
   out="$("$1" --version 2>&1)" || return 1
   [ -n "$out" ] || return 1
   printf '%s' "$(printf '%s' "$out" | head -n 1)"
+}
+jadx_identity_ok() {
+  # $1 = version line. jadx --version prints a bare version or
+  # "jadx <version>"; anything else is another product.
+  local line="$1"
+  line="${line#jadx }"
+  [[ "$line" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?([-+].*)?$ ]]
+}
+jadx_reject() {
+  # $1 = candidate description, $2 = what it reported.
+  local rec="tool_identity_mismatch: $1 reported '$2'"
+  if [ -n "$JADX_REJECTED" ]; then
+    JADX_REJECTED="$JADX_REJECTED; $rec"
+  else
+    JADX_REJECTED="$rec"
+  fi
 }
 jadx_warn_detail() {
   local home_hint="<path to a JDK 17+>"
@@ -122,27 +170,55 @@ jadx_warn_detail() {
   fi
   printf 'jadx found at %s but it failed to start (its launcher needs a JDK). Fix: export JAVA_HOME=%s and re-run' "$1" "$home_hint"
 }
-if [ -n "$JADX_BIN" ]; then
-  if JADX_VER="$(jadx_try "$JADX_BIN")"; then
-    JADX_DETAIL="jadx $JADX_VER ($JADX_BIN)"
+jadx_try_binary() {
+  # $1 = binary path. Sets JADX_BIN/JADX_DETAIL on a validated
+  # candidate, JADX_STATUS/JADX_DETAIL on a start failure, and
+  # records an identity rejection otherwise.
+  local ver
+  if ver="$(jadx_try "$1")"; then
+    if jadx_identity_ok "$ver"; then
+      JADX_BIN="$1"
+      JADX_DETAIL="jadx $ver ($1)"
+    else
+      jadx_reject "$1" "$ver"
+    fi
   else
     JADX_STATUS="warning"
-    JADX_DETAIL="$(jadx_warn_detail "$JADX_BIN")"
+    JADX_DETAIL="$(jadx_warn_detail "$1")"
   fi
-elif [ -n "${NAR_JADX_JAR:-}" ] && [ -f "$NAR_JADX_JAR" ]; then
-  JADX_BIN="jar:$NAR_JADX_JAR"
-  JADX_DETAIL="jadx via NAR_JADX_JAR=$NAR_JADX_JAR"
-elif [ -x "$HOME/workspace/tools/jadx-cli/bin/jadx" ]; then
-  JADX_BIN="$HOME/workspace/tools/jadx-cli/bin/jadx"
-  if JADX_VER="$(jadx_try "$JADX_BIN")"; then
-    JADX_DETAIL="jadx $JADX_VER ($JADX_BIN)"
-  else
+}
+JADX_PATH_BIN="$(command -v jadx || true)"
+if [ -n "$JADX_PATH_BIN" ]; then
+  jadx_try_binary "$JADX_PATH_BIN"
+fi
+if [ -z "$JADX_BIN" ] && [ -z "$JADX_STATUS" ] \
+    && [ -x "$HOME/workspace/tools/jadx-cli/bin/jadx" ]; then
+  jadx_try_binary "$HOME/workspace/tools/jadx-cli/bin/jadx"
+fi
+if [ -z "$JADX_BIN" ] && [ -z "$JADX_STATUS" ] \
+    && [ -n "${NAR_JADX_JAR:-}" ] && [ -f "$NAR_JADX_JAR" ]; then
+  JADX_JAVA="${JAVA_BIN:-$(command -v java || true)}"
+  if [ -n "$JADX_JAVA" ]; then
+    JADX_JAR_VER="$("$JADX_JAVA" -jar "$NAR_JADX_JAR" --version 2>/dev/null | head -n 1)"
+    if [ -n "$JADX_JAR_VER" ] && jadx_identity_ok "$JADX_JAR_VER"; then
+      JADX_BIN="jar:$NAR_JADX_JAR"
+      JADX_DETAIL="jadx $JADX_JAR_VER via NAR_JADX_JAR=$NAR_JADX_JAR"
+    elif [ -n "$JADX_JAR_VER" ]; then
+      jadx_reject "NAR_JADX_JAR=$NAR_JADX_JAR" "$JADX_JAR_VER"
+    else
+      jadx_reject "NAR_JADX_JAR=$NAR_JADX_JAR" "no version output"
+    fi
+  fi
+fi
+if [ -n "$JADX_REJECTED" ]; then
+  if [ -n "$JADX_BIN" ]; then
+    JADX_DETAIL="$JADX_DETAIL [rejected: $JADX_REJECTED]"
+  elif [ -z "$JADX_STATUS" ]; then
+    # Candidates existed but none validated: name the mismatch
+    # as a warning instead of a bare "missing".
     JADX_STATUS="warning"
-    JADX_DETAIL="$(jadx_warn_detail "$JADX_BIN")"
+    JADX_DETAIL="no jadx candidate validated — $JADX_REJECTED"
   fi
-elif [ -f "$HOME/workspace/tools/rea-engines/jadx/jadx-headless-mcp-0.7.1-all.jar" ]; then
-  JADX_BIN="jar:$HOME/workspace/tools/rea-engines/jadx/jadx-headless-mcp-0.7.1-all.jar"
-  JADX_DETAIL="jadx headless MCP jar (REA engines path; MCP use, not CLI)"
 fi
 check "jadx" "core" "$JADX_BIN" "$JADX_DETAIL" "Install jadx: https://github.com/skylot/jadx/releases (or set NAR_JADX_JAR to a jadx jar)" "$JADX_STATUS"
 

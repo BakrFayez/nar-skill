@@ -18,6 +18,11 @@ signature:
   an SDK built on an engine is not the app's engine,
 - a direct layout pass of its own (IoStore containers, Unity
   Data layout, Flutter assets, Hermes bundles, Godot packs),
+- native-strings evidence: a bounded raw byte-substring scan
+  of every lib/**/*.so for the per-engine string signatures
+  in formats.json (string_signatures) — the channel that
+  survives static linking into a generically-named library,
+  where filename and exported-symbol evidence are both gone,
 - with --deep, the matching deep-dive tool's verdict
   (nar-il2cpp / nar-godot / nar-flutter / nar-rn / nar-unreal),
   which can raise a verdict to confirmed.
@@ -130,6 +135,50 @@ JNI_MAX_LIBRARIES = 128
 JNI_MAX_LIBRARY_BYTES = 256 * 1024 * 1024
 JNI_MAX_SYMBOLS_PER_LIBRARY = 20000
 JNI_SAMPLE_SIZE = 10
+
+# ------------------------------------------------------------------
+# Native-strings evidence (field round, Area 4).
+#
+# A statically-linked engine whose only trace is strings in a
+# generically-named library previously scored nothing and was
+# affirmatively labelled plain native. The string signatures
+# live in formats.json (string_signatures per engine, exposed
+# via ENGINES) and are matched as raw byte substrings, the
+# same technique nar-cocos uses for its version evidence.
+#
+# Weights, deliberately conservative: a strong token (a
+# version banner such as an engine's "name x.y" build string)
+# scores 40 — it ties the detection threshold (40) exactly,
+# so a banner alone is detected/medium, and it stays below
+# the path-signature channel's typical 42 and the JNI
+# channel's 45. Each distinct weak token scores 12, with the
+# weak-only contribution capped at 35: weak strings alone
+# therefore stay a recorded candidate (score < 40, detected
+# = false), never a detection. Weak tokens on top of a strong
+# banner corroborate (40 + up to 35).
+STRING_STRONG_SCORE = 40
+STRING_WEAK_SCORE = 12
+STRING_WEAK_CAP = 35
+# Bounded scan, in the spirit of nar-cocos's NATIVE_CAP:
+# libraries are read one at a time, members over the cap are
+# skipped, and the library count is capped largest-first
+# (engine runtime libraries are large).
+STRING_MAX_LIBRARIES = 128
+STRING_MAX_LIBRARY_BYTES = 64 * 1024 * 1024
+
+# Unknown / custom engine (field round, Area 4): when no
+# engine is detected but the target carries substantial
+# native code, the honest outcome is an explicit unknown
+# record carrying the native evidence, not an affirmative
+# "no engine" label. "Substantial" here means at least two
+# export-carrying libraries: a single small library exporting
+# ANativeActivity_onCreate plus its own package's JNI is the
+# plain-native shape pinned by test_engines_jni_symbols.py
+# (verdicts == [] and native_no_engine true), and that
+# classification is preserved; a multi-library native payload
+# with zero known signatures is where a custom or unknown
+# engine can actually hide.
+UNKNOWN_MIN_LIBRARIES_WITH_EXPORTS = 2
 
 
 _ALPHA_RUN = re.compile(r"[A-Za-z]+")
@@ -253,7 +302,9 @@ def jni_evidence(apk_path, extra_paths=None):
     archive they came from. Returns {"per_engine":
     {canonical: {matched, count, strong, weak, libraries,
     bridge_only, bridge_symbols}}, "libraries_scanned": int,
-    "libraries_with_exports": int, "anative_activity": bool}.
+    "libraries_with_exports": int, "anative_activity": bool,
+    "libraries": [paths of libraries with exports, in scan
+    order (largest first within each archive)]}.
     bridge_only is True when every contributing library's
     family matches sit under a known SDK bridge prefix.
     A member that is not a parseable ELF, or exceeds the
@@ -262,7 +313,8 @@ def jni_evidence(apk_path, extra_paths=None):
     """
     result = {"per_engine": {}, "libraries_scanned": 0,
               "libraries_with_exports": 0,
-              "anative_activity": False}
+              "anative_activity": False,
+              "libraries": []}
     for path in [apk_path] + list(extra_paths or []):
         _jni_evidence_one(path, result,
                           qualify=bool(extra_paths))
@@ -303,6 +355,12 @@ def _jni_evidence_one(apk_path, result, qualify=False):
             if not exports:
                 continue
             result["libraries_with_exports"] += 1
+            lib_label = (
+                f"{os.path.basename(apk_path)}:"
+                f"{info.filename}") if qualify \
+                else info.filename
+            if lib_label not in result["libraries"]:
+                result["libraries"].append(lib_label)
             if "ANativeActivity_onCreate" in exports:
                 result["anative_activity"] = True
             matches = match_jni_symbols(exports)
@@ -352,6 +410,72 @@ def _jni_evidence_one(apk_path, result, qualify=False):
                     else info.filename
                 if lib_label not in slot["libraries"]:
                     slot["libraries"].append(lib_label)
+
+
+def native_strings_evidence(apk_path, extra_paths=None):
+    """Raw string-signature evidence from every lib/**/*.so.
+
+    Scans each archive once (scan_path plus merged splits,
+    mirroring jni_evidence): every engine's string_signatures
+    tokens are searched as raw byte substrings in each
+    library's bytes. Returns {canonical: {"hits": [{"token",
+    "strong", "library"}], "strong_tokens": [...],
+    "weak_tokens": [...]}} with token lists distinct per
+    engine (a token found in two libraries scores once, but
+    every hit is recorded with the library that carried it).
+    A member over the byte cap, an unreadable archive, or a
+    read failure contributes no evidence and never fails the
+    scan.
+    """
+    tokens = []
+    for canonical, spec in ENGINES.items():
+        for sig in spec.get("string_signatures") or []:
+            try:
+                raw = sig["token"].encode("ascii")
+            except (UnicodeEncodeError, AttributeError):
+                continue
+            if raw:
+                tokens.append((canonical, sig["token"],
+                               bool(sig.get("strong")), raw))
+    out = {}
+    if not tokens:
+        return out
+    for path in [apk_path] + list(extra_paths or []):
+        qualify = bool(extra_paths)
+        try:
+            zf = zipfile.ZipFile(path)
+        except (zipfile.BadZipFile, OSError):
+            continue
+        with zf:
+            members = [i for i in zf.infolist()
+                       if i.filename.startswith("lib/")
+                       and i.filename.endswith(".so")]
+            members.sort(key=lambda i: (-i.file_size, i.filename))
+            for info in members[:STRING_MAX_LIBRARIES]:
+                if info.file_size > STRING_MAX_LIBRARY_BYTES:
+                    continue
+                try:
+                    data = zf.read(info.filename)
+                except Exception:
+                    continue
+                lib_label = (
+                    f"{os.path.basename(path)}:"
+                    f"{info.filename}") if qualify \
+                    else info.filename
+                for canonical, token, strong, raw in tokens:
+                    if raw not in data:
+                        continue
+                    slot = out.setdefault(canonical, {
+                        "hits": [], "strong_tokens": [],
+                        "weak_tokens": []})
+                    slot["hits"].append({
+                        "token": token, "strong": strong,
+                        "library": lib_label})
+                    bucket = slot["strong_tokens"] if strong \
+                        else slot["weak_tokens"]
+                    if token not in bucket:
+                        bucket.append(token)
+    return out
 
 
 def run_json_tool(script, args, timeout=1800):
@@ -426,10 +550,19 @@ def fuse(apk_path, deep=False, work_dir=None):
     scan_path = apk_path
     extra_paths = []
     if container_mod.detect_container(apk_path) in \
-            container_mod.CONTAINER_KINDS:
-        resolved = container_mod.resolve_target(apk_path)
-        scan_path = resolved.base
-        extra_paths = [s["path"] for s in resolved.splits]
+            container_mod.CONTAINER_KINDS + ("apk",):
+        # A plain APK resolves too, but the resolution is
+        # adopted only when it actually assembled a set (a
+        # container, or a loose split set merged by sibling
+        # discovery — field round F-01); an ordinary lone
+        # APK keeps the single-archive path unchanged.
+        candidate = container_mod.resolve_target(apk_path)
+        if candidate.is_container or candidate.splits:
+            resolved = candidate
+            scan_path = resolved.base
+            extra_paths = [s["path"] for s in resolved.splits]
+        else:
+            candidate.cleanup()
     try:
         return _fuse_resolved(apk_path, scan_path, extra_paths,
                               resolved, deep, work_dir)
@@ -490,6 +623,8 @@ def _fuse_resolved(apk_path, scan_path, extra_paths, resolved,
             merged_dex.values(), key=lambda m: m["marker"])
     layout = layout_evidence(scan_path, extra_paths)
     jni = jni_evidence(scan_path, extra_paths)
+    native_strings = native_strings_evidence(scan_path,
+                                             extra_paths)
     hints = {h["engine"]: h for h in triage.get("engine_hints") or []}
     versions = triage.get("engine_versions") or {}
     dex_markers = {m["marker"] for m in triage.get("dex_markers") or []
@@ -559,6 +694,27 @@ def _fuse_resolved(apk_path, scan_path, extra_paths, resolved,
                     "kind": "dex-marker",
                     "detail": f"DEX marker: {marker}"})
                 break
+        # Native-strings evidence: raw byte substrings in
+        # the target's libraries. A strong version banner
+        # scores STRING_STRONG_SCORE on its own; distinct
+        # weak tokens score STRING_WEAK_SCORE each, capped
+        # at STRING_WEAK_CAP, so weak strings alone stay a
+        # recorded candidate below the detection threshold.
+        # Every hit is an indicator naming the token and
+        # the library that carried it.
+        strings_match = native_strings.get(canonical)
+        if strings_match:
+            if strings_match["strong_tokens"]:
+                score += STRING_STRONG_SCORE
+            score += min(
+                STRING_WEAK_CAP,
+                STRING_WEAK_SCORE
+                * len(strings_match["weak_tokens"]))
+            for hit in strings_match["hits"]:
+                indicators.append({
+                    "kind": "native-strings",
+                    "detail": f"string {hit['token']!r} in "
+                              f"{hit['library']}"})
         # JNI / dynamic-symbol evidence: direct evidence.
         # Alone it scores medium (JNI_SCORE >= 40); with any
         # corroborating indicator for the same family (path,
@@ -676,23 +832,68 @@ def _fuse_resolved(apk_path, scan_path, extra_paths, resolved,
         for v in verdicts:
             if v["engine"] == "React Native" and v["detected"]:
                 v["variant"] = "new architecture (Fabric/TurboModules)"
+    # Unknown / custom engine: no engine was detected, but
+    # the target carries substantial native code (see
+    # UNKNOWN_MIN_LIBRARIES_WITH_EXPORTS). The outcome is an
+    # explicit unknown record carrying the native evidence —
+    # the affirmative plain-native label below is replaced
+    # by it, not duplicated alongside it. A target with no
+    # (or only a single small) native library gets no such
+    # record and its output is unchanged.
+    unknown_engine = bool(
+        not names
+        and jni["libraries_with_exports"]
+        >= UNKNOWN_MIN_LIBRARIES_WITH_EXPORTS)
+    if unknown_engine:
+        inventory = ", ".join(jni["libraries"][:5])
+        verdicts.append({
+            "engine": "Unknown / custom engine",
+            "detected": False,
+            "confidence": "low",
+            "score": 0,
+            "version": None,
+            "recommended_next": None,
+            "unknown_engine": True,
+            "indicators": [
+                {"kind": "native-inventory",
+                 "detail": f"{jni['libraries_with_exports']} "
+                           f"native libraries with exports "
+                           f"(of {jni['libraries_scanned']} "
+                           f"scanned): {inventory}"},
+                {"kind": "native-exports",
+                 "detail": "export-carrying native libraries "
+                           "present, with no known engine "
+                           "family signatures in any channel"},
+                {"kind": "anative-activity",
+                 "detail": "ANativeActivity_onCreate exported"
+                           if jni["anative_activity"] else
+                           "ANativeActivity_onCreate not "
+                           "exported"},
+            ]})
     verdicts.sort(key=lambda v: -v["score"])
-    report = {"tool": "nar-engines", "version": "3.0.2",
+    jni_scan = {
+        "libraries_scanned": jni["libraries_scanned"],
+        "libraries_with_exports":
+            jni["libraries_with_exports"],
+        "anative_activity_oncreate":
+            jni["anative_activity"],
+        # ANativeActivity_onCreate with no family JNI
+        # match and no detected engine is a plain
+        # native app: identified as native, never
+        # scored as an engine. When the unknown-engine
+        # record above fires, that label is replaced:
+        # native_no_engine is false and unknown_engine
+        # is true instead.
+        "native_no_engine": bool(
+            jni["anative_activity"] and not names
+            and not unknown_engine)}
+    if unknown_engine:
+        jni_scan["unknown_engine"] = True
+    report = {"tool": "nar-engines", "version": "3.0.3",
               "target": os.path.abspath(apk_path),
               "target_sha256": sha256_of(apk_path),
               "verdicts": verdicts, "ambiguities": ambiguities,
-              "jni_scan": {
-                "libraries_scanned": jni["libraries_scanned"],
-                "libraries_with_exports":
-                    jni["libraries_with_exports"],
-                "anative_activity_oncreate":
-                    jni["anative_activity"],
-                # ANativeActivity_onCreate with no family JNI
-                # match and no detected engine is a plain
-                # native app: identified as native, never
-                # scored as an engine.
-                "native_no_engine": bool(
-                    jni["anative_activity"] and not names)}}
+              "jni_scan": jni_scan}
     if resolved is not None:
         report["container"] = resolved.container_block()
     return report
@@ -706,7 +907,14 @@ def human(report):
         print("No engine indicators found (native Android or an "
               "engine without known signatures).")
     for v in report["verdicts"]:
-        state = "DETECTED" if v["detected"] else "weak candidate"
+        if v.get("unknown_engine"):
+            state = ("UNKNOWN — substantial native code with "
+                     "no known engine signatures; a custom "
+                     "or unknown engine is possible")
+        elif v["detected"]:
+            state = "DETECTED"
+        else:
+            state = "weak candidate"
         print(f"- {v['engine']}: {state} "
               f"(confidence {v['confidence']}, score {v['score']})")
         if v.get("version"):

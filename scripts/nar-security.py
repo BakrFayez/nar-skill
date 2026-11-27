@@ -95,8 +95,17 @@ def review(target, deep=False, work_dir=None):
     # is recorded under the report's `container` block.
     resolved = None
     if container_mod.detect_container(target) in \
-            container_mod.CONTAINER_KINDS:
-        resolved = container_mod.resolve_target(target)
+            container_mod.CONTAINER_KINDS + ("apk",):
+        # A plain APK resolves too, but the resolution is
+        # adopted only when it actually assembled a set (a
+        # container, or a loose split set merged by sibling
+        # discovery — field round F-01); an ordinary lone
+        # APK keeps the single-archive path unchanged.
+        _candidate = container_mod.resolve_target(target)
+        if _candidate.is_container or _candidate.splits:
+            resolved = _candidate
+        else:
+            _candidate.cleanup()
     perms_target = resolved.base if resolved is not None \
         else target
     perms = run_json_tool("nar-perms.py", [perms_target])
@@ -355,7 +364,7 @@ def review(target, deep=False, work_dir=None):
                     "The bridge may only serve first-party "
                     "bundled pages.",
                     verification_status="STRONGLY_INDICATED")
-    report = {"tool": "nar-security", "version": "3.0.2",
+    report = {"tool": "nar-security", "version": "3.0.3",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target),
               "findings": findings.items,

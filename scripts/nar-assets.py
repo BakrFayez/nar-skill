@@ -41,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import struct
 import sys
 import zipfile
@@ -117,6 +118,9 @@ EXT_TYPES = {
     ".love": ("love-package", "container"),
     ".rcc": ("qt-resource", "container"),
     ".car": ("solar2d-car", "container"),
+    ".po": ("gettext-po", "data"),
+    ".mo": ("gettext-mo", "data"),
+    ".pot": ("gettext-pot", "data"),
 }
 
 
@@ -176,6 +180,11 @@ def magic_type(head):
             b"\x0e\x14\x74\x75\x67\x4a\x03\xfc"
             b"\x4a\x15\x90\x9d\xc3\x37\x7f\x1b"):
         return ("unreal-locres", "data")
+    if head[:4] in (b"\xde\x12\x04\x95", b"\x95\x04\x12\xde"):
+        # Compiled gettext catalog (.mo), little- or
+        # big-endian magic. Binary content, so the magic
+        # must win over the extension discipline check.
+        return ("gettext-mo", "data")
     if head.startswith(b"\x1bLua"):
         return ("lua-script", "code")
     if head.startswith(b"RIVE") and len(head) > 4 \
@@ -557,6 +566,115 @@ def _in_scope(name):
         len(parts) > 1 and parts[1] in ("assets", "res"))
 
 
+# ------------------------------------------------------------------
+# Development-artifact / source-tree leak detection
+#
+# Shipped development artifacts are a generic scanner class:
+# gettext catalogs/templates (whose "#: path:line" source
+# references reveal the source-tree layout), source-file
+# paths embedded in shipped members (build-machine paths in
+# native libraries, relative src/ paths anywhere), and
+# physics-scene editor exports (R.U.B.E.-shaped JSON: a
+# named public export format). Detection is name- and
+# shape-based with conservative content patterns — a source
+# path must carry a source-file extension or a src/ segment,
+# so ordinary asset paths are never flagged.
+# ------------------------------------------------------------------
+
+#: Per-member content window for the dev-artifact scan.
+#: Members larger than _DEV_SCAN_HUGE are not content-scanned
+#: at all (name-based gettext listing still applies); other
+#: members are scanned over their first _DEV_SCAN_CAP bytes.
+_DEV_SCAN_CAP = 1 << 20
+_DEV_SCAN_HUGE = 64 * 1024 * 1024
+
+_GETTEXT_EXTS = (".po", ".mo", ".pot")
+
+_SRC_EXT = rb"(?:c|cc|cpp|cxx|h|hh|hpp|java|kt|m|mm)"
+_SOURCE_PATH_RES = (
+    # POSIX build-machine paths: /home/<user>/.../x.cpp,
+    # /Users/<user>/.../x.h
+    re.compile(rb"/(?:home|Users)/[^\s\"'<>\\]+?\." + _SRC_EXT
+               + rb"\b"),
+    # Any absolute path with a src/ segment: /.../src/x.cpp
+    re.compile(rb"/[^\s\"'<>\\]*?/src/[^\s\"'<>\\]+?\." + _SRC_EXT
+               + rb"\b"),
+    # Windows build-machine paths: C:\...\src\x.cpp, D:\...\x.h
+    re.compile(rb"[A-Za-z]:\\[^\s\"'<>]+?\." + _SRC_EXT + rb"\b"),
+    # Bare relative src/ paths (incl. gettext "#: src/x.cpp:12"
+    # source references, whose ":line" suffix stays unmatched).
+    re.compile(rb"(?<![\w./-])src/[^\s\"'<>\\]+?\." + _SRC_EXT
+               + rb"\b"),
+)
+
+
+def _new_dev_accumulator():
+    return {"gettext_files": [], "source_paths": [],
+            "source_seen": set(), "rube_scenes": []}
+
+
+def _dev_scan_member(acc, name, window, file_size):
+    """Fold one member into the dev-artifact accumulator.
+
+    ``window`` is the member's bounded content window (see
+    _DEV_SCAN_CAP); ``file_size`` is its full size."""
+    low = name.lower()
+    if low.endswith(_GETTEXT_EXTS):
+        if name not in acc["gettext_files"]:
+            acc["gettext_files"].append(name)
+    if window:
+        for pattern in _SOURCE_PATH_RES:
+            for match in pattern.findall(window):
+                path = match.decode("utf-8", "replace")
+                if path not in acc["source_seen"]:
+                    acc["source_seen"].add(path)
+                    acc["source_paths"].append(path)
+    if low.endswith(".json") and 0 < file_size <= _DEV_SCAN_CAP:
+        try:
+            doc = json.loads(window.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            doc = None
+        if isinstance(doc, dict) \
+                and isinstance(doc.get("body"), list) \
+                and isinstance(doc.get("joint"), list) \
+                and any(isinstance(b, dict)
+                        and isinstance(b.get("fixture"), list)
+                        for b in doc["body"]):
+            acc["rube_scenes"].append({
+                "member": name,
+                "marker": "rube-physics-scene"})
+
+
+def _accumulate_dev_artifacts(acc, archive_path):
+    """Dev-artifact pass over EVERY member of one archive
+    (native libraries included — they are outside the asset
+    inventory scope but are exactly where embedded
+    build-machine source paths live)."""
+    with zipfile.ZipFile(archive_path) as zf:
+        for info in zf.infolist():
+            name = info.filename
+            if name.endswith("/"):
+                continue
+            window = b""
+            if info.file_size <= _DEV_SCAN_HUGE:
+                with zf.open(name) as fh:
+                    window = fh.read(_DEV_SCAN_CAP)
+            _dev_scan_member(acc, name, window, info.file_size)
+
+
+def _dev_artifacts_report(acc):
+    return {
+        "gettext_files": acc["gettext_files"],
+        "source_path_references": {
+            "count": len(acc["source_paths"]),
+            "examples": acc["source_paths"][:10]},
+        "rube_scenes": acc["rube_scenes"],
+        "counts": {
+            "gettext_files": len(acc["gettext_files"]),
+            "source_path_references": len(acc["source_paths"]),
+            "rube_scenes": len(acc["rube_scenes"])}}
+
+
 def inventory(target, merge_splits=True):
     if not merge_splits:
         return _inventory_single(target)
@@ -593,6 +711,9 @@ def _inventory_merged(target, resolved):
         if obb["path"] not in seen_roots:
             roots.append((obb["path"], True))
             seen_roots.add(obb["path"])
+    dev_acc = _new_dev_accumulator()
+    for root, _whole in roots:
+        _accumulate_dev_artifacts(dev_acc, root)
     for root, whole_archive in roots:
         archive_name = os.path.basename(root)
         with zipfile.ZipFile(root) as zf:
@@ -671,7 +792,7 @@ def _inventory_merged(target, resolved):
             by_category.get(a["category"], 0) + 1
         assets_by_split[a["source_split"]] = \
             assets_by_split.get(a["source_split"], 0) + 1
-    report = {"tool": "nar-assets", "version": "3.0.2",
+    report = {"tool": "nar-assets", "version": "3.0.3",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target),
               "assets": assets, "total_assets": len(assets),
@@ -679,9 +800,11 @@ def _inventory_merged(target, resolved):
               "duplicates": duplicates,
               "by_category": by_category,
               "assets_by_split": assets_by_split,
+              "development_artifacts": _dev_artifacts_report(
+                  dev_acc),
               "largest": sorted(
                   assets, key=lambda a: -a["size_bytes"])[:10]}
-    if resolved.is_container:
+    if resolved.is_container or resolved.split_set is not None:
         report["container"] = resolved.container_block()
     return report
 
@@ -690,6 +813,8 @@ def _inventory_single(target):
     assets = []
     by_hash = {}
     total_bytes = 0
+    dev_acc = _new_dev_accumulator()
+    _accumulate_dev_artifacts(dev_acc, target)
     with zipfile.ZipFile(target) as zf:
         for info in zf.infolist():
             name = info.filename
@@ -751,12 +876,14 @@ def _inventory_single(target):
     for a in assets:
         by_category[a["category"]] = \
             by_category.get(a["category"], 0) + 1
-    return {"tool": "nar-assets", "version": "3.0.2",
+    return {"tool": "nar-assets", "version": "3.0.3",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "assets": assets, "total_assets": len(assets),
             "total_bytes": total_bytes, "duplicates": duplicates,
             "by_category": by_category,
+            "development_artifacts": _dev_artifacts_report(
+                dev_acc),
             "largest": sorted(assets, key=lambda a: -a["size_bytes"]
                               )[:10]}
 
@@ -769,6 +896,20 @@ def human(report, top=10):
           f"({report['total_bytes']:,} bytes) — "
           f"{report['by_category']}")
     print(f"Duplicate groups: {len(report['duplicates'])}")
+    dev = report.get("development_artifacts") or {}
+    dev_counts = dev.get("counts") or {}
+    if any(dev_counts.values()):
+        print("Development artifacts:")
+        if dev.get("gettext_files"):
+            print(f"  gettext files: "
+                  f"{', '.join(dev['gettext_files'])}")
+        refs = dev.get("source_path_references") or {}
+        if refs.get("count"):
+            print(f"  source path references: {refs['count']} "
+                  f"(e.g. {', '.join(refs.get('examples', [])[:3])})")
+        if dev.get("rube_scenes"):
+            print(f"  R.U.B.E. scenes: "
+                  f"{', '.join(s['member'] for s in dev['rube_scenes'])}")
     if report.get("assets_by_split"):
         print(f"Assets by archive: {report['assets_by_split']}")
     cont = report.get("container")

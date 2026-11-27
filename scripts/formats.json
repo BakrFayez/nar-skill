@@ -119,6 +119,16 @@
     "weak_prefixes": [],
     "weak_substrings": []
    },
+   "string_signatures": [
+    {
+     "token": "++UE4+Release-",
+     "strong": true
+    },
+    {
+     "token": "++UE5+Release-",
+     "strong": true
+    }
+   ],
    "paths": [
     "libue4.so",
     "libunreal.so",
@@ -169,6 +179,12 @@
     "weak_prefixes": [],
     "weak_substrings": []
    },
+   "string_signatures": [
+    {
+     "token": "Godot Engine v",
+     "strong": true
+    }
+   ],
    "paths": [
     "libgodot"
    ],
@@ -349,6 +365,24 @@
     "weak_prefixes": [],
     "weak_substrings": []
    },
+   "string_signatures": [
+    {
+     "token": "cocos2d-x ",
+     "strong": true
+    },
+    {
+     "token": "cocos2d::",
+     "strong": false
+    },
+    {
+     "token": "CCDirector",
+     "strong": false
+    },
+    {
+     "token": "CocosDenshion",
+     "strong": false
+    }
+   ],
    "paths": [
     "libcocos2dcpp.so",
     "libcocos2djs.so"
@@ -1232,6 +1266,36 @@
    "status": "supported",
    "fidelity": "structural-summary",
    "test_ref": "tests/unit/test_assets_audio.py::AudioMetadataTest"
+  },
+  "gettext-mo": {
+   "ext": [
+    ".mo"
+   ],
+   "category": "data",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_field_p1_native.py"
+  },
+  "gettext-po": {
+   "ext": [
+    ".po"
+   ],
+   "category": "data",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_field_p1_native.py"
+  },
+  "gettext-pot": {
+   "ext": [
+    ".pot"
+   ],
+   "category": "data",
+   "parser": "nar-assets",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "test_ref": "tests/unit/test_field_p1_native.py"
   },
   "gif-image": {
    "ext": [

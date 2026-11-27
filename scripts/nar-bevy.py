@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import container as _container  # noqa: E402
 
 TOOL = "nar-bevy"
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 MEMBER_CAP = 32 * 1024 * 1024        # per-member read cap
 NATIVE_CAP = 64 * 1024 * 1024        # native scan cap
 RON_CAP = 256 * 1024                 # per-.ron textual scan cap

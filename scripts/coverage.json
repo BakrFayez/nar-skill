@@ -606,6 +606,45 @@
    "parser": "nar-assets"
   },
   {
+   "id": "gettext-mo",
+   "name": "gettext-mo",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_field_p1_native.py",
+   "ext": [
+    ".mo"
+   ],
+   "parser": "nar-assets"
+  },
+  {
+   "id": "gettext-po",
+   "name": "gettext-po",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_field_p1_native.py",
+   "ext": [
+    ".po"
+   ],
+   "parser": "nar-assets"
+  },
+  {
+   "id": "gettext-pot",
+   "name": "gettext-pot",
+   "status": "supported",
+   "fidelity": "structural-summary",
+   "reason": null,
+   "probe": null,
+   "test_ref": "tests/unit/test_field_p1_native.py",
+   "ext": [
+    ".pot"
+   ],
+   "parser": "nar-assets"
+  },
+  {
    "id": "gif-image",
    "name": "gif-image",
    "status": "supported",

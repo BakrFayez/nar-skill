@@ -250,6 +250,18 @@ def _attempt_from_raw(spec, raw, duration, repair=None):
                "duration_s": round(duration, 3)}
     if repair:
         attempt["repair"] = repair
+    if (raw or {}).get("tool_identity"):
+        # The serving/failed tool's identity verdict (field
+        # round F-04): the record states whether the tool
+        # was validated as the tool it claims to be.
+        attempt["tool_identity"] = raw["tool_identity"]
+    if (raw or {}).get("identity_rejections"):
+        # Candidates rejected before this one served (or
+        # before the rung failed): the named record that a
+        # wrapper / impostor / broken override was passed
+        # over, with what it reported instead.
+        attempt["identity_rejections"] = \
+            raw["identity_rejections"]
     status = (raw or {}).get("status")
     if status == "ok":
         attempt["status"] = "ok"
@@ -448,6 +460,11 @@ def _adapter_failure(result):
            "detail": detail}
     if result.get("install_hint"):
         raw["install_hint"] = result["install_hint"]
+    if result.get("tool_identity"):
+        raw["tool_identity"] = result["tool_identity"]
+    if result.get("identity_rejections"):
+        raw["identity_rejections"] = \
+            result["identity_rejections"]
     return raw
 
 
@@ -475,6 +492,12 @@ def _rung_jadx(target, out_dir):
         classes = result.get("class_files", 0)
         errors = result.get("decompile_errors", 0)
         exit_code = result.get("exit_code")
+        identity = {}
+        if result.get("tool_identity"):
+            identity["tool_identity"] = result["tool_identity"]
+        if result.get("identity_rejections"):
+            identity["identity_rejections"] = \
+                result["identity_rejections"]
         if classes and (errors or exit_code not in (0, None)):
             return {
                 "status": "partial",
@@ -487,13 +510,28 @@ def _rung_jadx(target, out_dir):
                 "caveats": [
                     f"jadx decompile errors: {errors}; "
                     "affected methods remain smali-only"],
+                **identity,
             }
         if not classes:
+            # The decompile-outcome check (field round F-04):
+            # an identity-validated jadx that produced no
+            # Java sources is a distinct record from a bare
+            # no-classes failure — the tool was verified as
+            # jadx, ran, and yielded nothing.
+            if result.get("tool_identity") == "validated":
+                detail = (
+                    "jadx (identity validated, version "
+                    f"{result.get('tool_version')}) ran but "
+                    "produced no Java sources")
+            else:
+                detail = "jadx produced no classes"
             return {"status": "failed",
                     "kind": FailureKind.BUG,
-                    "detail": "jadx produced no classes"}
+                    "detail": detail,
+                    **identity}
         return {"status": "ok", "artifacts": classes,
-                "output_dir": out_dir}
+                "output_dir": out_dir,
+                **identity}
     return run
 
 

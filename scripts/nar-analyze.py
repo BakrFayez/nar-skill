@@ -58,7 +58,7 @@ try:
     from narlib import investigation as _investigation
     from narlib import safearchive as _safearchive
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "3.0.2"
+    NAR_VERSION = "3.0.3"
     _chains = None
     _formats = None
     _container_mod = None
@@ -1628,7 +1628,8 @@ def _decompile_stage(report, companions, apk_path, out_dir,
 
 def run_2_0_stages(report, apk_path, out_dir, work_dir,
                    perms_data=None, key_path=None,
-                   stage_target=None, merged=False):
+                   stage_target=None, merged=False,
+                   key_hash=None):
     """The 2.0 module stages: fingerprint, engine fusion, DEX,
     native, network, security, assets. Each writes its
     standardized companion document into the case directory
@@ -1650,7 +1651,12 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
             "2.0 module stages skipped: no case output directory")
         return
     os.makedirs(out_dir, exist_ok=True)
-    cache_key_base = sha256_of(key_path or apk_path) \
+    # key_hash is the case's recorded input hash when the
+    # input is a set rather than one file (a directory of
+    # splits): the stage keys must recompute from the
+    # recorded hash exactly as verify expects (S-01).
+    cache_key_base = (key_hash
+                      or sha256_of(key_path or apk_path)) \
         + "|" + NAR_VERSION
     if merged:
         # Merged-container stage documents differ from the
@@ -1749,7 +1755,13 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
             "jni_libraries": len(data.get("jni_map", {})),
             "dependency_edges": sum(
                 len(v) for v in
-                (data.get("dependency_graph") or {}).values())}
+                (data.get("dependency_graph") or {}).values()),
+            "physics": [
+                {"family": d.get("family"),
+                 "engine_guess": d.get("engine_guess"),
+                 "symbol_count": d.get("symbol_count"),
+                 "libraries": d.get("libraries")}
+                for d in data.get("physics_detections", [])]}
 
     def sum_network(data):
         report["network_summary"] = {
@@ -2087,15 +2099,53 @@ def run_2_0_stages(report, apk_path, out_dir, work_dir,
 
 def analyze(target, work_dir, out_dir=None, merge_splits=True):
     _EXTRACT_BUDGET["used"] = 0
+    # The merge choice is propagated to the stage tools
+    # (subprocesses that resolve the target through
+    # narlib.container with the default) through the
+    # environment, so a --no-merge-splits run stays
+    # base-only in every stage, not just in this process.
+    if _container_mod is not None:
+        if merge_splits:
+            os.environ.pop(_container_mod.NO_MERGE_ENV_VAR, None)
+        else:
+            os.environ[_container_mod.NO_MERGE_ENV_VAR] = "1"
     report = {"tool": "nar-analyze", "version": NAR_VERSION,
               "nar_version": NAR_VERSION,
               "target": os.path.abspath(target),
-              "target_name": os.path.basename(target),
+              "target_name": os.path.basename(
+                  os.path.abspath(target)),
               "limitations": []}
-    if not os.path.isfile(target):
+    # A directory target is a loose split set handed over
+    # as a folder: resolve it to its base + splits first
+    # (narlib.container.resolve_directory); triage and the
+    # identity come from the base APK, and the set digest
+    # keys the case. A directory holding no APK is the same
+    # usage error a missing file is (exit 2 in main).
+    pre_resolved = None
+    if os.path.isdir(target):
+        if _container_mod is None:
+            raise FileNotFoundError(f"not a file: {target}")
+        pre_resolved = _container_mod.resolve_directory(
+            target, merge_splits=merge_splits)
+        if pre_resolved is None or not pre_resolved.base \
+                or not os.path.isfile(pre_resolved.base):
+            raise FileNotFoundError(
+                f"directory holds no APK to analyse: {target} "
+                "(pass the base APK file of the set instead)")
+    elif not os.path.isfile(target):
         raise FileNotFoundError(f"not a file: {target}")
-    report["target_sha256"] = sha256_of(target)
-    report["target_size_bytes"] = os.path.getsize(target)
+    triage_target = pre_resolved.base \
+        if pre_resolved is not None else target
+    if pre_resolved is not None:
+        report["target_sha256"] = \
+            _container_mod.resolved_set_sha256(pre_resolved)
+        report["target_size_bytes"] = sum(
+            os.path.getsize(p) for p in
+            [pre_resolved.base]
+            + [s["path"] for s in pre_resolved.splits])
+    else:
+        report["target_sha256"] = sha256_of(target)
+        report["target_size_bytes"] = os.path.getsize(target)
     os.makedirs(work_dir, exist_ok=True)
 
     doctor, err = run_doctor()
@@ -2107,7 +2157,7 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
             "Core toolchain is incomplete (doctor): "
             + ", ".join(doctor["core_problems"]))
 
-    triage, err = run_json_tool("nar-triage.py", [target])
+    triage, err = run_json_tool("nar-triage.py", [triage_target])
     if triage is None:
         report["fatal"] = f"triage failed: {err}"
         return report
@@ -2165,33 +2215,53 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
     _is_container_input = bool(triage.get("is_container")) or \
         _detected_kind in (_container_mod.CONTAINER_KINDS
                            if _container_mod else ())
-    if triage.get("is_aab"):
-        step_notes.append(
-            "target is an AAB bundle: permission, string, and engine"
-            " steps need an APK built from it (bundletool build-apks)"
-            " and were skipped")
-        apk_for_steps = None
-    elif _is_container_input and merge_splits and \
-            _container_mod is not None:
-        resolved_target = _container_mod.resolve_target(
-            target, work_dir=os.path.join(
-                work_dir, "container-resolved"))
-        report["container"] = resolved_target.container_block()
+
+    def _adopt_resolved_target(resolved):
+        """Wire one ResolvedTarget into the report: the
+        container / split-set provenance blocks, the
+        identity kind, the APK the steps run on, the scan
+        roots, and the step notes. Shared by the container
+        branch and the loose-split-set branches (sibling
+        discovery / directory input), whose resolutions
+        differ only in how the set was assembled."""
+        nonlocal apk_for_steps, scan_roots
+        report["container"] = resolved.container_block()
+        if resolved.split_set is not None:
+            report["split_set"] = resolved.split_set
         if report["identity"].get("kind") == "apk":
-            report["identity"]["kind"] = (
-                f"{resolved_target.input_kind} container")
-        if resolved_target.base_entry is not None and \
-                os.path.isfile(resolved_target.base):
-            apk_for_steps = resolved_target.base
-            scan_roots = list(resolved_target.assets_roots)
+            if resolved.is_container:
+                report["identity"]["kind"] = (
+                    f"{resolved.input_kind} container")
+            elif resolved.input_kind == "directory":
+                report["identity"]["kind"] = \
+                    "split-set directory"
+            else:
+                report["identity"]["kind"] = \
+                    "split set (loose files)"
+        if resolved.base_entry is not None and \
+                os.path.isfile(resolved.base):
+            apk_for_steps = resolved.base
+            scan_roots = list(resolved.assets_roots)
             merged_names = [s["name"] for s in
-                            resolved_target.splits_merged]
-            step_notes.append(
-                f"container: steps ran on the contained base "
-                f"APK {resolved_target.base_entry} resolved "
-                f"through narlib.container; splits merged: "
-                f"{merged_names or 'none'}")
-            for skipped in resolved_target.split_skipped:
+                            resolved.splits_merged]
+            if resolved.is_container:
+                step_notes.append(
+                    f"container: steps ran on the contained "
+                    f"base APK {resolved.base_entry} resolved "
+                    f"through narlib.container; splits "
+                    f"merged: {merged_names or 'none'}")
+            elif resolved.input_kind == "directory":
+                step_notes.append(
+                    f"split-set directory: steps ran on the "
+                    f"base APK {resolved.base_entry} resolved "
+                    f"through narlib.container; splits "
+                    f"merged: {merged_names or 'none'}")
+            else:
+                step_notes.append(
+                    f"split set: steps ran on the base APK "
+                    f"{resolved.base_entry} with sibling "
+                    f"splits merged: {merged_names or 'none'}")
+            for skipped in resolved.split_skipped:
                 step_notes.append(
                     f"container split skipped: "
                     f"{skipped['name']} ({skipped['reason']})")
@@ -2206,14 +2276,50 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
             # the step notes as the resolved branch does,
             # not only into the structured container block
             # (certification D-02).
-            for skipped in resolved_target.split_skipped:
+            for skipped in resolved.split_skipped:
                 step_notes.append(
                     f"container split skipped: "
                     f"{skipped['name']} ({skipped['reason']})")
         report["contained_obbs"] = [
             o.get("source_entry") or o["name"]
-            for o in resolved_target.obbs
+            for o in resolved.obbs
             if o.get("source") == "container"]
+
+    # Loose split sets (field round F-01): a plain APK
+    # target goes through sibling discovery inside
+    # resolve_target; the resolution is adopted only when a
+    # set was actually detected, so an ordinary lone APK
+    # keeps the exact pre-round report shape.
+    sibling_probe = None
+    if pre_resolved is None and not _is_container_input \
+            and not triage.get("is_aab") \
+            and not triage.get("is_obb") \
+            and _container_mod is not None:
+        try:
+            _probe = _container_mod.resolve_target(
+                target, merge_splits=merge_splits)
+        except Exception:
+            _probe = None
+        if _probe is not None and _probe.split_set is not None:
+            sibling_probe = _probe
+    if triage.get("is_aab"):
+        step_notes.append(
+            "target is an AAB bundle: permission, string, and engine"
+            " steps need an APK built from it (bundletool build-apks)"
+            " and were skipped")
+        apk_for_steps = None
+    elif pre_resolved is not None:
+        resolved_target = pre_resolved
+        _adopt_resolved_target(resolved_target)
+    elif _is_container_input and merge_splits and \
+            _container_mod is not None:
+        resolved_target = _container_mod.resolve_target(
+            target, work_dir=os.path.join(
+                work_dir, "container-resolved"))
+        _adopt_resolved_target(resolved_target)
+    elif sibling_probe is not None:
+        resolved_target = sibling_probe
+        _adopt_resolved_target(resolved_target)
     elif triage.get("is_container"):
         with zipfile.ZipFile(target) as zf:
             names = zf.namelist()
@@ -2265,6 +2371,32 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
                     " taken from the contained base APK")
                 report["step_notes"] = step_notes
 
+    # Triage inheritance (field round F-01): triage's own
+    # split-set evidence (split_native_suspected) must reach
+    # the case even when resolution found no siblings to
+    # merge — a detected-but-incomplete set, named as such,
+    # instead of the warning dying inside the embedded
+    # triage document.
+    if report.get("split_set") is None \
+            and triage.get("split_native_suspected"):
+        report["split_set"] = {
+            "detected": True,
+            "resolution": "triage-evidence",
+            "directory": os.path.dirname(
+                os.path.abspath(target)),
+            "base": os.path.basename(target),
+            "package": report["identity"].get("package"),
+            "base_evidence":
+                triage.get("bundle_split_evidence") or [],
+            "members": [], "skipped": [],
+            "merged": False, "complete": False}
+        step_notes.append(
+            "triage split evidence: this APK belongs to a "
+            "split set, but no sibling split APKs were "
+            "found beside it; analysis covers the base APK "
+            "only")
+        report["step_notes"] = step_notes
+
     if apk_for_steps and not triage.get("is_obb"):
         perms, err = run_json_tool("nar-perms.py", [apk_for_steps])
         report["permissions"] = (summarize_perms(perms) if perms
@@ -2278,7 +2410,12 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
                                        else None)
     if resolved_target is not None:
         # nar-strings resolves and merges splits itself.
-        strings_target = target
+        # A directory input hands it the resolved base file
+        # (it discovers the same set from the base's
+        # directory); every other resolved target hands it
+        # the original target.
+        strings_target = pre_resolved.base \
+            if pre_resolved is not None else target
     if strings_target:
         strings, err = run_json_tool("nar-strings.py", [strings_target])
         report["strings"] = (summarize_strings(strings) if strings
@@ -2510,12 +2647,25 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
     # native / network / security / assets) with case caching.
     if apk_for_steps and not triage.get("is_obb"):
         try:
+            _stages_merged = bool(
+                resolved_target is not None and merge_splits
+                and (resolved_target.is_container
+                     or resolved_target.splits_merged))
             run_2_0_stages(
                 report, apk_for_steps, out_dir, work_dir,
-                perms_data=perms, key_path=target,
-                stage_target=target if resolved_target is not None
-                else None,
-                merged=resolved_target is not None)
+                perms_data=perms,
+                key_path=(pre_resolved.base
+                          if pre_resolved is not None
+                          else target),
+                key_hash=(report["target_sha256"]
+                          if pre_resolved is not None
+                          else None),
+                stage_target=(
+                    pre_resolved.base
+                    if pre_resolved is not None
+                    else target if resolved_target is not None
+                    else None),
+                merged=_stages_merged)
         except _MemoryBudgetExceeded as e:
             # Named, resumable abort (3.0 Part 11): the
             # stages completed before the boundary are in
@@ -2541,6 +2691,27 @@ def analyze(target, work_dir, out_dir=None, merge_splits=True):
                 f"(peak RSS {e.peak_rss_bytes} bytes); "
                 "the case is resumable from this boundary "
                 "via the stage cache")
+
+    # Split-set completeness (field round F-01): a detected
+    # set that was not fully merged — merging declined, or
+    # siblings missing — must not present a bare
+    # detected:false / zero-library result as if the base
+    # were the whole app.
+    _split_set = report.get("split_set")
+    if _split_set is not None and not _split_set.get("complete"):
+        if _split_set.get("members") and not merge_splits:
+            _why = ("split merging was declined "
+                    "(--no-merge-splits); the set's splits "
+                    "were not analysed")
+        elif not _split_set.get("members"):
+            _why = ("no sibling split APKs were found beside "
+                    "the base APK")
+        else:
+            _why = "the set was not fully merged"
+        report["limitations"].append(
+            "split set incomplete — native layer may be "
+            f"under-reported: {_why}; engine and native "
+            "verdicts cover the base APK only")
 
     # Limitations and unknowns: the honest tail of every report.
     lim = report["limitations"]
@@ -3972,8 +4143,8 @@ def main(argv=None):
                         "every 2.0 stage")
     p.add_argument("--no-merge-splits", action="store_true",
                    help="analyse only the base APK of a "
-                        "container (pre-3.0 behaviour, "
-                        "byte-identical output)")
+                        "container or split set (pre-3.0 "
+                        "behaviour, byte-identical output)")
     args = p.parse_args(argv)
     # Case view modes (2.6.0 Phases 7/8): graph query and
     # investigation summary over an existing case directory.
@@ -4113,8 +4284,12 @@ def main(argv=None):
             "nar_version": NAR_VERSION,
             "target": os.path.abspath(args.target),
             "target_name": os.path.basename(args.target),
-            "target_sha256": sha256_of(args.target),
-            "target_size_bytes": os.path.getsize(args.target),
+            "target_sha256": (sha256_of(args.target)
+                              if os.path.isfile(args.target)
+                              else "unknown"),
+            "target_size_bytes": (os.path.getsize(args.target)
+                                  if os.path.isfile(args.target)
+                                  else 0),
             "limitations": [
                 f"run aborted at {e.boundary}: memory "
                 f"budget of {e.budget_mb} MB exceeded "
@@ -4171,6 +4346,12 @@ def main(argv=None):
         # Part 2): which splits were merged into the case's
         # stages and which were skipped, with reasons.
         case_doc["container"] = report["container"]
+    if report.get("split_set"):
+        # The loose-split-set record (field round F-01):
+        # detected / merged / complete, with member
+        # provenance — the case-level statement of whether
+        # the analysed set was the whole app.
+        case_doc["split_set"] = report["split_set"]
     _write_report_json(
         os.path.join(out_dir, "case.json"), case_doc)
     exec_doc = {"tool": "nar-analyze", "case_id": case_id,

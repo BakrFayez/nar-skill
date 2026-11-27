@@ -38,9 +38,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from . import container as _container
-from .elf import Elf, ElfError, SHT_DYNSYM
+from .elf import Elf, ElfError, SHT_DYNSYM, SHT_SYMTAB
 
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 
 #: Per-member read cap for the target scan (bounded reads).
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
@@ -1702,16 +1702,105 @@ PART_TOKENS = frozenset((
     "pedal", "handle", "body"))
 
 
-def elf_defined_exports(data, name="lib.so"):
-    """Defined dynsym exports of one ELF blob ([] on any
-    parse failure — a corrupt .so is no evidence)."""
+def elf_defined_symbols(data, name="lib.so",
+                        section_type=SHT_DYNSYM):
+    """Defined symbol names from one symbol table of an ELF
+    blob ([] on any parse failure — a corrupt .so is no
+    evidence). ``section_type`` selects the table:
+    SHT_DYNSYM (dynamic exports) or SHT_SYMTAB (the full
+    symbol table a statically-linked build may still carry
+    when its dynamic surface is stripped / hidden)."""
     try:
         elf = Elf(data, name)
         return sorted({s["name"] for s in
-                       elf.symbols(SHT_DYNSYM)
+                       elf.symbols(section_type)
                        if s.get("defined") and s.get("name")})
     except (ElfError, Exception):
         return []
+
+
+def elf_defined_exports(data, name="lib.so"):
+    """Defined dynsym exports of one ELF blob ([] on any
+    parse failure — a corrupt .so is no evidence)."""
+    return elf_defined_symbols(data, name, SHT_DYNSYM)
+
+
+_PRINTABLE_RUN_RE = re.compile(rb"[\x20-\x7e]{4,}")
+
+
+def _tokens_in_strings(raw_bytes, tokens):
+    """Family tokens present in the printable-string runs of
+    ``raw_bytes``. Mangled names (e.g. _ZN7b2World...) and
+    plain embedded names both contain the token as a
+    substring of one run, so a substring check per token
+    over the joined runs is the whole scan."""
+    if not raw_bytes:
+        return set()
+    text = b"\n".join(
+        _PRINTABLE_RUN_RE.findall(bytes(raw_bytes)))
+    if not text:
+        return set()
+    return {t for t in tokens if t.encode() in text}
+
+
+def physics_distinct_count(symbols, string_tokens, tokens):
+    """Distinct matched evidence for one family: the matched
+    symbol names, plus the string tokens not already carried
+    by a matched symbol (symbol names live in the string
+    tables, so an unadjusted sum would double-count them)."""
+    covered = {t for s in symbols for t in tokens if t in s}
+    return len(symbols) + len(set(string_tokens) - covered)
+
+
+def physics_hits_for_library(symbol_names, raw_bytes=None,
+                             symtab_names=None):
+    """Per-family physics hits for ONE library, from up to
+    three evidence channels:
+
+    - ``symbol_names``: defined dynsym exports (channel
+      "dynsym");
+    - ``symtab_names``: defined SHT_SYMTAB symbol names
+      (channel "symtab") — the channel that still fires for
+      a statically-linked build whose dynamic surface is
+      stripped or hidden-visibility;
+    - ``raw_bytes``: the library bytes, scanned for family
+      tokens in printable strings (channel "strings").
+
+    Returns {family: {"engine_guess", "symbols" (set of
+    matched symbol names across the symbol channels),
+    "string_tokens" (set), "evidence_sources" (set),
+    "distinct_count"}} for the known families with at
+    least one hit. The generic Joint/Spring cluster is NOT
+    handled here — it stays a dynsym-only heuristic of
+    detect_physics."""
+    dynsym_names = list(symbol_names or [])
+    symtab = list(symtab_names or [])
+    out = {}
+    for family, guess, tokens in _PHYSICS_FAMILIES:
+        dyn_hits = {s for s in dynsym_names
+                    if any(t in s for t in tokens)}
+        tab_hits = {s for s in symtab
+                    if any(t in s for t in tokens)}
+        str_tokens = _tokens_in_strings(raw_bytes, tokens)
+        sources = set()
+        if dyn_hits:
+            sources.add("dynsym")
+        if tab_hits:
+            sources.add("symtab")
+        if str_tokens:
+            sources.add("strings")
+        symbols = dyn_hits | tab_hits
+        if not symbols and not str_tokens:
+            continue
+        out[family] = {
+            "engine_guess": guess,
+            "symbols": symbols,
+            "string_tokens": str_tokens,
+            "evidence_sources": sources,
+            "distinct_count": physics_distinct_count(
+                symbols, str_tokens, tokens),
+        }
+    return out
 
 
 def detect_part_groups(member_names):
@@ -1761,28 +1850,36 @@ def detect_physics(so_members, member_names):
     """Physics evidence over ``lib/**/*.so`` members.
 
     ``so_members`` is a list of (member name, bytes). A
-    family cluster needs >= 3 distinct physics symbols of
-    that family. Returns (rigs, part_groups): each rig is
-    {engine_guess, family, symbol_count, sample,
+    family cluster needs >= 3 distinct matched symbols /
+    tokens of that family across the three evidence
+    channels (defined dynsym exports, defined SHT_SYMTAB
+    symbols, raw printable-string token hits — see
+    physics_hits_for_library). Returns (rigs, part_groups):
+    each rig is {engine_guess, family, symbol_count, sample,
     confidence, libraries, driver_candidate, driver_label,
-    naming_evidence_present, note}."""
+    naming_evidence_present, note, evidence_sources} plus
+    "string_tokens" when the strings channel contributed."""
     per_family = {}
     libraries = set()
+    family_tokens = {family: tokens for family, _guess,
+                     tokens in _PHYSICS_FAMILIES}
     for member, data in so_members:
         exports = elf_defined_exports(data, member)
-        if not exports:
-            continue
-        for family, guess, tokens in _PHYSICS_FAMILIES:
-            hits = {s for s in exports
-                    if any(t in s for t in tokens)}
-            if hits:
-                slot = per_family.setdefault(
-                    family, {"engine_guess": guess,
-                             "symbols": set(),
-                             "libraries": set()})
-                slot["symbols"] |= hits
-                slot["libraries"].add(member)
-                libraries.add(member)
+        symtab = elf_defined_symbols(data, member, SHT_SYMTAB)
+        hits = physics_hits_for_library(
+            exports, data, symtab_names=symtab)
+        for family, fh in hits.items():
+            slot = per_family.setdefault(
+                family, {"engine_guess": fh["engine_guess"],
+                         "symbols": set(),
+                         "string_tokens": set(),
+                         "evidence_sources": set(),
+                         "libraries": set()})
+            slot["symbols"] |= fh["symbols"]
+            slot["string_tokens"] |= fh["string_tokens"]
+            slot["evidence_sources"] |= fh["evidence_sources"]
+            slot["libraries"].add(member)
+            libraries.add(member)
         generic = {s for s in exports
                    if not s.startswith("Java_")
                    and ("Joint" in s or "Spring" in s)}
@@ -1791,25 +1888,36 @@ def detect_physics(so_members, member_names):
                 "generic-joint-spring",
                 {"engine_guess": "generic physics "
                                  "(Joint/Spring exports)",
-                 "symbols": set(), "libraries": set()})
+                 "symbols": set(), "string_tokens": set(),
+                 "evidence_sources": set(),
+                 "libraries": set()})
             slot["symbols"] |= generic
+            slot["evidence_sources"].add("dynsym")
             slot["libraries"].add(member)
     groups = detect_part_groups(member_names)
     rigs = []
     for family, slot in sorted(per_family.items()):
         symbols = sorted(slot["symbols"])
-        if len(symbols) < 3:
+        tokens = family_tokens.get(family, ())
+        count = physics_distinct_count(
+            slot["symbols"], slot["string_tokens"], tokens) \
+            if tokens else len(symbols)
+        if count < 3:
             continue
-        rigs.append({
+        sample = symbols[:8] if symbols else \
+            sorted(slot["string_tokens"])[:8]
+        rig = {
             "engine_guess": slot["engine_guess"],
             "family": family,
-            "symbol_count": len(symbols),
-            "sample": symbols[:8],
+            "symbol_count": count,
+            "sample": sample,
             "confidence": "inferred",
             "libraries": sorted(slot["libraries"]),
             "driver_candidate": "physics",
             "driver_label": "inferred",
             "naming_evidence_present": bool(groups),
+            "evidence_sources": sorted(
+                slot["evidence_sources"]),
             "note": ("sprite part-naming evidence is "
                      "present, so a physics-driven "
                      "composition is emitted"
@@ -1818,7 +1926,10 @@ def detect_physics(so_members, member_names):
                      "found; the physics driver remains a "
                      "candidate only (a symbol cluster "
                      "alone does not establish the driver)"),
-        })
+        }
+        if slot["string_tokens"]:
+            rig["string_tokens"] = sorted(slot["string_tokens"])
+        rigs.append(rig)
     return rigs, groups
 
 

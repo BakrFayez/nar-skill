@@ -575,6 +575,63 @@ def elf_hardening_of(zf, name, size_bytes):
         return None
 
 
+def _sdk_tool_file_names(name):
+    """Candidate file names for an SDK tool, in preference order.
+
+    The Windows build-tools forms carry a PATHEXT suffix
+    (``<name>.exe``; apksigner ships as ``apksigner.bat``);
+    everywhere else the binary is the extensionless ``name``.
+    On Windows the extensionless name is still a candidate: a
+    tool planted on PATH in script form carries no extension,
+    and shutil.which cannot find it there (which() only tries
+    the PATHEXT extensions), so the finders below scan PATH
+    and the SDK directories themselves for these names."""
+    if sys.platform == "win32":
+        return (name + ".exe", name + ".bat", name + ".cmd", name)
+    return (name,)
+
+
+def _sdk_tool_candidate_ok(cand):
+    if not os.path.isfile(cand):
+        return False
+    if sys.platform == "win32":
+        # os.access(X_OK) is not meaningful on Windows;
+        # existence is the honest check there.
+        return True
+    return os.access(cand, os.X_OK)
+
+
+def _sdk_tool_argv(tool, *args):
+    """Command line that runs an SDK-tool candidate.
+
+    On POSIX every candidate executes directly, exactly as
+    before. Windows cannot CreateProcess anything but a
+    native binary: a .bat/.cmd wrapper must go through
+    cmd, and an extensionless candidate with a shebang
+    (the form a PATH-planted tool takes) must go through
+    sh when one is available — with no sh, the bare
+    candidate is returned and the caller's OSError handling
+    reports the tool unreadable rather than pretending it
+    ran."""
+    if sys.platform != "win32":
+        return [tool, *args]
+    lower = tool.lower()
+    if lower.endswith((".bat", ".cmd")):
+        return ["cmd", "/c", tool, *args]
+    if lower.endswith(".exe"):
+        return [tool, *args]
+    try:
+        with open(tool, "rb") as fh:
+            head = fh.read(2)
+    except OSError:
+        head = b""
+    if head == b"#!":
+        sh = shutil.which("sh") or shutil.which("bash")
+        if sh:
+            return [sh, tool, *args]
+    return [tool, *args]
+
+
 def find_sdk_tool(name):
     """Locate a build-tools binary: PATH first, then the newest versioned
     build-tools directory under the usual Android SDK locations."""
@@ -586,6 +643,12 @@ def find_sdk_tool(name):
         os.environ.get("ANDROID_SDK_ROOT"),
         os.path.expanduser("~/workspace/android-sdk"),
         os.path.expanduser("~/Android/Sdk"),
+        # The Android Studio default SDK location on
+        # Windows (%LOCALAPPDATA%\Android\Sdk) — field
+        # round F-32.
+        os.path.join(os.environ["LOCALAPPDATA"], "Android",
+                     "Sdk") if os.environ.get("LOCALAPPDATA")
+        else None,
     ]):
         bt = os.path.join(root, "build-tools")
         if os.path.isdir(bt):
@@ -595,10 +658,51 @@ def find_sdk_tool(name):
                 except ValueError:
                     return (0,)
             for ver in sorted(os.listdir(bt), key=_ver_key, reverse=True):
-                cand = os.path.join(bt, ver, name)
-                if os.path.isfile(cand) and os.access(cand, os.X_OK):
-                    return cand
+                for fname in _sdk_tool_file_names(name):
+                    cand = os.path.join(bt, ver, fname)
+                    if _sdk_tool_candidate_ok(cand):
+                        return cand
     return None
+
+
+def _apksigner_file_names():
+    """Candidate apksigner file names (see _sdk_tool_file_names)."""
+    return _sdk_tool_file_names("apksigner")
+
+
+def _apksigner_candidate_ok(cand):
+    return _sdk_tool_candidate_ok(cand)
+
+
+def find_apksigner():
+    """Locate apksigner: PATH first, then the Android SDK
+    build-tools directories — testing the Windows file-name
+    variants at each step, the way find_aapt2 does. The stock
+    Windows form is apksigner.bat, which an extensionless
+    isfile/X_OK scan can never see."""
+    tool = shutil.which("apksigner")
+    if tool:
+        return tool
+    # Manual PATH scan: on Windows which() misses candidates
+    # whose names carry no PATHEXT extension (see
+    # _sdk_tool_file_names); on POSIX this is only a fallback
+    # for the same names which() would have tried.
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        for name in _apksigner_file_names():
+            cand = os.path.join(entry, name)
+            if _apksigner_candidate_ok(cand):
+                return cand
+    return find_sdk_tool("apksigner")
+
+
+def _apksigner_argv(apksigner, *args):
+    """Command line that runs an apksigner candidate (see
+    _sdk_tool_argv): a .bat/.cmd goes through cmd /c, so a
+    found batch wrapper launches instead of raising OSError
+    and being misreported as "unreadable"."""
+    return _sdk_tool_argv(apksigner, *args)
 
 
 def _tool_env():
@@ -669,12 +773,12 @@ def apksigner_verify(apk_path):
     """
     if apk_path.lower().endswith((".aab", ".obb", ".xapk", ".apkm")):
         return {}, "not-applicable"
-    apksigner = find_sdk_tool("apksigner")
+    apksigner = find_apksigner()
     if not apksigner:
         return {}, "not-found"
     try:
         out = subprocess.run(
-            [apksigner, "verify", "--verbose", apk_path],
+            _apksigner_argv(apksigner, "verify", "--verbose", apk_path),
             capture_output=True, text=True, timeout=300, env=_tool_env(),
         )
     except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
@@ -884,19 +988,11 @@ def _aapt2_file_names():
     shutil.which cannot find it there (which() only tries
     the PATHEXT extensions), so find_aapt2 scans PATH
     itself for the names below."""
-    if sys.platform == "win32":
-        return ("aapt2.exe", "aapt2.bat", "aapt2.cmd", "aapt2")
-    return ("aapt2",)
+    return _sdk_tool_file_names("aapt2")
 
 
 def _aapt2_candidate_ok(cand):
-    if not os.path.isfile(cand):
-        return False
-    if sys.platform == "win32":
-        # os.access(X_OK) is not meaningful on Windows;
-        # existence is the honest check there.
-        return True
-    return os.access(cand, os.X_OK)
+    return _sdk_tool_candidate_ok(cand)
 
 
 def find_aapt2():
@@ -920,6 +1016,12 @@ def find_aapt2():
         os.environ.get("ANDROID_SDK_ROOT"),
         os.path.expanduser("~/workspace/android-sdk"),
         os.path.expanduser("~/Android/Sdk"),
+        # The Android Studio default SDK location on
+        # Windows (%LOCALAPPDATA%\Android\Sdk) — field
+        # round F-32.
+        os.path.join(os.environ["LOCALAPPDATA"], "Android",
+                     "Sdk") if os.environ.get("LOCALAPPDATA")
+        else None,
     ]):
         bt = os.path.join(root, "build-tools")
         if os.path.isdir(bt):
@@ -948,23 +1050,7 @@ def _aapt2_argv(aapt2, *args):
     candidate is returned and the caller's OSError handling
     reports the tool unreadable rather than pretending it
     ran."""
-    if sys.platform != "win32":
-        return [aapt2, *args]
-    lower = aapt2.lower()
-    if lower.endswith((".bat", ".cmd")):
-        return ["cmd", "/c", aapt2, *args]
-    if lower.endswith(".exe"):
-        return [aapt2, *args]
-    try:
-        with open(aapt2, "rb") as fh:
-            head = fh.read(2)
-    except OSError:
-        head = b""
-    if head == b"#!":
-        sh = shutil.which("sh") or shutil.which("bash")
-        if sh:
-            return [sh, aapt2, *args]
-    return [aapt2, *args]
+    return _sdk_tool_argv(aapt2, *args)
 
 
 def aapt2_badging(apk_path):

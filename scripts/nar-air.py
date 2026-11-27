@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import container as container_mod  # noqa: E402
 from narlib.safearchive import read_member_capped  # noqa: E402
 
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 MEMBER_CAP = 32 * 1024 * 1024
 SWF_BODY_CAP = 64 * 1024 * 1024
 SYMBOL_SAMPLE_CAP = 50

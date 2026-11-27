@@ -167,6 +167,12 @@ def find_aapt2():
         os.environ.get("ANDROID_SDK_ROOT"),
         os.path.expanduser("~/workspace/android-sdk"),
         os.path.expanduser("~/Android/Sdk"),
+        # The Android Studio default SDK location on
+        # Windows (%LOCALAPPDATA%\Android\Sdk) — field
+        # round F-32.
+        os.path.join(os.environ["LOCALAPPDATA"], "Android",
+                     "Sdk") if os.environ.get("LOCALAPPDATA")
+        else None,
     ]):
         bt = os.path.join(root, "build-tools")
         if os.path.isdir(bt):
@@ -677,7 +683,7 @@ def feature_map(report):
             "content_changed_excluding_signing": content_changed},
     }
     return {
-        "tool": "nar-compare", "version": "3.0.2",
+        "tool": "nar-compare", "version": "3.0.3",
         "kind": "version-feature-map",
         "old": {"file": old.get("file"),
                 "sha256": old.get("sha256")},

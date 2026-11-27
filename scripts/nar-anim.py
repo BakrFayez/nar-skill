@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from narlib import anim  # noqa: E402
 
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 
 _COUNT_KEYS = ("bones_count", "slots_count",
                "animation_count", "layers_count",

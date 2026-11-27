@@ -33,6 +33,16 @@ def _sdk_candidates():
              os.path.expanduser("~/workspace/android-sdk"),
              os.path.expanduser("~/android-sdk"),
              "/opt/android-sdk", "/usr/lib/android-sdk"]
+    # The Android Studio default SDK location on Windows
+    # (%LOCALAPPDATA%\Android\Sdk): a stock Windows install
+    # that never set ANDROID_HOME was undiscoverable when
+    # this list lacked it (field round F-32). LOCALAPPDATA
+    # is a Windows-only variable, so the entry appears
+    # exactly where it can exist.
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        roots.append(os.path.join(local_app_data, "Android",
+                                  "Sdk"))
     return [r for r in roots if r]
 
 
@@ -192,12 +202,220 @@ def _run_version(argv, timeout=20):
         return None
 
 
+def _candidate_paths(entry):
+    """Every launch path an entry can resolve to, in the
+    established priority order: explicit NAR_<NAME>_PATH
+    override, the tool's own env_var tree, PATH, env_home,
+    home globs, SDK locations, the workspace layout, the
+    jar env var, jar globs, and the jar/dotnet workspace
+    forms. probe() takes the first candidate for ordinary
+    entries; an entry carrying an identity rule is probed
+    candidate by candidate until one validates, so a
+    rejected impostor never shadows a real tool later in
+    the order. Duplicates are yielded once."""
+    kind = entry["kind"]
+    seen = set()
+
+    def _yield(path):
+        if path and path not in seen:
+            seen.add(path)
+            return path
+        return None
+
+    env_override = os.environ.get(
+        "NAR_" + entry["name"].upper().replace("-", "_") + "_PATH")
+    if env_override:
+        # On Windows this stores the PATHEXT-resolved path
+        # (e.g. ...\tool.exe for a bare ...\tool override),
+        # which is the path the version run below spawns.
+        found = _yield(_resolve_executable(env_override))
+        if found:
+            yield found
+    if entry.get("env_var") \
+            and os.environ.get(entry["env_var"]):
+        base = os.environ[entry["env_var"]]
+        hit = None
+        for cand_name in entry.get("candidates", []):
+            cand = os.path.join(base, "support", cand_name)
+            hit = _found_file(cand)
+            if hit:
+                break
+        if not hit:
+            hit = _found_file(base)
+        found = _yield(hit)
+        if found:
+            yield found
+    for cand_name in entry.get("candidates", []):
+        # Every resolvable candidate name is yielded, in
+        # declaration order: a present-but-broken earlier
+        # candidate (the Microsoft Store python3 stub is the
+        # field case) must not shadow a working later one —
+        # probe() decides which candidate actually runs.
+        found = _yield(shutil.which(cand_name))
+        if found:
+            yield found
+    if entry.get("env_home"):
+        # Home-variable discovery (e.g. JAVA_HOME/bin/java),
+        # mirroring nar-doctor.sh (stability audit D-04).
+        home_var = os.environ.get(entry["env_home"])
+        if home_var:
+            for rel in entry.get("env_home_candidates", []):
+                cand = os.path.join(home_var, rel)
+                found = _yield(_resolve_executable(cand))
+                if found:
+                    yield found
+                    break
+    if entry.get("home_globs"):
+        home = os.path.expanduser("~")
+        for pattern in entry["home_globs"]:
+            full = pattern if os.path.isabs(pattern) \
+                else os.path.join(home, pattern)
+            hit = None
+            for cand in sorted(glob.glob(full)):
+                hit = _resolve_executable(cand)
+                if hit:
+                    break
+            found = _yield(hit)
+            if found:
+                yield found
+                break
+    if entry.get("sdk_tool"):
+        for cand_name in entry.get("candidates", []):
+            found = _yield(_find_sdk_tool(cand_name))
+            if found:
+                yield found
+                break
+    if entry.get("workspace_subdirs"):
+        home = os.path.expanduser("~")
+        for sub in entry["workspace_subdirs"]:
+            base = os.path.join(home, "workspace", sub)
+            hit = None
+            for cand_name in entry.get("candidates", []):
+                cand = os.path.join(base, cand_name)
+                hit = _resolve_executable(cand)
+                if hit:
+                    break
+            found = _yield(hit)
+            if found:
+                yield found
+                break
+    if entry.get("jar_env_var"):
+        jar = os.environ.get(entry["jar_env_var"])
+        if jar and os.path.isfile(jar):
+            found = _yield("jar:" + jar)
+            if found:
+                yield found
+    if entry.get("jar_globs"):
+        home = os.path.expanduser("~")
+        for pattern in entry["jar_globs"]:
+            full = pattern if os.path.isabs(pattern) \
+                else os.path.join(home, pattern)
+            hits = sorted(glob.glob(full))
+            if hits:
+                found = _yield("jar:" + hits[-1])
+                if found:
+                    yield found
+                    break
+    if kind == "jar":
+        home = os.path.expanduser("~")
+        for sub in entry.get("workspace_subdirs", []):
+            hits = glob.glob(os.path.join(home, "workspace", sub,
+                                          entry.get("jar_glob", "")))
+            if hits:
+                found = _yield("jar:" + sorted(hits)[-1])
+                if found:
+                    yield found
+                    break
+    if kind == "dotnet":
+        home = os.path.expanduser("~")
+        for sub in entry.get("workspace_subdirs", []):
+            cand = os.path.join(home, "workspace", sub,
+                                entry.get("dll", ""))
+            if os.path.isfile(cand):
+                found = _yield(cand)
+                if found:
+                    yield found
+                    break
+
+
+def _probe_version(entry, path):
+    """The version line one candidate reports, or None when
+    its version command does not run successfully."""
+    argv = entry.get("version_argv")
+    if not argv:
+        return None
+    if path.startswith("jar:"):
+        java = _find_java()
+        if java:
+            return _run_version([java, "-jar", path[4:]] + argv)
+        return None
+    if entry["kind"] == "dotnet":
+        return None  # probed by execution instead
+    return _run_version([path] + argv)
+
+
+def _below_min_major(entry, version):
+    """The not-available note when *version* is below the
+    entry's required major, else None."""
+    min_major = entry.get("min_version_major")
+    if min_major and version:
+        m = re.search(r"(\d+)\.", version)
+        if m and int(m.group(1)) < min_major:
+            return (f"version {version} is below "
+                    f"the required major {min_major}")
+    return None
+
+
+def _finish_probe(entry, result, path):
+    """Availability for one resolved candidate (the
+    historical single-candidate semantics): a real-start
+    claim, not a path sighting (D-03) — an entry with a
+    version command is available only when that command
+    actually ran and exited 0. Entries without one (e.g.
+    adb, whose validation is a devices probe) are available
+    on an executable path."""
+    kind = entry["kind"]
+    argv = entry.get("version_argv")
+    if argv:
+        result["version"] = _probe_version(entry, path)
+    if argv and kind != "dotnet" and result["version"] is None:
+        result["note"] = (
+            "found but its version command did not run "
+            "successfully; not counted as available")
+        return result
+    below = _below_min_major(entry, result["version"])
+    if below:
+        result["note"] = below
+        result["version"] = None
+        return result
+    result["available"] = True
+    return result
+
+
 def probe(entry):
     """Probe one registry entry.
 
     Returns {name, available, path, version, kind, required,
     note}. available=False is a normal result, never an error.
-    """
+
+    Without an identity rule, candidates are still tried in
+    resolution order: the first candidate whose version
+    command actually runs (or which is present, for
+    presence-only entries) wins, so a broken earlier
+    candidate never shadows a working later one.
+
+    An entry may carry an ``identity`` rule
+    (``version_pattern``): executability is then not enough
+    — a candidate counts only when its version output
+    matches the pattern, i.e. identifies as the tool it
+    claims to be (field round F-04). Candidates are tried
+    in resolution order; every rejected candidate is
+    recorded in ``identity_rejections`` ({path, reported,
+    reason}) and the search falls through to the next
+    candidate instead of degrading the consumer. A fully
+    rejected entry reports available=False with a
+    ``tool_identity_mismatch`` note; a validated one
+    carries ``identity: "validated"`` and its version."""
     result = {"name": entry["name"], "kind": entry["kind"],
               "required": entry.get("required", "optional"),
               "available": False, "path": None, "version": None,
@@ -220,138 +438,78 @@ def probe(entry):
             result["version"] = None
         return result
 
-    path = None
-    env_override = os.environ.get(
-        "NAR_" + entry["name"].upper().replace("-", "_") + "_PATH")
-    if env_override:
-        # On Windows this stores the PATHEXT-resolved path
-        # (e.g. ...\tool.exe for a bare ...\tool override),
-        # which is the path the version run below spawns.
-        resolved = _resolve_executable(env_override)
-        if resolved:
-            path = resolved
-    if not path and entry.get("env_var") \
-            and os.environ.get(entry["env_var"]):
-        base = os.environ[entry["env_var"]]
-        for cand_name in entry.get("candidates", []):
-            cand = os.path.join(base, "support", cand_name)
-            found = _found_file(cand)
-            if found:
-                path = found
-                break
-        if not path:
-            path = _found_file(base)
-    if not path:
-        for cand_name in entry.get("candidates", []):
-            found = shutil.which(cand_name)
-            if found:
-                path = found
-                break
-    if not path and entry.get("env_home"):
-        # Home-variable discovery (e.g. JAVA_HOME/bin/java),
-        # mirroring nar-doctor.sh (stability audit D-04).
-        home_var = os.environ.get(entry["env_home"])
-        if home_var:
-            for rel in entry.get("env_home_candidates", []):
-                cand = os.path.join(home_var, rel)
-                resolved = _resolve_executable(cand)
-                if resolved:
-                    path = resolved
-                    break
-    if not path and entry.get("home_globs"):
-        home = os.path.expanduser("~")
-        for pattern in entry["home_globs"]:
-            full = pattern if os.path.isabs(pattern) \
-                else os.path.join(home, pattern)
-            for cand in sorted(glob.glob(full)):
-                resolved = _resolve_executable(cand)
-                if resolved:
-                    path = resolved
-                    break
-            if path:
-                break
-    if not path and entry.get("sdk_tool"):
-        for cand_name in entry.get("candidates", []):
-            path = _find_sdk_tool(cand_name)
-            if path:
-                break
-    if not path and entry.get("workspace_subdirs"):
-        home = os.path.expanduser("~")
-        for sub in entry["workspace_subdirs"]:
-            base = os.path.join(home, "workspace", sub)
-            for cand_name in entry.get("candidates", []):
-                cand = os.path.join(base, cand_name)
-                resolved = _resolve_executable(cand)
-                if resolved:
-                    path = resolved
-                    break
-            if path:
-                break
-    if not path and entry.get("jar_env_var"):
-        jar = os.environ.get(entry["jar_env_var"])
-        if jar and os.path.isfile(jar):
-            path = "jar:" + jar
-    if not path and entry.get("jar_globs"):
-        home = os.path.expanduser("~")
-        for pattern in entry["jar_globs"]:
-            full = pattern if os.path.isabs(pattern) \
-                else os.path.join(home, pattern)
-            hits = sorted(glob.glob(full))
-            if hits:
-                path = "jar:" + hits[-1]
-                break
-    if not path and kind == "jar":
-        home = os.path.expanduser("~")
-        for sub in entry.get("workspace_subdirs", []):
-            hits = glob.glob(os.path.join(home, "workspace", sub,
-                                          entry.get("jar_glob", "")))
-            if hits:
-                path = "jar:" + sorted(hits)[-1]
-                break
-    if not path and kind == "dotnet":
-        home = os.path.expanduser("~")
-        for sub in entry.get("workspace_subdirs", []):
-            cand = os.path.join(home, "workspace", sub,
-                                entry.get("dll", ""))
-            if os.path.isfile(cand):
-                path = cand
-                break
-    if not path:
+    candidates = list(_candidate_paths(entry))
+    if not candidates:
         result["note"] = "not found"
         return result
-    result["path"] = path
-    argv = entry.get("version_argv")
-    if argv:
-        if path.startswith("jar:"):
-            java = _find_java()
-            if java:
-                result["version"] = _run_version(
-                    [java, "-jar", path[4:]] + argv)
-        elif kind == "dotnet":
-            result["version"] = None  # probed by execution instead
-        else:
-            result["version"] = _run_version([path] + argv)
-    # Availability is a real-start claim, not a path
-    # sighting (D-03): an entry with a version command is
-    # available only when that command actually ran and
-    # exited 0. Entries without one (e.g. adb, whose
-    # validation is a devices probe) are available on an
-    # executable path.
-    if argv and kind != "dotnet" and result["version"] is None:
+    pattern = (entry.get("identity") or {}).get(
+        "version_pattern")
+    identity_re = None
+    if pattern:
+        try:
+            identity_re = re.compile(pattern)
+        except re.error:
+            identity_re = None
+    if identity_re is None:
+        # Candidates are tried in resolution order until one
+        # actually runs (the doctor's interpreter chain has
+        # the same fallthrough: a python3 that is only the
+        # Microsoft Store stub fails its version run, and the
+        # search continues to python / py instead of reporting
+        # the interpreter missing). When no candidate runs,
+        # the FIRST candidate's result is returned, preserving
+        # the historical single-candidate report verbatim.
+        first_result = None
+        for path in candidates:
+            attempt = dict(result)
+            attempt["path"] = path
+            attempt = _finish_probe(entry, attempt, path)
+            if attempt["available"]:
+                return attempt
+            if first_result is None:
+                first_result = attempt
+        return first_result
+    rejections = []
+    for path in candidates:
+        version = _probe_version(entry, path)
+        if version is None:
+            rejections.append({
+                "path": path, "reported": None,
+                "reason": "version command did not run "
+                          "successfully"})
+            continue
+        if not identity_re.match(version):
+            rejections.append({
+                "path": path, "reported": version,
+                "reason": "tool_identity_mismatch"})
+            continue
+        below = _below_min_major(entry, version)
+        if below:
+            rejections.append({
+                "path": path, "reported": version,
+                "reason": below})
+            continue
+        result["path"] = path
+        result["version"] = version
+        result["identity"] = "validated"
+        if rejections:
+            result["identity_rejections"] = rejections
+        result["available"] = True
+        return result
+    result["identity_rejections"] = rejections
+    mismatches = [r for r in rejections
+                  if r["reason"] == "tool_identity_mismatch"]
+    if mismatches:
+        named = "; ".join(
+            f"{r['path']} reported '{r['reported']}'"
+            for r in mismatches)
+        result["note"] = (
+            f"tool_identity_mismatch: no candidate "
+            f"identified as {entry['name']} ({named})")
+    else:
         result["note"] = (
             "found but its version command did not run "
             "successfully; not counted as available")
-        return result
-    min_major = entry.get("min_version_major")
-    if min_major and result["version"]:
-        m = re.search(r"(\d+)\.", result["version"])
-        if m and int(m.group(1)) < min_major:
-            result["note"] = (
-                f"version {result['version']} is below "
-                f"the required major {min_major}")
-            result["version"] = None
-            return result
-    result["available"] = True
     return result
 
 

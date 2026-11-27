@@ -25,6 +25,19 @@ module that opens a target resolves it through here first:
   the caller's choice: with ``merge_splits=False`` the
   splits are recorded in ``split_skipped`` and the roots
   carry the base alone (the pre-3.0 behaviour).
+- A LOOSE split set — a base APK handed over as a bare file
+  with its split APKs sitting beside it in the same
+  directory — is assembled by sibling discovery inside
+  :func:`resolve_target` (field round F-01): set membership
+  is proven, never assumed (the sibling's package, read
+  from its binary manifest, must equal the base's, and the
+  sibling must declare itself a split, carry a split-shaped
+  name, or the base must carry bundle split evidence).
+  :func:`resolve_directory` resolves a directory holding
+  such a set the same way. Either way the outcome rides
+  ``ResolvedTarget.split_set`` so consumers can tell a
+  merged set from a base-only run and an incomplete set
+  from a complete one.
 - :func:`inventory_duplicates` is the duplicate/delta
   detection across a set of archives: identical member
   bytes are reported once, with every location.
@@ -72,6 +85,21 @@ DUPLICATE_MEMBER_CAP_BYTES = 256 * 1024 * 1024
 #: budget's per-member cap when that is smaller. Read at
 #: call time so tests can patch it.
 MANIFEST_READ_CAP_BYTES = MEMBER_READ_CAP_BYTES
+
+#: Environment variable that flips the DEFAULT of
+#: resolve_target's merge_splits when a caller does not pass
+#: it explicitly. nar-analyze sets it from its
+#: --no-merge-splits flag so the stage tools it launches as
+#: subprocesses (which resolve the target through here with
+#: the default) honour the same choice; it is also the
+#: standalone opt-out for tools that take no such flag.
+NO_MERGE_ENV_VAR = "NAR_NO_MERGE_SPLITS"
+
+
+def _merge_splits_default():
+    return os.environ.get(NO_MERGE_ENV_VAR, "").strip().lower() \
+        not in ("1", "true", "yes", "on")
+
 
 _SPLIT_CONFIG_RE = re.compile(r"(^|[._-])config[._-]|^split[._-]",
                               re.IGNORECASE)
@@ -299,8 +327,12 @@ class ResolvedTarget:
     ``assets_roots`` / ``native_roots`` (ordered archive
     paths: base first, then merged splits), ``splits_merged``
     and ``split_skipped`` ({name, reason} records),
-    ``is_container``. ``cleanup()`` removes the extraction
-    directory (a no-op for plain inputs)."""
+    ``is_container``, and ``split_set`` (the loose-split-set
+    record for sibling/directory resolutions: detected /
+    resolution / base evidence / members / merged /
+    complete, or None when no loose set was detected).
+    ``cleanup()`` removes the extraction directory (a no-op
+    for plain inputs)."""
 
     def __init__(self, input_path, input_kind):
         self.input_path = input_path
@@ -315,11 +347,12 @@ class ResolvedTarget:
         self.split_skipped = []
         self.is_container = False
         self.package = None
+        self.split_set = None
         self._cleanup_dirs = []
 
     def container_block(self):
         """The `container` report block consumers embed."""
-        return {
+        block = {
             "input_kind": self.input_kind,
             "base": os.path.basename(self.base)
             if self.base else None,
@@ -328,6 +361,9 @@ class ResolvedTarget:
             "split_skipped": list(self.split_skipped),
             "obbs": [o["name"] for o in self.obbs],
         }
+        if self.split_set is not None:
+            block["split_set"] = self.split_set
+        return block
 
     def cleanup(self):
         import shutil
@@ -369,7 +405,309 @@ def _beside_obbs(input_path, package=None):
     return out
 
 
-def resolve_target(path, merge_splits=True, budget=None,
+_perms_mod = None
+
+
+def _load_perms():
+    """nar-perms.py loaded as a module (the chains.py
+    pattern): its parse_axml is the tree's proven binary
+    manifest parser, and set-membership checks need the
+    package / split attributes it extracts."""
+    global _perms_mod
+    if _perms_mod is None:
+        import importlib.util
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..",
+            "nar-perms.py")
+        spec = importlib.util.spec_from_file_location(
+            "nar_perms_for_container", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _perms_mod = mod
+    return _perms_mod
+
+
+def apk_manifest_identity(path):
+    """(package, split_name) declared by an APK's binary
+    AndroidManifest.xml, or (None, None) when either cannot
+    be read. Fail-closed by design: sibling-split discovery
+    treats an unreadable manifest as NO identity, never as
+    a match. The manifest member is read through
+    safearchive's capped reader under the same ceiling as
+    container manifests."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            try:
+                raw = read_member_capped(
+                    zf, "AndroidManifest.xml",
+                    MANIFEST_READ_CAP_BYTES)
+            except (ValueError, KeyError, OSError,
+                    RuntimeError, zipfile.BadZipFile):
+                return None, None
+    except (zipfile.BadZipFile, OSError):
+        return None, None
+    try:
+        root = _load_perms().parse_axml(raw)
+    except Exception:
+        return None, None
+    attrs = getattr(root, "attrs", None) or {}
+    package = attrs.get("package")
+    split = attrs.get("split") or attrs.get("android:split")
+    return (str(package) if package else None,
+            str(split) if split else None)
+
+
+def bundle_split_evidence(path):
+    """Base-carried split-set evidence in an APK's own
+    member list: the bundletool stamp (stamp-cert-sha256)
+    and the splits manifest resources (res/xml/splits*) —
+    the same signals nar-triage records as
+    bundle_split_evidence. Empty list when the file is not
+    a readable ZIP or carries neither marker."""
+    names = _zip_names(path)
+    if not names:
+        return []
+    return sorted(n for n in names
+                  if n == "stamp-cert-sha256"
+                  or n.startswith("res/xml/splits"))
+
+
+def _sibling_candidates(directory, self_abs):
+    """APK files sitting beside a target file (never the
+    target itself), name-sorted for deterministic output."""
+    out = []
+    try:
+        entries = sorted(os.listdir(directory))
+    except OSError:
+        return out
+    for name in entries:
+        if not name.lower().endswith(".apk"):
+            continue
+        full = os.path.join(directory, name)
+        if os.path.abspath(full) == self_abs:
+            continue
+        if os.path.isfile(full):
+            out.append((name, full))
+    return out
+
+
+def _discover_sibling_splits(resolved, path, merge_splits):
+    """Assemble the loose split set a lone base APK belongs
+    to, from the APK files beside it (field round F-01).
+
+    Membership is proven per candidate: the candidate's
+    package (from its binary manifest) must equal the
+    base's, AND at least one split signal must hold — the
+    candidate declares a split name in its manifest, its
+    file name is split-shaped (config.* / split_* / an ABI,
+    density or feature token), or the base itself carries
+    bundle split evidence. A candidate that fails the
+    package check is never merged; when the base carries
+    evidence, the rejection is recorded so the case can
+    say why the set is incomplete. When nothing is
+    accepted and the base carries no evidence, the target
+    is an ordinary lone APK and the resolution is left
+    untouched (split_set stays None)."""
+    directory = os.path.dirname(os.path.abspath(path))
+    candidates = _sibling_candidates(directory,
+                                     os.path.abspath(path))
+    if not candidates:
+        return
+    evidence = bundle_split_evidence(path)
+    base_package, _base_split = apk_manifest_identity(path)
+    accepted, skipped = [], []
+    for name, full in candidates:
+        package, split_name = apk_manifest_identity(full)
+        if base_package is None or package is None \
+                or package != base_package:
+            if evidence:
+                if package and base_package:
+                    reason = ("sibling candidate not merged: "
+                              "its package identity does not "
+                              "match the base APK")
+                else:
+                    reason = ("sibling candidate not merged: "
+                              "package identity could not be "
+                              "verified")
+                skipped.append({"name": name,
+                                "reason": reason})
+            continue
+        name_shaped = split_kind(name) != "split" or \
+            bool(_SPLIT_CONFIG_RE.search(name))
+        if split_name or name_shaped or evidence:
+            accepted.append({
+                "path": full, "name": name,
+                "kind": split_kind(name),
+                "source_entry": name,
+                "source": "sibling-file"})
+        elif evidence:
+            skipped.append({
+                "name": name,
+                "reason": "sibling candidate not merged: "
+                          "same package but no split "
+                          "declaration or split-shaped name"})
+    if not accepted and not evidence:
+        return
+    resolved.base_entry = os.path.basename(path)
+    resolved.split_set = {
+        "detected": True,
+        "resolution": "sibling-files",
+        "directory": directory,
+        "base": os.path.basename(path),
+        "package": base_package,
+        "base_evidence": evidence,
+        "members": [{"name": s["name"], "kind": s["kind"],
+                     "source": s["source"]}
+                    for s in accepted],
+        "skipped": skipped,
+        "merged": bool(merge_splits and accepted),
+        "complete": bool(merge_splits and accepted),
+    }
+    if merge_splits:
+        for s in accepted:
+            resolved.splits.append(s)
+            resolved.splits_merged.append({
+                "name": s["name"], "kind": s["kind"],
+                "source_entry": s["source_entry"]})
+        if accepted:
+            resolved.assets_roots = [resolved.base] + \
+                [s["path"] for s in accepted]
+            resolved.native_roots = list(resolved.assets_roots)
+    else:
+        for s in accepted:
+            resolved.split_skipped.append({
+                "name": s["name"],
+                "reason": "split merge disabled "
+                          "(--no-merge-splits)"})
+
+
+def resolve_directory(path, merge_splits=None, budget=None):
+    """Resolve a DIRECTORY holding a loose split set.
+
+    The directory is the user's explicit statement that its
+    APK files form one set: the base is picked with the
+    shared :func:`pick_base_apk` rule (the set package is
+    the package most members declare), and every other APK
+    whose package matches the base's is a split. A member
+    whose package provably differs is recorded in
+    ``split_skipped`` instead of being merged. Returns None
+    when the directory holds no APK at all. No extraction
+    happens: the members already live on disk."""
+    if merge_splits is None:
+        merge_splits = _merge_splits_default()
+    directory = os.path.abspath(path)
+    try:
+        entries = sorted(os.listdir(directory))
+    except OSError:
+        return None
+    members = []
+    for name in entries:
+        full = os.path.join(directory, name)
+        if name.lower().endswith(".apk") \
+                and os.path.isfile(full):
+            members.append({"name": name, "path": full,
+                            "size_bytes": os.path.getsize(full)})
+    if not members:
+        return None
+    packages = {m["name"]: apk_manifest_identity(m["path"])[0]
+                for m in members}
+    known = [p for p in packages.values() if p]
+    set_package = None
+    if known:
+        set_package = max(sorted(set(known)), key=known.count)
+    base_entry = pick_base_apk(
+        [{"name": m["name"], "size_bytes": m["size_bytes"]}
+         for m in members], package=set_package)
+    base_member = next(m for m in members
+                       if m["name"] == base_entry)
+    resolved = ResolvedTarget(directory, "directory")
+    resolved.base = base_member["path"]
+    resolved.base_entry = base_entry
+    resolved.package = set_package
+    splits, skipped = [], []
+    for m in members:
+        if m["name"] == base_entry:
+            continue
+        pkg = packages[m["name"]]
+        if set_package is not None and pkg is not None \
+                and pkg != set_package:
+            rec = {"name": m["name"],
+                   "reason": "not merged: package identity "
+                             "does not match the set's base "
+                             "APK"}
+            skipped.append(rec)
+            resolved.split_skipped.append(rec)
+            continue
+        splits.append(m)
+    if merge_splits:
+        for m in splits:
+            kind = split_kind(m["name"])
+            resolved.splits.append({
+                "path": m["path"], "name": m["name"],
+                "kind": kind, "source_entry": m["name"],
+                "source": "directory"})
+            resolved.splits_merged.append({
+                "name": m["name"], "kind": kind,
+                "source_entry": m["name"]})
+        resolved.assets_roots = [resolved.base] + \
+            [s["path"] for s in resolved.splits]
+        resolved.native_roots = list(resolved.assets_roots)
+    else:
+        resolved.assets_roots = [resolved.base]
+        resolved.native_roots = [resolved.base]
+        for m in splits:
+            resolved.split_skipped.append({
+                "name": m["name"],
+                "reason": "split merge disabled "
+                          "(--no-merge-splits)"})
+    if len(members) > 1:
+        resolved.split_set = {
+            "detected": True,
+            "resolution": "directory",
+            "directory": directory,
+            "base": base_entry,
+            "package": set_package,
+            "base_evidence": bundle_split_evidence(
+                base_member["path"]),
+            "members": [{"name": s["name"],
+                         "kind": s["kind"],
+                         "source": s["source"]}
+                        for s in resolved.splits],
+            "skipped": skipped,
+            "merged": bool(merge_splits and resolved.splits),
+            "complete": bool(merge_splits),
+        }
+    resolved.obbs = _beside_obbs(base_member["path"],
+                                 set_package)
+    return resolved
+
+
+def resolved_set_sha256(resolved):
+    """SHA-256 identity of a resolved set: the digest of
+    the ordered (name, size, sha256) records of the base
+    and every merged split. Used to key a case whose input
+    is a set (a directory) rather than one file, so the
+    stage-cache keys verify against the recorded input
+    hash exactly as they do for a single file."""
+    digest = hashlib.sha256()
+    paths = [resolved.base] + [s["path"]
+                               for s in resolved.splits]
+    for p in paths:
+        member = hashlib.sha256()
+        with open(p, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                member.update(chunk)
+        digest.update(
+            os.path.basename(p).encode("utf-8", "replace"))
+        digest.update(b"\0")
+        digest.update(str(os.path.getsize(p)).encode())
+        digest.update(b"\0")
+        digest.update(member.hexdigest().encode())
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def resolve_target(path, merge_splits=None, budget=None,
                    work_dir=None, _depth=0):
     """Resolve a target path to a :class:`ResolvedTarget`.
 
@@ -378,7 +716,15 @@ def resolve_target(path, merge_splits=True, budget=None,
     dict). Nested containers recurse up to
     MAX_CONTAINER_DEPTH. With ``merge_splits=False`` the
     base alone is resolved and every split is recorded in
-    ``split_skipped`` (the pre-3.0 behaviour)."""
+    ``split_skipped`` (the pre-3.0 behaviour). With
+    ``merge_splits=None`` (the default) the choice falls
+    back to the NAR_NO_MERGE_SPLITS environment variable
+    (see NO_MERGE_ENV_VAR), then to merging. A plain APK
+    additionally goes through sibling-split discovery: a
+    loose split set handed over as a bare base file is
+    assembled from the APKs beside it."""
+    if merge_splits is None:
+        merge_splits = _merge_splits_default()
     budget = ResourceBudget.from_safearchive_limits(budget)
     resolved = ResolvedTarget(os.path.abspath(path),
                               detect_container(path))
@@ -391,6 +737,9 @@ def resolve_target(path, merge_splits=True, budget=None,
         elif kind == "obb":
             resolved.assets_roots = [resolved.base]
         resolved.obbs = _beside_obbs(path)
+        if kind == "apk":
+            _discover_sibling_splits(resolved, path,
+                                     merge_splits)
         return resolved
 
     resolved.is_container = True

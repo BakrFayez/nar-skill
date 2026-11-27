@@ -102,7 +102,11 @@ def validate_formats(doc):
 # ------------------------------------------------------------------
 def engines_table(doc=None):
     """nar-engines' ENGINES shape: {display name: {hints,
-    deep, version_keys}}, in registry order."""
+    deep, version_keys, string_signatures}}, in registry
+    order. string_signatures is the native-strings channel:
+    [{"token": ascii str, "strong": bool}] matched as raw
+    byte substrings inside lib/**/*.so members; entries
+    without the key get an empty list."""
     doc = doc or load_formats()
     out = {}
     for entry in doc["engines"].values():
@@ -110,6 +114,10 @@ def engines_table(doc=None):
             "hints": list(entry.get("hints") or []),
             "deep": entry.get("deep"),
             "version_keys": list(entry.get("version_keys") or []),
+            "string_signatures": [
+                {"token": sig["token"],
+                 "strong": bool(sig.get("strong"))}
+                for sig in entry.get("string_signatures") or []],
         }
     return out
 

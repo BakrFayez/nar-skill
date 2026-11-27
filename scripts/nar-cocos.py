@@ -18,14 +18,20 @@ families the shallow engine pass only names:
 - asset layout: member counts under assets/res/,
   assets/src/ and assets/ as a whole;
 - engine version evidence: a bounded byte scan of every
-  lib/*.so up to 64 MiB for the "cocos2d-x 3." /
-  "cocos2d-x 4." / "Cocos Creator" strings, reported as
-  labelled string evidence with the library that carried
-  each match (a string hit is evidence, not a parsed
-  version field).
+  lib/*.so up to 64 MiB for the "cocos2d-x 2." /
+  "cocos2d-x 3." / "cocos2d-x 4." / "Cocos Creator"
+  strings, reported as labelled string evidence with the
+  library that carried each match (a string hit is
+  evidence, not a parsed version field).
 
 The verdict is "present" when at least one plist atlas
-parsed, or any .ccb/.csb or .jsc evidence exists.
+parsed, or any .ccb/.csb or .jsc evidence exists, or any
+version string evidence was found. The last case is the
+statically-linked / renamed-library shape: the engine is
+compiled into a generically-named library and a custom
+content pipeline ships no canonical payload files, so the
+version strings are the only trace; when the verdict
+rests on them alone, a note in the report says so.
 
 Usage:
     python3 nar-cocos.py game.apk [--json]
@@ -44,11 +50,11 @@ from narlib import anim, atlas  # noqa: E402
 from narlib import container as _container  # noqa: E402
 
 TOOL = "nar-cocos"
-VERSION = "3.0.2"
+VERSION = "3.0.3"
 MEMBER_CAP = 32 * 1024 * 1024        # per-member read cap
 NATIVE_CAP = 64 * 1024 * 1024        # native string-scan cap
-_VERSION_PATTERNS = (b"cocos2d-x 3.", b"cocos2d-x 4.",
-                     b"Cocos Creator")
+_VERSION_PATTERNS = (b"cocos2d-x 2.", b"cocos2d-x 3.",
+                     b"cocos2d-x 4.", b"Cocos Creator")
 
 
 class Scan:
@@ -205,10 +211,21 @@ def inspect(target):
             scan.close()
     finally:
         resolved.cleanup()
-    report["verdict"] = "present" if (
+    payload_present = (
         report["atlases"]["count"] > 0
         or report["cocos_files"]["count"] > 0
-        or report["jsc"]["count"] > 0) else "absent"
+        or report["jsc"]["count"] > 0)
+    report["verdict"] = "present" if (
+        payload_present
+        or report["version_evidence"]) else "absent"
+    if report["verdict"] == "present" and not payload_present:
+        report["notes"].append(
+            "Verdict rests on version string evidence alone: "
+            "no plist atlas, .ccb/.csb or .jsc payload was "
+            "found. This is the statically-linked / "
+            "renamed-library shape — the engine compiled "
+            "into a generically-named native library, with "
+            "content shipped through a custom pipeline.")
     return report
 
 
@@ -234,6 +251,8 @@ def human(report):
     for ev in report["version_evidence"]:
         lines.append(f"Version string evidence: {ev['match']!r} "
                      f"in {ev['library']}")
+    for note in report.get("notes") or []:
+        lines.append(f"Note: {note}")
     return "\n".join(lines)
 
 

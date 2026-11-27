@@ -256,12 +256,21 @@ def scan(apk_path, min_length):
     scan_paths = [(apk_path, "")]
     resolved = None
     if container_mod.detect_container(apk_path) in \
-            container_mod.CONTAINER_KINDS:
-        resolved = container_mod.resolve_target(apk_path)
-        scan_paths = [(resolved.base, "")] + [
-            (s["path"], os.path.basename(s["path"]) + ":")
-            for s in resolved.splits]
-        result["container"] = resolved.container_block()
+            container_mod.CONTAINER_KINDS + ("apk",):
+        # A plain APK resolves too, but the resolution is
+        # adopted only when it actually assembled a set (a
+        # container, or a loose split set merged by sibling
+        # discovery — field round F-01); an ordinary lone
+        # APK keeps the single-archive path unchanged.
+        _candidate = container_mod.resolve_target(apk_path)
+        if _candidate.is_container or _candidate.splits:
+            resolved = _candidate
+            scan_paths = [(resolved.base, "")] + [
+                (s["path"], os.path.basename(s["path"]) + ":")
+                for s in resolved.splits]
+            result["container"] = resolved.container_block()
+        else:
+            _candidate.cleanup()
 
     sources = {}          # entry name -> raw string count
     found = {}            # string -> set of source entries

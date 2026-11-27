@@ -198,6 +198,12 @@ def classify_exception(exc):
 def classify_unavailable(note):
     """Classify a registry probe's not-available note."""
     text = (note or "").lower()
+    if "tool_identity_mismatch" in text:
+        # A tool is present at the expected name/path but
+        # provably is not the tool it claims to be (field
+        # round F-04): the wrong tool, classified like the
+        # wrong version — never as a bare absence.
+        return FailureKind.WRONG_VERSION
     if "below the required" in text or "wrong version" in text:
         return FailureKind.WRONG_VERSION
     if "did not run" in text or "did not start" in text:

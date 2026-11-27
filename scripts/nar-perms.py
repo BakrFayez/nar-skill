@@ -363,6 +363,12 @@ def find_aapt2():
         os.environ.get("ANDROID_SDK_ROOT"),
         os.path.expanduser("~/workspace/android-sdk"),
         os.path.expanduser("~/Android/Sdk"),
+        # The Android Studio default SDK location on
+        # Windows (%LOCALAPPDATA%\Android\Sdk) — field
+        # round F-32.
+        os.path.join(os.environ["LOCALAPPDATA"], "Android",
+                     "Sdk") if os.environ.get("LOCALAPPDATA")
+        else None,
     ]):
         bt = os.path.join(root, "build-tools")
         if os.path.isdir(bt):

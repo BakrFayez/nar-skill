@@ -29,9 +29,10 @@ import sys
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from narlib import anim as anim_mod  # noqa: E402
 from narlib import container as container_mod  # noqa: E402
 from narlib import registry as reg_mod  # noqa: E402
-from narlib.elf import Elf, ElfError  # noqa: E402
+from narlib.elf import Elf, ElfError, SHT_SYMTAB  # noqa: E402
 from narlib.hashing import sha256_of  # noqa: E402
 from narlib.mmapio import mapped_file  # noqa: E402
 from narlib.safearchive import read_member_capped  # noqa: E402
@@ -132,6 +133,53 @@ def readelf_needed(path):
     return sorted(set(re.findall(r"\[([^\]]+)\]", proc.stdout)))
 
 
+#: Bounded raw-string scan window for the physics string
+#: channel: only the first bytes of a library are scanned
+#: for physics family tokens (the symbol channels are not
+#: bounded this way — they read the symbol tables proper).
+_PHYSICS_STRING_SCAN_BYTES = 16 * 1024 * 1024
+
+
+def _physics_hits_for_facts(facts, data):
+    """Physics family hits for one parsed library: the
+    dynsym channel from its facts (defined exports), the
+    symtab channel from a fresh SHT_SYMTAB read, and a
+    bounded raw-string scan of its bytes — delegated to
+    narlib.anim.physics_hits_for_library."""
+    try:
+        elf = Elf(data, facts.get("name") or "lib.so")
+        symtab = sorted({s["name"] for s in
+                         elf.symbols(SHT_SYMTAB)
+                         if s.get("defined") and s.get("name")})
+    except Exception:
+        symtab = []
+    return anim_mod.physics_hits_for_library(
+        facts.get("exports") or [],
+        bytes(data[:_PHYSICS_STRING_SCAN_BYTES]),
+        symtab_names=symtab)
+
+
+def _accumulate_physics(report, display, facts, data):
+    """Fold one library's physics hits into the report-level
+    accumulator (per-family sets only — library bytes are
+    never retained) and label the library entry with the
+    families it contributed hits to."""
+    hits = _physics_hits_for_facts(facts, data)
+    if not hits:
+        return
+    facts["physics_families"] = sorted(hits)
+    accum = report.setdefault("_physics_accum", {})
+    for family, fh in hits.items():
+        slot = accum.setdefault(family, {
+            "engine_guess": fh["engine_guess"],
+            "symbols": set(), "string_tokens": set(),
+            "evidence_sources": set(), "libraries": set()})
+        slot["symbols"] |= fh["symbols"]
+        slot["string_tokens"] |= fh["string_tokens"]
+        slot["evidence_sources"] |= fh["evidence_sources"]
+        slot["libraries"].add(display)
+
+
 def analyze_elf(name, data, cross_check_path=None):
     elf = Elf(data, name)
     facts = elf.facts()
@@ -150,7 +198,7 @@ def analyze(target, only_lib=None, work_dir=None,
             merge_splits=True):
     if not merge_splits:
         return _analyze_single(target, only_lib, work_dir)
-    report = {"tool": "nar-native", "version": "3.0.2",
+    report = {"tool": "nar-native", "version": "3.0.3",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     resolved = None
@@ -163,7 +211,9 @@ def analyze(target, only_lib=None, work_dir=None,
         for root in roots:
             _scan_archive(report, root, only_lib, work_dir,
                           source_split=os.path.basename(root))
-        if resolved is not None and resolved.is_container:
+        if resolved is not None and (resolved.is_container
+                                     or resolved.split_set
+                                     is not None):
             report["container"] = resolved.container_block()
     finally:
         if resolved is not None:
@@ -204,6 +254,7 @@ def _scan_archive(report, archive_path, only_lib, work_dir,
         facts["display_name"] = display
         if source_split is not None:
             facts["source_split"] = source_split
+        _accumulate_physics(report, display, facts, data)
         report["libraries"].append(facts)
 
     if archive_path.lower().endswith(".so"):
@@ -244,9 +295,11 @@ def _scan_archive(report, archive_path, only_lib, work_dir,
 
 
 def _analyze_single(target, only_lib=None, work_dir=None):
-    """The pre-3.0 single-archive behaviour, verbatim: the
-    --no-merge-splits path (byte-identical output)."""
-    report = {"tool": "nar-native", "version": "3.0.2",
+    """The pre-3.0 single-archive behaviour: the
+    --no-merge-splits path (single archive only; the shared
+    scan / finish path, including physics detections, is
+    identical to the merged path)."""
+    report = {"tool": "nar-native", "version": "3.0.3",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     _scan_archive(report, target, only_lib, work_dir,
@@ -338,6 +391,37 @@ def _finish_report(report):
     report["jni_map"] = {
         lib_name(lib): lib["jni_exports"]
         for lib in report["libraries"] if lib.get("jni_exports")}
+    # Physics detections (Area 5 wiring): the per-family
+    # evidence accumulated during the scan (dynsym + symtab
+    # + bounded string channels; see _accumulate_physics),
+    # emitted as rig-shaped records at the same >= 3
+    # distinct-evidence bar as narlib.anim.detect_physics.
+    accum = report.pop("_physics_accum", {})
+    family_tokens = {family: tokens for family, _guess,
+                     tokens in anim_mod._PHYSICS_FAMILIES}
+    detections = []
+    for family, slot in sorted(accum.items()):
+        count = anim_mod.physics_distinct_count(
+            slot["symbols"], slot["string_tokens"],
+            family_tokens.get(family, ()))
+        if count < 3:
+            continue
+        symbols = sorted(slot["symbols"])
+        det = {
+            "family": family,
+            "engine_guess": slot["engine_guess"],
+            "symbol_count": count,
+            "sample": symbols[:8] if symbols else
+                      sorted(slot["string_tokens"])[:8],
+            "libraries": sorted(slot["libraries"]),
+            "confidence": "inferred",
+            "evidence_sources": sorted(
+                slot["evidence_sources"]),
+        }
+        if slot["string_tokens"]:
+            det["string_tokens"] = sorted(slot["string_tokens"])
+        detections.append(det)
+    report["physics_detections"] = detections
     return report
 
 
@@ -380,6 +464,15 @@ def human(report):
               f"nodes ({detail['bundled_node_count']} bundled, "
               f"{detail['external_node_count']} external), "
               f"{detail['edge_count']} edges")
+    if report.get("physics_detections"):
+        print("Physics detections (inferred, symbol/string "
+              "evidence):")
+        for det in report["physics_detections"]:
+            print(f"  {det['engine_guess']} ({det['family']}): "
+                  f"{det['symbol_count']} symbols/tokens in "
+                  f"{', '.join(det['libraries'])} "
+                  f"[evidence: "
+                  f"{', '.join(det['evidence_sources'])}]")
     if report.get("behavior_indicator_count"):
         print(f"Behavior indicators: "
               f"{report['behavior_indicator_count']} "

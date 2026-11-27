@@ -570,7 +570,18 @@ def analyze_dex(name, data, disasm=None, cfg=None, dex_obj=None,
 
 
 def run_adapter(tool_name, argv_builder, out_dir, timeout=1800):
-    """Version-checked external adapter run (jadx/baksmali)."""
+    """Version-checked external adapter run (jadx/baksmali).
+
+    The argv is built from the registry's launch prefix,
+    never from the raw probe path: a tool resolved through
+    a jar route carries a "jar:"-prefixed path that must be
+    launched as [java, -jar, <jar>] (the P6-01 defect class
+    — nar-network's NSC seam — existed here too: the raw
+    path was spawned literally). The probe's identity
+    verdict rides along (tool_identity /
+    identity_rejections) so the decompile Fallback Record
+    can state whether the tool that ran was validated as
+    the tool it claims to be (field round F-04)."""
     registry = reg_mod.load_registry()
     entry = next((t for t in registry["tools"]
                   if t["name"] == tool_name), None)
@@ -578,27 +589,48 @@ def run_adapter(tool_name, argv_builder, out_dir, timeout=1800):
         return {"error": f"{tool_name} not in registry"}
     probe = reg_mod.probe(entry)
     if not probe["available"]:
-        return {"error": f"{tool_name} not available: "
-                         f"{probe['note']}",
+        result = {"error": f"{tool_name} not available: "
+                           f"{probe['note']}",
+                  "install_hint": entry.get("install_hint")}
+        if probe.get("identity_rejections"):
+            result["identity_rejections"] = \
+                probe["identity_rejections"]
+        return result
+    prefix = reg_mod.launch_prefix(probe)
+    if prefix is None:
+        return {"error": f"{tool_name} resolved to "
+                         f"{probe['path']} but no launch "
+                         "prefix could be built (a jar tool "
+                         "needs a Java runtime)",
+                "tool_path": probe["path"],
                 "install_hint": entry.get("install_hint")}
-    argv = argv_builder(probe["path"], out_dir)
+    argv = argv_builder(prefix, out_dir)
+    identity = {}
+    if probe.get("identity"):
+        identity["tool_identity"] = probe["identity"]
+    if probe.get("identity_rejections"):
+        identity["identity_rejections"] = \
+            probe["identity_rejections"]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
                               timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"error": f"{tool_name} run failed: {e}",
                 "tool_path": probe["path"],
-                "tool_version": probe.get("version")}
+                "tool_version": probe.get("version"),
+                **identity}
     return {"tool_path": probe["path"],
             "tool_version": probe.get("version"),
             "exit_code": proc.returncode,
-            "output_tail": (proc.stdout + proc.stderr)[-500:]}
+            "output_tail": (proc.stdout + proc.stderr)[-500:],
+            **identity}
 
 
 def jadx_index(apk_path, out_dir):
     result = run_adapter(
         "jadx",
-        lambda path, out: [path, "-d", out, "--no-res", apk_path],
+        lambda prefix, out: prefix + ["-d", out, "--no-res",
+                                      apk_path],
         out_dir)
     if "error" in result:
         return result
@@ -627,6 +659,9 @@ def jadx_index(apk_path, out_dir):
                          f"(exit {result.get('exit_code')})",
                 "tool_path": result.get("tool_path"),
                 "tool_version": result.get("tool_version"),
+                "tool_identity": result.get("tool_identity"),
+                "identity_rejections":
+                    result.get("identity_rejections"),
                 "exit_code": result.get("exit_code"),
                 "output_tail": result.get("output_tail")}
     result.update({"class_files": len(classes),
@@ -638,8 +673,9 @@ def jadx_index(apk_path, out_dir):
 def baksmali_index(dex_bytes_path, out_dir):
     result = run_adapter(
         "baksmali",
-        lambda path, out: [path, "disassemble", dex_bytes_path,
-                           "-o", out],
+        lambda prefix, out: prefix + ["disassemble",
+                                      dex_bytes_path,
+                                      "-o", out],
         out_dir)
     if "error" in result:
         return result
@@ -653,7 +689,7 @@ def baksmali_index(dex_bytes_path, out_dir):
 def analyze(target, out_dir=None, use_jadx=False,
             use_baksmali=False, disasm=None, cfg=None,
             xref=None, merge_splits=True, compact=True):
-    report = {"tool": "nar-dex", "version": "3.0.2",
+    report = {"tool": "nar-dex", "version": "3.0.3",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "dex_files": []}
     if compact:
@@ -674,9 +710,18 @@ def analyze(target, out_dir=None, use_jadx=False,
     dex_iter = load_dexes(target)
     if merge_splits and os.path.isfile(target) and \
             container_mod.detect_container(target) in \
-            container_mod.CONTAINER_KINDS:
-        resolved = container_mod.resolve_target(target)
-
+            container_mod.CONTAINER_KINDS + ("apk",):
+        # A plain APK resolves too, but the resolution is
+        # adopted only when it actually assembled a set (a
+        # container, or a loose split set merged by sibling
+        # discovery — field round F-01); an ordinary lone
+        # APK keeps the single-archive path unchanged.
+        _candidate = container_mod.resolve_target(target)
+        if _candidate.is_container or _candidate.splits:
+            resolved = _candidate
+        else:
+            _candidate.cleanup()
+    if resolved is not None:
         def _merged_dexes(_resolved=resolved):
             for _name, _data in load_dexes(_resolved.base):
                 yield _name, _data

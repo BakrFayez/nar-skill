@@ -894,8 +894,17 @@ def analyze(target, work_dir=None):
     # itself as if it were an APK.
     resolved = None
     if container_mod.detect_container(target) in \
-            container_mod.CONTAINER_KINDS:
-        resolved = container_mod.resolve_target(target)
+            container_mod.CONTAINER_KINDS + ("apk",):
+        # A plain APK resolves too, but the resolution is
+        # adopted only when it actually assembled a set (a
+        # container, or a loose split set merged by sibling
+        # discovery — field round F-01); an ordinary lone
+        # APK keeps the single-archive path unchanged.
+        _candidate = container_mod.resolve_target(target)
+        if _candidate.is_container or _candidate.splits:
+            resolved = _candidate
+        else:
+            _candidate.cleanup()
     effective = resolved.base if resolved is not None \
         else target
     roots = resolved.assets_roots if resolved is not None \
@@ -1030,7 +1039,7 @@ def analyze(target, work_dir=None):
     for e in endpoints:
         by_class[e["classification"]] = \
             by_class.get(e["classification"], 0) + 1
-    report = {"tool": "nar-network", "version": "3.0.2",
+    report = {"tool": "nar-network", "version": "3.0.3",
             "target": os.path.abspath(target),
             "target_sha256": sha256_of(target),
             "endpoints": endpoints, "hosts": sorted(hosts),
