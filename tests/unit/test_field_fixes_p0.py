@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -542,10 +543,74 @@ def test_analyze_empty_directory_rejected(tmp_path):
 # ------------------------------------------------------------------
 
 def _shim(path, body):
+    """Plant a fake tool whose --version prints one line.
+
+    POSIX: an extensionless ``#!/bin/sh`` script, which is
+    what PATH resolution finds there. Windows: CreateProcess
+    cannot start a shell script and ``shutil.which`` resolves
+    only PATHEXT suffixes, so the same fake is planted as
+    ``<name>.bat`` printing the same line (run #63: the
+    extensionless plant was invisible to the registry probe
+    on the hosted Windows runner — "not found", never
+    identity-rejected). Only single-echo bodies are
+    translated; anything richer needs its own planter.
+    Returns the planted file's path."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        m = re.fullmatch(r"echo '([^']*)'\n", body)
+        assert m, "win32 shim translation needs an echo body"
+        bat = path.with_name(path.name + ".bat")
+        bat.write_bytes(("@echo off\r\necho " + m.group(1)
+                         + "\r\n").encode("utf-8"))
+        return str(bat)
     path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
     path.chmod(0o755)
     return str(path)
+
+
+def _java_shim(path):
+    """Plant the per-jar dispatching fake ``java``: the
+    wrapper jar reports another product, a jadx-shaped jar
+    reports a jadx version, anything else fails. Batch on
+    Windows (see _shim), a shell case dispatch elsewhere."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        bat = path.with_name(path.name + ".bat")
+        bat.write_bytes((
+            "@echo off\r\n"
+            "echo %*| findstr /C:\"wrapper.jar\" >nul\r\n"
+            "if %errorlevel%==0 goto wrapper\r\n"
+            "echo %*| findstr /C:\"all.jar\" >nul\r\n"
+            "if %errorlevel%==0 goto realjar\r\n"
+            "exit /b 1\r\n"
+            ":wrapper\r\n"
+            "echo WRAPPER-JAR-NOT-JADX\r\n"
+            "exit /b 0\r\n"
+            ":realjar\r\n"
+            "echo 1.5.3\r\n"
+            "exit /b 0\r\n").encode("utf-8"))
+        return str(bat)
+    path.write_text("#!/bin/sh\n"
+                    "for a in \"$@\"; do\n"
+                    "  case \"$a\" in\n"
+                    "    */wrapper.jar) echo "
+                    "'WRAPPER-JAR-NOT-JADX'; exit 0 ;;\n"
+                    "    */jadx-*-all.jar) echo '1.5.3'; "
+                    "exit 0 ;;\n"
+                    "  esac\n"
+                    "done\n"
+                    "exit 1\n", encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
+def _norm(path):
+    """Separator-insensitive path comparison: a resolved
+    Windows path may mix the separators of the pieces it
+    was joined from (registry globs carry forward slashes,
+    pathlib carries backslashes) while naming the same
+    file."""
+    return str(path).replace("\\", "/")
 
 
 def _jadx_entry():
@@ -561,6 +626,13 @@ def fake_env(tmp_path, monkeypatch):
     fakebin = tmp_path / "fakebin"
     fakebin.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    # ntpath.expanduser("~") — which the registry's home
+    # globs and workspace layout resolve through — ignores
+    # HOME entirely and reads USERPROFILE, so the fake home
+    # must be planted there too or the workspace candidates
+    # resolve under the real profile on Windows (run #63).
+    # Inert on POSIX, where expanduser reads HOME.
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv(
         "PATH", str(fakebin) + os.pathsep + "/usr/bin:/bin")
     monkeypatch.delenv("NAR_JADX_JAR", raising=False)
@@ -594,7 +666,7 @@ def test_fake_jadx_falls_through_to_workspace(fake_env):
                  / "bin" / "jadx", "echo '1.5.1'\n")
     result = registry.probe(_jadx_entry())
     assert result["available"] is True
-    assert result["path"] == good
+    assert _norm(result["path"]) == _norm(good)
     assert result["version"] == "1.5.1"
     assert result["identity"] == "validated"
     assert len(result["identity_rejections"]) == 1
@@ -606,15 +678,7 @@ def test_wrapper_jar_rejected_and_falls_through(
     # A fake java that answers per-jar: the wrapper reports
     # another product; the real-shaped jar reports a jadx
     # version.
-    _shim(fakebin / "java", """\
-for a in "$@"; do
-  case "$a" in
-    */wrapper.jar) echo 'WRAPPER-JAR-NOT-JADX'; exit 0 ;;
-    */jadx-*-all.jar) echo '1.5.3'; exit 0 ;;
-  esac
-done
-exit 1
-""")
+    _java_shim(fakebin / "java")
     wrapper = tmp_path / "wrapper.jar"
     wrapper.write_bytes(b"not a real jar")
     monkeypatch.setenv("NAR_JADX_JAR", str(wrapper))
@@ -624,7 +688,7 @@ exit 1
     real_jar.write_bytes(b"jar bytes")
     result = registry.probe(_jadx_entry())
     assert result["available"] is True
-    assert result["path"] == "jar:" + str(real_jar)
+    assert _norm(result["path"]) == _norm("jar:" + str(real_jar))
     assert result["version"] == "1.5.3"
     assert result["identity"] == "validated"
     rej = result["identity_rejections"]

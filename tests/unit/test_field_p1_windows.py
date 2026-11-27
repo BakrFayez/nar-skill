@@ -30,6 +30,8 @@ import shutil
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                     "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -69,10 +71,50 @@ def _doctor_find_sdk_tool_source():
     return m.group(0)
 
 
+_NAR_CLI = None
+
+
+def _doctor_bash():
+    """The bash the doctor shell tests must run under.
+
+    Elsewhere: plain ``bash``. On Windows: Git Bash, resolved
+    through nar.py's own ``resolve_bash`` — a bare ``bash``
+    in a pytest process resolves to the System32 WSL stub
+    (C:\\Windows\\System32\\bash.exe), which prints its
+    no-distro message and exits 1 without running a single
+    line of the script, so every doctor test failed that
+    way on the hosted runner (run #63) regardless of the
+    behaviour under test. Returns None when no Git Bash
+    exists on the host."""
+    global _NAR_CLI
+    if sys.platform != "win32":
+        return "bash"
+    if _NAR_CLI is None:
+        spec = importlib.util.spec_from_file_location(
+            "nar_cli_field_p1",
+            os.path.join(ROOT, "scripts", "nar.py"))
+        _NAR_CLI = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_NAR_CLI)
+    return _NAR_CLI.resolve_bash()
+
+
+def _norm(path):
+    return str(path).replace("\\", "/")
+
+
 def _run_find_sdk_tool(sdk_root, tool):
+    bash = _doctor_bash()
+    if bash is None:
+        pytest.skip("no Git Bash on this Windows host; the "
+                    "doctor shell tests require Git Bash "
+                    "(bare 'bash' is the WSL stub)")
+    # Git Bash's native path form is forward slashes; the
+    # planted root is fed in that form (on POSIX the
+    # replace is a no-op).
     driver = 'SDK_CANDIDATES="%s"\n%s\nfind_sdk_tool %s\n' % (
-        sdk_root, _doctor_find_sdk_tool_source(), tool)
-    return subprocess.run(["bash", "-c", driver],
+        str(sdk_root).replace("\\", "/"),
+        _doctor_find_sdk_tool_source(), tool)
+    return subprocess.run([bash, "-c", driver],
                           capture_output=True, text=True)
 
 
@@ -86,7 +128,7 @@ def test_doctor_find_sdk_tool_finds_bat_only(tmp_path):
     bat.chmod(0o644)
     proc = _run_find_sdk_tool(sdk, "apksigner")
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == str(bat)
+    assert _norm(proc.stdout.strip()) == _norm(bat)
 
 
 def test_doctor_find_sdk_tool_finds_cmd_in_platform_tools(tmp_path):
@@ -97,7 +139,7 @@ def test_doctor_find_sdk_tool_finds_cmd_in_platform_tools(tmp_path):
     cmd.chmod(0o644)
     proc = _run_find_sdk_tool(sdk, "adb")
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == str(cmd)
+    assert _norm(proc.stdout.strip()) == _norm(cmd)
 
 
 def test_doctor_find_sdk_tool_posix_extensionless_unchanged(tmp_path):
@@ -109,7 +151,7 @@ def test_doctor_find_sdk_tool_posix_extensionless_unchanged(tmp_path):
                          "#!/bin/sh\nexit 0\n")
     proc = _run_find_sdk_tool(sdk, "apksigner")
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == str(tool)
+    assert _norm(proc.stdout.strip()) == _norm(tool)
 
 
 # ----------------------------------------------------------
@@ -206,10 +248,46 @@ def _python3_entry():
     return next(t for t in reg["tools"] if t["name"] == "python3")
 
 
+def _plant_cli(bin_dir, name, banner=None, fail=False):
+    """Plant a fake PATH tool in the form the platform can
+    actually resolve and start.
+
+    POSIX: an extensionless ``#!/bin/sh`` script. Windows:
+    ``shutil.which`` resolves only PATHEXT suffixes and
+    CreateProcess cannot start a shell script, so the fake
+    is ``<name>.bat`` — echoing the banner, or exiting 1
+    for a broken candidate (the Store-stub stand-in). The
+    extensionless plant was invisible to which() on the
+    hosted Windows runner, so the fallthrough tests there
+    probed an empty candidate set and reported "not found"
+    instead of the behaviour they pin (run #63)."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        planted = bin_dir / (name + ".bat")
+        body = "@echo off\r\n"
+        body += "exit /b 1\r\n" if fail \
+            else "echo " + banner + "\r\n"
+        planted.write_bytes(body.encode("utf-8"))
+        return planted
+    planted = bin_dir / name
+    body = "#!/bin/sh\n"
+    body += "exit 1\n" if fail else "echo '" + banner + "'\n"
+    planted.write_text(body, encoding="utf-8")
+    planted.chmod(0o755)
+    return planted
+
+
+def _assert_resolved_candidate(result, name):
+    """The probe resolved exactly the named candidate (in
+    whatever PATHEXT form the platform planted it)."""
+    base = os.path.basename(result["path"] or "").lower()
+    assert base in (name, name + ".exe", name + ".bat",
+                    name + ".cmd")
+
+
 def _probe_python3_with_only(tmp_path, monkeypatch, name):
     bin_dir = tmp_path / ("bin-" + name)
-    _write_script(bin_dir / name,
-                  "#!/bin/sh\necho 'Python 3.12.0'\n")
+    _plant_cli(bin_dir, name, banner="Python 3.12.0")
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.delenv("NAR_PYTHON3_PATH", raising=False)
     return registry.probe(_python3_entry())
@@ -220,7 +298,7 @@ def test_registry_python3_falls_through_to_python(tmp_path,
     result = _probe_python3_with_only(tmp_path, monkeypatch,
                                       "python")
     assert result["available"] is True
-    assert result["path"].endswith(os.sep + "python")
+    _assert_resolved_candidate(result, "python")
     assert "3.12.0" in (result["version"] or "")
 
 
@@ -228,7 +306,7 @@ def test_registry_python3_falls_through_to_py(tmp_path,
                                               monkeypatch):
     result = _probe_python3_with_only(tmp_path, monkeypatch, "py")
     assert result["available"] is True
-    assert result["path"].endswith(os.sep + "py")
+    _assert_resolved_candidate(result, "py")
     assert "3.12.0" in (result["version"] or "")
 
 
@@ -240,31 +318,54 @@ def test_registry_python3_broken_stub_falls_through(tmp_path,
     # working candidate (coordinator addition: probe-level
     # fallthrough in narlib/registry.py).
     bin_dir = tmp_path / "bin-stub"
-    _write_script(bin_dir / "python3",
-                  "#!/bin/sh\nexit 1\n")
-    _write_script(bin_dir / "python",
-                  "#!/bin/sh\necho 'Python 3.12.0'\n")
+    _plant_cli(bin_dir, "python3", fail=True)
+    _plant_cli(bin_dir, "python", banner="Python 3.12.0")
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.delenv("NAR_PYTHON3_PATH", raising=False)
     result = registry.probe(_python3_entry())
     assert result["available"] is True
-    assert result["path"].endswith(os.sep + "python")
+    _assert_resolved_candidate(result, "python")
     assert "3.12.0" in (result["version"] or "")
 
 
 def test_registry_python3_all_broken_reports_first(tmp_path,
                                                    monkeypatch):
-    # When no candidate runs, the report keeps the FIRST
-    # candidate's historical failure note verbatim.
+    # When candidates resolve but none runs, the report
+    # keeps the FIRST candidate's historical failure note
+    # verbatim — and names that candidate in path. (On the
+    # hosted Windows runner this test originally crashed on
+    # result["path"] being None: the extensionless plants
+    # yielded NO candidates there, so the probe returned
+    # the separate no-candidates report below. The
+    # fallthrough itself was never the defect — run #63.)
     bin_dir = tmp_path / "bin-allbroken"
     for name in ("python3", "python", "py"):
-        _write_script(bin_dir / name, "#!/bin/sh\nexit 1\n")
+        _plant_cli(bin_dir, name, fail=True)
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.delenv("NAR_PYTHON3_PATH", raising=False)
     result = registry.probe(_python3_entry())
     assert result["available"] is False
-    assert result["path"].endswith(os.sep + "python3")
+    _assert_resolved_candidate(result, "python3")
     assert "did not run successfully" in result["note"]
+
+
+def test_registry_python3_no_candidates_report_shape(tmp_path,
+                                                     monkeypatch):
+    # The no-candidates report is the registry's long-standing
+    # contract (it predates the candidate fallthrough):
+    # well-formed, available False, path None, note
+    # "not found". Pin the shape so the two failure reports
+    # can never be conflated again.
+    bin_dir = tmp_path / "bin-empty"
+    bin_dir.mkdir()
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.delenv("NAR_PYTHON3_PATH", raising=False)
+    result = registry.probe(_python3_entry())
+    assert result["available"] is False
+    assert result["path"] is None
+    assert result["note"] == "not found"
+    assert result["name"] == "python3"
+    assert result["version"] is None
 
 
 def test_registry_python3_hint_states_310_floor():
@@ -307,8 +408,7 @@ def test_pyghidra_entry_mirrors_ghidra_shape():
 def test_pyghidra_probes_available_with_fake_on_path(tmp_path,
                                                      monkeypatch):
     bin_dir = tmp_path / "bin-pyghidra"
-    _write_script(bin_dir / "pyghidra",
-                  "#!/bin/sh\necho 'PyGhidra 12.2'\n")
+    _plant_cli(bin_dir, "pyghidra", banner="PyGhidra 12.2")
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.delenv("NAR_PYGHIDRA_PATH", raising=False)
     monkeypatch.delenv("NAR_PYGHIDRA_DIR", raising=False)

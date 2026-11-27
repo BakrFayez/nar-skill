@@ -23,6 +23,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                     "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -45,6 +47,18 @@ def _load(name, filename):
 
 def _write_tool(path):
     path.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        # The stock Windows build-tools form: the registry
+        # resolves SDK candidates through shutil.which,
+        # which cannot see an extensionless file (PATHEXT),
+        # so the planted tool is the .bat the real SDK
+        # ships. The triage / compare / perms finders test
+        # the same variant names, so one plant serves every
+        # surface (run #63: the extensionless plant made
+        # registry._find_sdk_tool return None on Windows).
+        bat = path.with_name(path.name + ".bat")
+        bat.write_bytes(b"@echo off\r\nexit /b 0\r\n")
+        return bat
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
     return path
@@ -119,14 +133,47 @@ def _doctor_find_sdk_tool_source():
     return m.group(0)
 
 
+_NAR_CLI = None
+
+
+def _doctor_bash():
+    """The bash the doctor shell tests must run under:
+    plain ``bash`` elsewhere; on Windows, Git Bash via
+    nar.py's own ``resolve_bash`` — a bare ``bash`` in a
+    pytest process resolves to the System32 WSL stub,
+    which exits 1 printing its no-distro message instead
+    of running the script (run #63). None when the host
+    has no Git Bash."""
+    global _NAR_CLI
+    if sys.platform != "win32":
+        return "bash"
+    if _NAR_CLI is None:
+        spec = importlib.util.spec_from_file_location(
+            "nar_cli_field_p2",
+            os.path.join(ROOT, "scripts", "nar.py"))
+        _NAR_CLI = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_NAR_CLI)
+    return _NAR_CLI.resolve_bash()
+
+
+def _norm(path):
+    return str(path).replace("\\", "/")
+
+
 def _run_find_sdk_tool(sdk_candidates, tool, extra_env=None):
+    bash = _doctor_bash()
+    if bash is None:
+        pytest.skip("no Git Bash on this Windows host; the "
+                    "doctor shell tests require Git Bash "
+                    "(bare 'bash' is the WSL stub)")
     driver = 'SDK_CANDIDATES="%s"\n%s\nfind_sdk_tool %s\n' % (
-        sdk_candidates, _doctor_find_sdk_tool_source(), tool)
+        str(sdk_candidates).replace("\\", "/"),
+        _doctor_find_sdk_tool_source(), tool)
     env = dict(os.environ)
     env.pop("LOCALAPPDATA", None)
     if extra_env:
         env.update(extra_env)
-    return subprocess.run(["bash", "-c", driver],
+    return subprocess.run([bash, "-c", driver],
                           capture_output=True, text=True, env=env)
 
 
@@ -144,8 +191,9 @@ def test_doctor_find_sdk_tool_under_localappdata(tmp_path):
         str(tmp_path / "no-such-sdk"), "apksigner",
         {"LOCALAPPDATA": str(local)})
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == \
-        str(local) + "/Android/Sdk/build-tools/35.0.0/apksigner.bat"
+    assert _norm(proc.stdout.strip()) == _norm(
+        str(local)
+        + "/Android/Sdk/build-tools/35.0.0/apksigner.bat")
 
 
 def test_doctor_find_sdk_tool_localappdata_absent_unchanged(
@@ -168,7 +216,7 @@ def test_doctor_find_sdk_tool_falls_through_to_candidates(
     proc = _run_find_sdk_tool(
         str(sdk), "apksigner", {"LOCALAPPDATA": str(empty_local)})
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == str(tool)
+    assert _norm(proc.stdout.strip()) == _norm(tool)
 
 
 # ----------------------------------------------------------
