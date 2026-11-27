@@ -508,7 +508,7 @@ def test_absent_controls_and_verdict_shape(tmp_path):
     for tool in TOOLS:
         report = _report(tool, empty)
         assert report["tool"] == tool, tool
-        assert report["version"] == "3.0.1", tool
+        assert report["version"] == "3.0.2", tool
         assert report["target"].endswith("empty.apk"), tool
         assert "container" in report, tool
         assert report["verdict"] == "absent", tool

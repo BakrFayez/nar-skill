@@ -441,7 +441,7 @@ def test_builders_none_inputs_record_explicit_notes():
     result is labelled, never silent."""
     from narlib import correlations, graph, investigation
     corr = correlations.build_correlations(
-        None, None, None, None, "3.0.1")
+        None, None, None, None, "3.0.2")
     assert corr["counts"]["jni_matched"] == 0
     assert any("unavailable" in n for n in corr["notes"])
     gdoc = graph.build_graph()
@@ -455,7 +455,7 @@ def test_builders_none_inputs_record_explicit_notes():
 # ------------------------------------------------------------------
 
 FINGERPRINT_DOC = gi.FINGERPRINT
-DEX_DOC = {**gi.DEX, "tool": "nar-dex", "version": "3.0.1",
+DEX_DOC = {**gi.DEX, "tool": "nar-dex", "version": "3.0.2",
            "target": "t.apk", "target_sha256": "a" * 64,
            "totals": {"classes": 2}}
 

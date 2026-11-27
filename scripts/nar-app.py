@@ -95,7 +95,7 @@ from narlib import container as container_mod  # noqa: E402
 from narlib import sqlite as sqlite_mod  # noqa: E402
 from narlib.dex import Dex, DexError, _uleb128  # noqa: E402
 
-VERSION = "3.0.1"
+VERSION = "3.0.2"
 TOOL = "nar-app"
 
 DEX_CAP = 200 * 1024 * 1024        # per-DEX read cap

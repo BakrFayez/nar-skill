@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import container as container_mod  # noqa: E402
 from narlib.safearchive import read_member_capped  # noqa: E402
 
-VERSION = "3.0.1"
+VERSION = "3.0.2"
 MEMBER_CAP = 32 * 1024 * 1024
 TEXT_CAP = 2 * 1024 * 1024
 

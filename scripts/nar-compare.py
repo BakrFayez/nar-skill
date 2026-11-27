@@ -677,7 +677,7 @@ def feature_map(report):
             "content_changed_excluding_signing": content_changed},
     }
     return {
-        "tool": "nar-compare", "version": "3.0.1",
+        "tool": "nar-compare", "version": "3.0.2",
         "kind": "version-feature-map",
         "old": {"file": old.get("file"),
                 "sha256": old.get("sha256")},

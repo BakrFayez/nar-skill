@@ -7,8 +7,7 @@
 
 An AI agent skill for Android APK reverse engineering — all apps and games, old and new.
 
-Version 3.0.1
-
+Version 3.0.2
 NAR covers regular apps, Unity, Unreal, Godot, and Flutter games and apps, native-heavy apps, and legacy builds back to Android 4.x. It works with CLI tools you already know: apktool, jadx, aapt2, apksigner, Ghidra, Kuna, Il2CppDumper, mitmproxy, and bundletool. No MCP server required.
 
 Clone this repo and you have a working skill. Drop it into your agent's skills folder and start triaging APKs.
@@ -56,7 +55,7 @@ Then open `SKILL.md` and follow the routing table for your question.
 
 ## Latest release
 
-**3.0.1** — patch release: the Windows platform fixes proven by hosted CI (Git Bash discovery instead of the WSL stub, raw hostile archive names in extraction reports, a working Windows memory-budget source, executable probing), with the full CI matrix green on Linux, macOS and Windows. No new features. Full record: [CHANGELOG.md](CHANGELOG.md) (3.0.1 section).
+**3.0.2** — certification fix release: the accuracy, ask, blueprint, security and robustness corrections of the "NAR 3.0.1 — Final Quality & Certification" rounds, with the full CI matrix green on Linux, macOS and Windows. No new features. Certification statement: Partially Verified (scoped) — 6 of 12 readiness conditions verified, the rest measured and below target or not run (physical-device validation is NOT RUN). Full record: [CHANGELOG.md](CHANGELOG.md) (3.0.2 section).
 
 Version history lives in [CHANGELOG.md](CHANGELOG.md); binaries and notes for published releases are on the [releases page](https://github.com/BakrFayez/nar-skill/releases).
 

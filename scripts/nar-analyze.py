@@ -58,7 +58,7 @@ try:
     from narlib import investigation as _investigation
     from narlib import safearchive as _safearchive
 except Exception:  # narlib missing: keep the tool usable
-    NAR_VERSION = "3.0.1"
+    NAR_VERSION = "3.0.2"
     _chains = None
     _formats = None
     _container_mod = None

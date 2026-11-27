@@ -317,7 +317,7 @@ def build_graph(dex_data=None, native_data=None,
                 fingerprint_data=None, engines_data=None,
                 security_data=None, assets_data=None,
                 correlations_data=None, unreal_data=None,
-                version="3.0.1"):
+                version="3.0.2"):
     """Build the graph document. Any input may be None (a
     degraded stage): its nodes/edges are then absent and a
     note records the gap, mirroring correlations."""

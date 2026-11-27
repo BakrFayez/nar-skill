@@ -70,7 +70,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from narlib import container as container_mod  # noqa: E402
 from narlib import scriptparse as sp  # noqa: E402
 
-VERSION = "3.0.1"
+VERSION = "3.0.2"
 TOOL = "nar-script"
 IL2CPP_METADATA_MAGIC = 0xFAB11BAF
 

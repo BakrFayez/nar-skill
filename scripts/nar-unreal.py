@@ -1135,7 +1135,7 @@ def pak_packages(pak_path, out_dir, limits=None):
 def analyze(target, work_dir=None, limits=None):
     if limits is None:
         limits = UnrealLimits()
-    report = {"tool": "nar-unreal", "version": "3.0.1",
+    report = {"tool": "nar-unreal", "version": "3.0.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target),
               "limits": limits.describe()}

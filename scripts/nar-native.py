@@ -150,7 +150,7 @@ def analyze(target, only_lib=None, work_dir=None,
             merge_splits=True):
     if not merge_splits:
         return _analyze_single(target, only_lib, work_dir)
-    report = {"tool": "nar-native", "version": "3.0.1",
+    report = {"tool": "nar-native", "version": "3.0.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     resolved = None
@@ -246,7 +246,7 @@ def _scan_archive(report, archive_path, only_lib, work_dir,
 def _analyze_single(target, only_lib=None, work_dir=None):
     """The pre-3.0 single-archive behaviour, verbatim: the
     --no-merge-splits path (byte-identical output)."""
-    report = {"tool": "nar-native", "version": "3.0.1",
+    report = {"tool": "nar-native", "version": "3.0.2",
               "target": os.path.abspath(target),
               "target_sha256": sha256_of(target), "libraries": []}
     _scan_archive(report, target, only_lib, work_dir,

@@ -51,7 +51,7 @@ from narlib import container as _container  # noqa: E402
 from narlib import dotnetmeta  # noqa: E402
 
 TOOL = "nar-xamarin"
-VERSION = "3.0.1"
+VERSION = "3.0.2"
 MEMBER_CAP = 32 * 1024 * 1024        # per-member read cap
 CARVE_CAP = 64 * 1024 * 1024         # per-carved-assembly cap
 MAX_CARVES = 256

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 3.0.2 — Certification fix release (2026-11-27)
+
+The "NAR 3.0.1 — Final Quality & Certification" rounds, published as a patch. No new features.
+
+- Accuracy corrections: endpoint purpose-kind classification added with the sensitive-endpoint rule repaired; bundled asset data files harvested; script identification no longer claims container members, IL2CPP and Python sources identified; asset inventory widened beyond the assets tree with a shared magic-first classifier; animation detection for GIF and Android view animation; engine verdict weighing for SDK-bridge evidence; app-intelligence identity/components/storage assertions completed.
+- Ask: contradictory companion evidence is surfaced instead of asserted; compare answers render the real comparison report; graph questions are answered from the investigation graph; comparative phrasings route to compare; storage claims defer to the app census.
+- Blueprint: overstatement corrections (feature counts, endpoint wording, storage claims, URL fragments preserved).
+- Security and robustness: resource-table lookup no longer escapes on malformed packages; extraction error family completed at the analyze site; non-object tool JSON is a named failure; deep-nesting animation XML no longer recurses; container depth-limit stops are named records; Unity member reads are capped (979 MB → 47.5 MB peak on the proof input); tools resolved to a jar launch through the Java runtime.
+- Registry: GIF, Android view and pag animation systems registered (coverage-gap count 50 → 51).
+- Tests: over 500 regression and certification tests added across the rounds (battery: 1516 passed); cross-platform test corrections for hosted CI.
+- Certification statement: this release is **Partially Verified (scoped)** under the Phase 7 gate — 6 of 12 readiness conditions verified; accuracy, ask generalisation, blueprint sufficiency, full-metric performance and the zero-silent-failure condition are measured and below their targets; physical-device validation is NOT RUN.
+
 ## 3.0.1 — Windows platform fixes (2026-11-26)
 
 - The Windows CI hardening prepared on `main` after

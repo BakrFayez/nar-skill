@@ -46,7 +46,7 @@ from narlib import container as _container  # noqa: E402
 from narlib import dotnetmeta  # noqa: E402
 
 TOOL = "nar-mono"
-VERSION = "3.0.1"
+VERSION = "3.0.2"
 MEMBER_CAP = 32 * 1024 * 1024        # per-member read cap
 _IDENT_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 

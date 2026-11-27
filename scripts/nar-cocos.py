@@ -44,7 +44,7 @@ from narlib import anim, atlas  # noqa: E402
 from narlib import container as _container  # noqa: E402
 
 TOOL = "nar-cocos"
-VERSION = "3.0.1"
+VERSION = "3.0.2"
 MEMBER_CAP = 32 * 1024 * 1024        # per-member read cap
 NATIVE_CAP = 64 * 1024 * 1024        # native string-scan cap
 _VERSION_PATTERNS = (b"cocos2d-x 3.", b"cocos2d-x 4.",

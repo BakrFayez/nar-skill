@@ -518,7 +518,7 @@ def test_absent_controls_and_exit_codes(tmp_path):
     for tool in TOOLS:
         report = _run(tool, empty)
         assert report["verdict"] == "absent", tool
-        assert report["version"] == "3.0.1", tool
+        assert report["version"] == "3.0.2", tool
         assert report["container"]["input_kind"] == "apk", tool
     missing = tmp_path / "nope.apk"
     for tool in TOOLS:
