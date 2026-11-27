@@ -150,7 +150,14 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/cmdtools.zip" https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip
           unzip -q "$RUNNER_TEMP/cmdtools.zip" -d "$RUNNER_TEMP/nar-sdk/cmdline-tools"
           mv "$RUNNER_TEMP/nar-sdk/cmdline-tools/cmdline-tools" "$RUNNER_TEMP/nar-sdk/cmdline-tools/latest"
-          yes | "$RUNNER_TEMP/nar-sdk/cmdline-tools/latest/bin/sdkmanager.bat" --sdk_root="$RUNNER_TEMP/nar-sdk" "build-tools;35.0.0" "platform-tools"
+          # { yes || true; }, not a bare `yes |`: GitHub's
+          # bash runs with -eo pipefail, so when sdkmanager
+          # exits and `yes` dies of SIGPIPE the pipeline
+          # reports 141 although the install completed
+          # (field round, run #63). The brace group absorbs
+          # yes's SIGPIPE death, so the pipeline's status is
+          # sdkmanager's own — a failed install still fails.
+          { yes || true; } | "$RUNNER_TEMP/nar-sdk/cmdline-tools/latest/bin/sdkmanager.bat" --sdk_root="$RUNNER_TEMP/nar-sdk" "build-tools;35.0.0" "platform-tools"
           echo "ANDROID_HOME=$RUNNER_TEMP/nar-sdk" >> "$GITHUB_ENV"
       # No `|| true`: the doctor's exit code IS the gate,
       # and the JSON assertion requires the full core
@@ -476,7 +483,11 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/cmdtools.zip" https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip
           unzip -q "$RUNNER_TEMP/cmdtools.zip" -d "$SDK_ROOT/cmdline-tools"
           mv "$SDK_ROOT/cmdline-tools/cmdline-tools" "$SDK_ROOT/cmdline-tools/latest"
-          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager.bat" --sdk_root="$SDK_ROOT" "build-tools;35.0.0" "platform-tools"
+          # { yes || true; }: see the doctor leg — under
+          # -eo pipefail a bare `yes |` reports yes's
+          # SIGPIPE death (141) instead of sdkmanager's
+          # own status (field round, run #63).
+          { yes || true; } | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager.bat" --sdk_root="$SDK_ROOT" "build-tools;35.0.0" "platform-tools"
           # ANDROID_HOME is deliberately left unset: the
           # doctor and the registry must find this SDK at
           # its default location on their own.
