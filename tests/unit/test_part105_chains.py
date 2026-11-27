@@ -350,6 +350,14 @@ class DecompileChainTest(unittest.TestCase):
             raise unittest.SkipTest("demo fixture absent")
 
     def test_broken_jadx_falls_to_lower_rung_fast(self):
+        # A broken jadx override (NAR_JADX_PATH pointing
+        # at a launcher that will not start) must not
+        # degrade the chain by itself: since the field
+        # round's identity validation, the registry tries
+        # the next jadx candidate, and only when NO
+        # candidate validates does the rung fail and the
+        # chain fall to the lower rungs (the pre-fix
+        # behaviour this test originally pinned).
         with tempfile.TemporaryDirectory() as td:
             fake = os.path.join(td, "jadx")
             with open(fake, "w", encoding="utf-8") as fh:
@@ -361,6 +369,10 @@ class DecompileChainTest(unittest.TestCase):
             old = os.environ.get("NAR_JADX_PATH")
             os.environ["NAR_JADX_PATH"] = fake
             try:
+                reg = registry.load_registry()
+                jadx_entry = next(t for t in reg["tools"]
+                                  if t["name"] == "jadx")
+                jadx_probe = registry.probe(jadx_entry)
                 started = time.time()
                 record = chains.run_decompile_chain(
                     self.demo, os.path.join(td, "work"))
@@ -374,6 +386,24 @@ class DecompileChainTest(unittest.TestCase):
         _assert_record_shape(self, record)
         jadx_attempt = record["attempts"][0]
         self.assertEqual(jadx_attempt["rung"], "jadx")
+        if jadx_probe["available"]:
+            # Another candidate validated: the broken
+            # override was passed over (named in the
+            # attempt's identity_rejections) and jadx
+            # itself served the chain.
+            self.assertEqual(record["served_by"], "jadx")
+            self.assertEqual(record["fidelity"],
+                             "source-approximate")
+            self.assertEqual(
+                jadx_attempt.get("tool_identity"),
+                "validated")
+            rejections = jadx_attempt.get(
+                "identity_rejections", [])
+            self.assertTrue(any(
+                r["path"] == fake
+                and "did not run" in r["reason"]
+                for r in rejections), rejections)
+            return
         self.assertEqual(jadx_attempt["classification"],
                          "INSTALLED_WONT_START")
         # baksmali is genuinely installed in this

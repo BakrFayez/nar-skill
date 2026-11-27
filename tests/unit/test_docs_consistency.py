@@ -468,10 +468,10 @@ class CiJobCountGuardTest(unittest.TestCase):
     def test_workflow_structure_derives_expanded_total(self):
         jobs, total = expanded_job_total(ROOT)
         # Parser sanity (labelled): today's workflow defines
-        # ten jobs. This asserts the PARSER read the file; the
+        # eleven jobs. This asserts the PARSER read the file; the
         # document checks below use the derived total, so a
         # future workflow change moves the expectation with it.
-        self.assertEqual(len(jobs), 10,
+        self.assertEqual(len(jobs), 11,
                          "workflow parse sanity: %r" % (jobs,))
         matrix = {name: os_list for name, os_list in jobs.items()
                   if os_list}
