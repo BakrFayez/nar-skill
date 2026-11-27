@@ -572,16 +572,28 @@ def _java_shim(path):
     """Plant the per-jar dispatching fake ``java``: the
     wrapper jar reports another product, a jadx-shaped jar
     reports a jadx version, anything else fails. Batch on
-    Windows (see _shim), a shell case dispatch elsewhere."""
+    Windows (see _shim), a shell case dispatch elsewhere.
+
+    The batch dispatch uses cmd BUILTINS only (``set`` with
+    substring substitution, ``if``, ``goto``, ``echo``) —
+    the same discipline as the POSIX body, whose for/case/
+    echo are all shell builtins. The run-#63 form dispatched
+    through ``findstr``, which is not a builtin but an
+    external program in System32: the fixture PATH replaces
+    the host PATH wholesale (fake bin + a placeholder), so
+    under real cmd.exe findstr cannot start, both probes
+    fell through to ``exit /b 1``, and every jar candidate
+    reported "version command did not run" (run #65)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
         bat = path.with_name(path.name + ".bat")
         bat.write_bytes((
             "@echo off\r\n"
-            "echo %*| findstr /C:\"wrapper.jar\" >nul\r\n"
-            "if %errorlevel%==0 goto wrapper\r\n"
-            "echo %*| findstr /C:\"all.jar\" >nul\r\n"
-            "if %errorlevel%==0 goto realjar\r\n"
+            "set \"args=%*\"\r\n"
+            "if not \"%args%\"==\"%args:wrapper.jar=%\" "
+            "goto wrapper\r\n"
+            "if not \"%args%\"==\"%args:all.jar=%\" "
+            "goto realjar\r\n"
             "exit /b 1\r\n"
             ":wrapper\r\n"
             "echo WRAPPER-JAR-NOT-JADX\r\n"
@@ -605,12 +617,23 @@ def _java_shim(path):
 
 
 def _norm(path):
-    """Separator-insensitive path comparison: a resolved
-    Windows path may mix the separators of the pieces it
-    was joined from (registry globs carry forward slashes,
+    """Windows-meaning path comparison: a resolved Windows
+    path may mix the separators of the pieces it was
+    joined from (registry globs carry forward slashes,
     pathlib carries backslashes) while naming the same
-    file."""
-    return str(path).replace("\\", "/")
+    file, and ``shutil.which`` spells a PATHEXT-resolved
+    candidate with the PATHEXT entry's casing (the file
+    planted as ``jadx.bat`` resolves as ``jadx.BAT`` —
+    run #65), while Windows path equality itself is
+    case-insensitive. Both sides are therefore separator-
+    normalised and, on Windows only, case-folded: the
+    pinned fact is that the resolved candidate IS the
+    planted file, spelled the platform's way. POSIX
+    comparison stays byte-exact."""
+    out = str(path).replace("\\", "/")
+    if sys.platform == "win32":
+        out = out.casefold()
+    return out
 
 
 def _jadx_entry():
@@ -665,7 +688,11 @@ def test_fake_jadx_falls_through_to_workspace(fake_env):
     good = _shim(home / "workspace" / "tools" / "jadx-cli"
                  / "bin" / "jadx", "echo '1.5.1'\n")
     result = registry.probe(_jadx_entry())
-    assert result["available"] is True
+    assert result["available"] is True, (
+        "no jadx candidate validated: note=%r, "
+        "identity_rejections=%r"
+        % (result["note"],
+           result.get("identity_rejections")))
     assert _norm(result["path"]) == _norm(good)
     assert result["version"] == "1.5.1"
     assert result["identity"] == "validated"
@@ -687,12 +714,21 @@ def test_wrapper_jar_rejected_and_falls_through(
     real_jar.parent.mkdir(parents=True)
     real_jar.write_bytes(b"jar bytes")
     result = registry.probe(_jadx_entry())
-    assert result["available"] is True
-    assert _norm(result["path"]) == _norm("jar:" + str(real_jar))
-    assert result["version"] == "1.5.3"
-    assert result["identity"] == "validated"
+    # The probe's own verdict travels with the failure: the
+    # note and the per-candidate rejections say whether a
+    # recurrence is an identity rejection, a launch failure
+    # or a resolution miss, without a debugger (run #65).
+    assert result["available"] is True, (
+        "no jadx candidate validated: note=%r, "
+        "identity_rejections=%r"
+        % (result["note"],
+           result.get("identity_rejections")))
+    assert _norm(result["path"]) == _norm("jar:" + str(real_jar)), \
+        result
+    assert result["version"] == "1.5.3", result
+    assert result["identity"] == "validated", result
     rej = result["identity_rejections"]
-    assert rej[0]["reported"] == "WRAPPER-JAR-NOT-JADX"
+    assert rej[0]["reported"] == "WRAPPER-JAR-NOT-JADX", rej
     assert registry.launch_prefix(result)[1] == "-jar"
 
 

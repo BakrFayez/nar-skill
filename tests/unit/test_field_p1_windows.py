@@ -99,7 +99,19 @@ def _doctor_bash():
 
 
 def _norm(path):
-    return str(path).replace("\\", "/")
+    """Windows-meaning path comparison: separators
+    normalised, and on Windows only the case folded —
+    ``shutil.which`` spells a PATHEXT-resolved candidate
+    with the PATHEXT entry's casing (``apksigner.BAT``
+    for the file planted as ``apksigner.bat`` — run #65)
+    while Windows path equality itself is
+    case-insensitive. The pinned fact stays that the
+    finder returned the planted file, spelled the
+    platform's way; POSIX comparison stays byte-exact."""
+    out = str(path).replace("\\", "/")
+    if sys.platform == "win32":
+        out = out.casefold()
+    return out
 
 
 def _run_find_sdk_tool(sdk_root, tool):
@@ -181,7 +193,11 @@ def test_triage_find_apksigner_bat_simulated_win32(tmp_path,
     monkeypatch.setattr(shutil, "which",
                         lambda name, path=None: None)
     mod = _load_triage()
-    assert mod.find_apksigner() == str(bat)
+    # find_apksigner tries shutil.which before its own
+    # scan, so its result can carry PATHEXT casing on a
+    # real Windows host: compare the way Windows means
+    # paths (run #65).
+    assert _norm(mod.find_apksigner()) == _norm(bat)
 
 
 def test_apksigner_argv_wraps_batch_via_cmd(monkeypatch):

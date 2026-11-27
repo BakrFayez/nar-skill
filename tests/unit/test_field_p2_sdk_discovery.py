@@ -118,8 +118,12 @@ def test_registry_find_sdk_tool_under_localappdata(tmp_path,
     _isolate_sdk_env(monkeypatch, tmp_path)
     local, planted = _plant_localappdata_sdk(tmp_path)
     monkeypatch.setenv("LOCALAPPDATA", str(local))
-    assert registry._find_sdk_tool("apksigner") == \
-        str(planted["apksigner"])
+    # _find_sdk_tool resolves through shutil.which, whose
+    # PATHEXT spelling differs from the plant's only in
+    # extension case on Windows (run #65): compare the way
+    # Windows means paths, not byte-exactly.
+    assert _norm(registry._find_sdk_tool("apksigner")) == \
+        _norm(planted["apksigner"])
 
 
 # ----------------------------------------------------------
@@ -157,7 +161,19 @@ def _doctor_bash():
 
 
 def _norm(path):
-    return str(path).replace("\\", "/")
+    """Windows-meaning path comparison: separators
+    normalised, and on Windows only the case folded —
+    ``shutil.which`` spells a PATHEXT-resolved candidate
+    with the PATHEXT entry's casing (the file planted as
+    ``apksigner.bat`` resolves as ``apksigner.BAT`` —
+    run #65) while Windows path equality itself is
+    case-insensitive. The pinned fact stays that the
+    finder returned the planted file, spelled the
+    platform's way; POSIX comparison stays byte-exact."""
+    out = str(path).replace("\\", "/")
+    if sys.platform == "win32":
+        out = out.casefold()
+    return out
 
 
 def _run_find_sdk_tool(sdk_candidates, tool, extra_env=None):
@@ -229,9 +245,13 @@ def test_triage_finders_under_localappdata(tmp_path, monkeypatch):
         tmp_path, tools=("apksigner", "aapt2"))
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     triage = _load("nar_triage_field_p2", "nar-triage.py")
-    assert triage.find_sdk_tool("apksigner") == \
-        str(planted["apksigner"])
-    assert triage.find_aapt2() == str(planted["aapt2"])
+    # The finders try shutil.which before their own scan,
+    # so their results can carry PATHEXT casing on Windows:
+    # compare the way Windows means paths (run #65).
+    assert _norm(triage.find_sdk_tool("apksigner")) == \
+        _norm(planted["apksigner"])
+    assert _norm(triage.find_aapt2()) == \
+        _norm(planted["aapt2"])
 
 
 def test_compare_find_aapt2_under_localappdata(tmp_path,
@@ -241,7 +261,8 @@ def test_compare_find_aapt2_under_localappdata(tmp_path,
         tmp_path, tools=("aapt2",))
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     compare = _load("nar_compare_field_p2", "nar-compare.py")
-    assert compare.find_aapt2() == str(planted["aapt2"])
+    assert _norm(compare.find_aapt2()) == \
+        _norm(planted["aapt2"])
 
 
 def test_perms_find_aapt2_under_localappdata(tmp_path,
@@ -251,7 +272,8 @@ def test_perms_find_aapt2_under_localappdata(tmp_path,
         tmp_path, tools=("aapt2",))
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     perms = _load("nar_perms_field_p2", "nar-perms.py")
-    assert perms.find_aapt2() == str(planted["aapt2"])
+    assert _norm(perms.find_aapt2()) == \
+        _norm(planted["aapt2"])
 
 
 # ----------------------------------------------------------
