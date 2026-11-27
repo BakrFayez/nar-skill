@@ -355,6 +355,30 @@ def probe(entry):
     return result
 
 
+def launch_prefix(probe_result):
+    """Command prefix that actually runs a probed tool.
+
+    A probe path is a launch spec, not always an executable:
+    a tool resolved through a jar route (jar_env_var /
+    jar_globs / kind "jar") carries a "jar:"-prefixed path
+    and must be launched as [java, -jar, <jar>]; every other
+    path is an executable and runs directly. Returns the
+    prefix list, or None when there is no path or a jar tool
+    has no Java runtime to launch it. Consumers must build
+    their argv from this prefix, never from the raw probe
+    path (a "jar:..." string is not a file and spawning it
+    fails with Errno 2)."""
+    path = (probe_result or {}).get("path")
+    if not path:
+        return None
+    if path.startswith("jar:"):
+        java = _find_java()
+        if not java:
+            return None
+        return [java, "-jar", path[4:]]
+    return [path]
+
+
 def probe_all(registry=None):
     registry = registry or load_registry()
     return [probe(e) for e in registry["tools"]]

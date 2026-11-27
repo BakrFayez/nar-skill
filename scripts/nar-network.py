@@ -672,10 +672,14 @@ def parse_nsc(apk_path, work_dir):
     probe = reg_mod.probe(entry)
     if not probe["available"]:
         return None, "apktool not available"
+    prefix = reg_mod.launch_prefix(probe)
+    if prefix is None:
+        return None, ("apktool resolved to a jar but no Java "
+                      "runtime was found to launch it")
     out_dir = os.path.join(work_dir, "apktool")
     try:
-        subprocess.run([probe["path"], "d", "-f", "--no-src",
-                        "-o", out_dir, apk_path],
+        subprocess.run(prefix + ["d", "-f", "--no-src",
+                                 "-o", out_dir, apk_path],
                        capture_output=True, text=True, timeout=1200)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"apktool decode failed: {e}"
