@@ -11,7 +11,8 @@
 # described below; it is likewise applied through the
 # web UI at publication. The 3.0.1 patch release carries
 # the matrix unchanged; its hosted proof is nar-ci run
-# #42 (all 18 jobs green on Linux, macOS and Windows).
+# #42 (all 18 CI jobs green on Linux, macOS and Windows
+# — the workflow as constituted for that release).
 # Every job's Linux commands were
 # verified locally from a clean extraction (see
 # docs/NAR_3.0.0_UPDATE_REPORT.md): on a hosted runner
@@ -32,12 +33,40 @@
 # (nar-ci runs #39–#42; run #42 fully green). The
 # remaining jobs stay on ubuntu-latest as before.
 #
+# Field-round P2 revision (prepared as a patch in
+# ~/workspace/nar-field-audit/P2_CI_PATCH/, applied through
+# the web UI with the owner's publication, like every
+# workflow revision): the doctor job's Windows leg now
+# installs the documented core toolchain (Temurin JDK,
+# jadx, apktool, Android build-tools — the setup guide's
+# own sources) and gates on the doctor's FULL core verdict
+# instead of discarding its exit code; cli-smoke's Windows
+# leg runs the doctor through the unified CLI and runs
+# triage + engines against a generated fixture, beyond
+# --help; and a windows-clean-env job (sketch) installs
+# only what the setup guide documents, into the locations
+# the guide names, and runs the documented commands with
+# the full doctor as a gate. With windows-clean-env the
+# workflow defines eleven jobs expanding to nineteen
+# runs — all 19 jobs across the eleven definitions; the
+# guarded job-count statements (CHANGELOG, the
+# 3.0.0 update report, this header's historical lines) and
+# the docs-consistency parser sanity assert are updated
+# in the same publication. Until the first hosted run of
+# this revision completes, its new legs are NOT RUN and
+# the docs state clean-install Windows compatibility as
+# such.
+#
 # Job map (brief G1):
 #   doctor              — cross-platform matrix: the
 #                         doctor resolves a Python >= 3.10
 #                         ($NAR_PYTHON / python3 / python /
 #                         py -3) and its interpreter-gated
-#                         core self-checks pass, on every OS
+#                         core self-checks pass, on every OS;
+#                         the Windows leg additionally
+#                         installs the documented core
+#                         toolchain and gates on the full
+#                         core verdict (field round F-27)
 #   unit                — cross-platform matrix: the full
 #                         unit suite (-ra prints skip
 #                         reasons; skips are never silent)
@@ -64,6 +93,13 @@
 #                         hosted-runner memory is not
 #                         comparable to the local
 #                         baseline, so it never gates
+#   windows-clean-env   — SKETCH (field round F-29):
+#                         clean-environment Windows job;
+#                         documented install steps only,
+#                         SDK at the Android Studio default
+#                         location with ANDROID_HOME unset,
+#                         full doctor gate + documented
+#                         commands on a generated fixture
 name: nar-ci
 
 on:
@@ -87,6 +123,53 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Windows leg (field round F-27): install the core
+      # toolchain from the setup guide's own sources, so
+      # the doctor's full core verdict can gate below.
+      # The Linux / macOS legs keep the interpreter-only
+      # contract further down (their runners likewise
+      # preinstall no apktool / jadx / build-tools, and
+      # extending the same treatment to them is a separate
+      # decision, not part of this revision).
+      - name: Install a JDK (Windows doctor leg)
+        if: matrix.os == 'windows-latest'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install jadx, apktool and Android build-tools (Windows doctor leg)
+        if: matrix.os == 'windows-latest'
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/nar-tools" "$RUNNER_TEMP/nar-sdk/cmdline-tools"
+          curl -fsSL -o "$RUNNER_TEMP/jadx.zip" https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/nar-tools/jadx"
+          echo "$RUNNER_TEMP/nar-tools/jadx/bin" >> "$GITHUB_PATH"
+          curl -fsSL -o "$RUNNER_TEMP/apktool.jar" https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+          echo "NAR_APKTOOL_JAR=$RUNNER_TEMP/apktool.jar" >> "$GITHUB_ENV"
+          curl -fsSL -o "$RUNNER_TEMP/cmdtools.zip" https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip
+          unzip -q "$RUNNER_TEMP/cmdtools.zip" -d "$RUNNER_TEMP/nar-sdk/cmdline-tools"
+          mv "$RUNNER_TEMP/nar-sdk/cmdline-tools/cmdline-tools" "$RUNNER_TEMP/nar-sdk/cmdline-tools/latest"
+          yes | "$RUNNER_TEMP/nar-sdk/cmdline-tools/latest/bin/sdkmanager.bat" --sdk_root="$RUNNER_TEMP/nar-sdk" "build-tools;35.0.0" "platform-tools"
+          echo "ANDROID_HOME=$RUNNER_TEMP/nar-sdk" >> "$GITHUB_ENV"
+      # No `|| true`: the doctor's exit code IS the gate,
+      # and the JSON assertion requires the full core
+      # verdict (core_ok), not just the interpreter-gated
+      # self-checks. First hosted run is the proof; a
+      # failure here is a finding, not a reason to restore
+      # the discarded exit code.
+      - name: Doctor gates on the full core verdict (Windows doctor leg)
+        if: matrix.os == 'windows-latest'
+        run: |
+          bash scripts/nar-doctor.sh --json > doctor.json
+          cat doctor.json
+          python - <<'PYEOF'
+          import json
+          d = json.load(open("doctor.json", encoding="utf-8"))
+          assert d.get("python_resolved"), "doctor resolved no interpreter"
+          assert d.get("core_ok") is True, "doctor core verdict is not READY"
+          print("doctor windows gate: core_ok =", d["core_ok"])
+          PYEOF
       # Hosted runners do not preinstall apktool / jadx /
       # the Android build-tools, so the doctor's full core
       # verdict may be INCOMPLETE there and is not gated
@@ -96,6 +179,7 @@ jobs:
       # py -3 as fallback) and every interpreter-gated
       # core self-check must report ok.
       - name: Doctor resolves the interpreter; self-checks pass
+        if: matrix.os != 'windows-latest'
         run: |
           bash scripts/nar-doctor.sh --json > doctor.json || true
           cat doctor.json
@@ -196,6 +280,47 @@ jobs:
           for f in scripts/nar-*.py; do
             python "$f" --help > /dev/null
           done
+      # Field round F-27: on Windows, go beyond --help.
+      # The doctor is dispatched through the unified CLI,
+      # and two documented commands run against a fixture
+      # the step generates itself (a plain ZIP carrying a
+      # DEX header stub, a native-library stub and an
+      # asset): triage and engines read it with no external
+      # tools, so the step needs no toolchain install. The
+      # doctor's exit code is deliberately not asserted
+      # here — the smoke runner carries no consumer
+      # toolchain, so its core verdict is INCOMPLETE by
+      # design; the full Windows doctor gate lives in the
+      # doctor job. What is asserted is that the CLI
+      # dispatch produces the doctor's JSON with a resolved
+      # interpreter.
+      - name: Documented commands against a generated fixture (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          python - <<'PYEOF'
+          import zipfile
+          with zipfile.ZipFile("fixture.apk", "w") as zf:
+              zf.writestr("classes.dex", b"dex\n039\x00" + b"\x00" * 64)
+              zf.writestr("lib/arm64-v8a/libgame.so", b"\x7fELF" + b"\x00" * 60)
+              zf.writestr("assets/data.bin", b"hello")
+          print("fixture.apk written")
+          PYEOF
+          python scripts/nar.py doctor --json > doctor-cli.json || true
+          python - <<'PYEOF'
+          import json
+          d = json.load(open("doctor-cli.json", encoding="utf-8"))
+          assert d.get("python_resolved"), "CLI doctor resolved no interpreter"
+          print("cli doctor dispatch ok; python_resolved =", d["python_resolved"])
+          PYEOF
+          python scripts/nar-triage.py fixture.apk > triage.txt
+          grep -q "Native libs: 1" triage.txt
+          python scripts/nar-engines.py fixture.apk --json > engines.json
+          python - <<'PYEOF'
+          import json
+          d = json.load(open("engines.json", encoding="utf-8"))
+          assert d["jni_scan"]["libraries_scanned"] == 1, d["jni_scan"]
+          print("engines fixture run ok")
+          PYEOF
 
   security-regression:
     runs-on: ubuntu-latest
@@ -293,3 +418,86 @@ jobs:
           python3 tests/benchmarks/check_regression.py \
             --reference tests/benchmarks/baseline-2.6.1.json \
             --candidate tests/benchmarks/baseline-2.6.2.json
+
+  # SKETCH — field round F-29, prepared, NOT YET RUN.
+  # A clean-environment Windows job: every tool is
+  # installed by this job, from the sources the setup
+  # guide documents, into the locations the guide names.
+  # The Android SDK goes to the Android Studio default
+  # location (%LOCALAPPDATA%\Android\Sdk) and ANDROID_HOME
+  # is deliberately NOT set, so SDK discovery itself is
+  # part of what is tested (the F-32 candidate). The one
+  # hosted-image dependency that cannot be removed on a
+  # hosted runner is Git for Windows (Git Bash), which the
+  # image preinstalls; setup-python is likewise not used —
+  # Python comes from the python.org installer, as the
+  # guide prescribes. Shake this job down on a branch
+  # before it gates main: its first hosted run is the
+  # proof, and until it passes, the docs state
+  # clean-install Windows compatibility as NOT RUN.
+  windows-clean-env:
+    name: windows-clean-env (sketch)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python from python.org (the documented source)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe" -OutFile "$env:RUNNER_TEMP\python-installer.exe"
+          Start-Process -Wait -FilePath "$env:RUNNER_TEMP\python-installer.exe" -ArgumentList "/quiet InstallAllUsers=0 PrependPath=0 Include_pip=1"
+          "$env:LOCALAPPDATA\Programs\Python\Python312" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:LOCALAPPDATA\Programs\Python\Python312\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install Temurin JDK from Adoptium (the documented source)
+        run: |
+          set -e
+          curl -fsSL -o "$RUNNER_TEMP/jdk.zip" "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse"
+          mkdir -p "$RUNNER_TEMP/jdk"
+          unzip -q "$RUNNER_TEMP/jdk.zip" -d "$RUNNER_TEMP/jdk"
+          JDK_DIR="$(echo "$RUNNER_TEMP"/jdk/jdk-17*/)"
+          echo "JAVA_HOME=$JDK_DIR" >> "$GITHUB_ENV"
+          echo "$JDK_DIR/bin" >> "$GITHUB_PATH"
+      - name: Install jadx and apktool (the documented sources)
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/nar-tools"
+          curl -fsSL -o "$RUNNER_TEMP/jadx.zip" https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/nar-tools/jadx"
+          echo "$RUNNER_TEMP/nar-tools/jadx/bin" >> "$GITHUB_PATH"
+          curl -fsSL -o "$RUNNER_TEMP/apktool.jar" https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+          echo "NAR_APKTOOL_JAR=$RUNNER_TEMP/apktool.jar" >> "$GITHUB_ENV"
+      - name: Install the Android SDK at its default Windows location
+        run: |
+          set -e
+          SDK_ROOT="$LOCALAPPDATA/Android/Sdk"
+          mkdir -p "$SDK_ROOT/cmdline-tools"
+          curl -fsSL -o "$RUNNER_TEMP/cmdtools.zip" https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip
+          unzip -q "$RUNNER_TEMP/cmdtools.zip" -d "$SDK_ROOT/cmdline-tools"
+          mv "$SDK_ROOT/cmdline-tools/cmdline-tools" "$SDK_ROOT/cmdline-tools/latest"
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager.bat" --sdk_root="$SDK_ROOT" "build-tools;35.0.0" "platform-tools"
+          # ANDROID_HOME is deliberately left unset: the
+          # doctor and the registry must find this SDK at
+          # its default location on their own.
+      - name: Full doctor gate (no discarded exit code)
+        run: bash scripts/nar-doctor.sh
+      - name: Documented commands against a generated fixture
+        run: |
+          python - <<'PYEOF'
+          import zipfile
+          with zipfile.ZipFile("fixture.apk", "w") as zf:
+              zf.writestr("classes.dex", b"dex\n039\x00" + b"\x00" * 64)
+              zf.writestr("lib/arm64-v8a/libgame.so", b"\x7fELF" + b"\x00" * 60)
+              zf.writestr("assets/data.bin", b"hello")
+          print("fixture.apk written")
+          PYEOF
+          python scripts/nar-triage.py fixture.apk > triage.txt
+          grep -q "Native libs: 1" triage.txt
+          python scripts/nar-engines.py fixture.apk --json > engines.json
+          python - <<'PYEOF'
+          import json
+          d = json.load(open("engines.json", encoding="utf-8"))
+          assert d["jni_scan"]["libraries_scanned"] == 1, d["jni_scan"]
+          print("engines fixture run ok")
+          PYEOF
