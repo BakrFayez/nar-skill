@@ -245,7 +245,17 @@ FIXTURES = os.path.join(
     "nar-e2e-fixtures", "demo")
 
 
+def _require_demo_pair():
+    # The demo pair lives in the local e2e fixtures, which are
+    # not part of the repo; skip where they are absent (e.g.
+    # hosted CI) rather than fail on a missing file.
+    for name in ("NarDemo.apk", "NarDemo_v2.apk"):
+        if not os.path.isfile(os.path.join(FIXTURES, name)):
+            pytest.skip(f"e2e demo fixture {name} not present")
+
+
 def test_compare_real_shape_renders_diff_facts(mini):
+    _require_demo_pair()
     demo1 = os.path.join(FIXTURES, "NarDemo.apk")
     demo2 = os.path.join(FIXTURES, "NarDemo_v2.apk")
     doc = ask.answer_question(
@@ -261,6 +271,7 @@ def test_compare_real_shape_renders_diff_facts(mini):
 
 def test_compare_identical_pair_states_identical(mini,
                                                  tmp_path):
+    _require_demo_pair()
     demo1 = os.path.join(FIXTURES, "NarDemo.apk")
     twin = str(tmp_path / "twin.apk")
     shutil.copyfile(demo1, twin)
